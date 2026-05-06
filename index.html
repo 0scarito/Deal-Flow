@@ -44,6 +44,7 @@
       <button class="nbtn" onclick="goTo('clients',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="5" r="2.5"/><path d="M1 13c0-2.8 2.2-5 5-5s5 2.2 5 5"/><circle cx="12" cy="5" r="2"/><path d="M12 8.5c1.7.3 3 1.8 3 3.5"/></svg>Clients</button>
       <button class="nbtn" onclick="goTo('fournisseurs',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M5 3V2a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1"/><path d="M1 7h14"/></svg>Fournisseurs</button>
       <button class="nbtn" onclick="goTo('brokers',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 12V5l6-3 6 3v7"/><path d="M6 12V9h4v3"/><rect x="1" y="12" width="14" height="2" rx="1"/></svg>Brokers</button>
+      <button class="nbtn" onclick="goTo('contrats',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 1h7l3 3v11H3z"/><path d="M10 1v3h3"/><path d="M5.5 8.5l1.5 1.5 3-3"/><path d="M5.5 12h5"/></svg>Suivi Contrats <span id="contratsBadge" class="alert-dot-badge" style="display:none;"></span></button>
     </div>
     <div class="sb-bottom">
       <button class="btn" style="width:100%;margin-bottom:6px;" onclick="document.getElementById('importFile').click()">↑ Importer CSV</button>
@@ -413,6 +414,28 @@
         </div>
       </div>
 
+      <!-- SUIVI CONTRATS WEALINS -->
+      <div class="page" id="p-contrats">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">
+          <input type="text" id="ctSearch" placeholder="Rechercher client, n° contrat, ISIN…" style="width:260px;" oninput="renderContrats()"/>
+          <select id="ctStat" onchange="renderContrats()" style="width:auto;">
+            <option value="">Tous statuts</option>
+            <option value="done">Complétés</option>
+            <option value="in-progress">En cours</option>
+            <option value="new">Non démarrés</option>
+          </select>
+          <select id="ctSort" onchange="renderContrats()" style="width:auto;">
+            <option value="recent">Plus récents</option>
+            <option value="name">Par client</option>
+            <option value="progress">Par avancement</option>
+          </select>
+          <div style="flex:1;"></div>
+          <button class="btn btn-primary" onclick="openContractModal()">+ Nouveau contrat</button>
+        </div>
+        <div id="contratsList"></div>
+        <div id="contratsEmpty" class="empty" style="display:none;">Aucun contrat. Créez-en un ou rattachez un deal existant à un contrat.</div>
+      </div>
+
       <!-- COMMISSIONS -->
       <div class="page" id="p-commissions">
 
@@ -635,6 +658,23 @@
     <div class="modal-ft"><button class="btn" onclick="closeBrokerModal()">Annuler</button><button class="btn" id="brokerDeleteBtn" style="color:var(--red);border-color:var(--red-bg);display:none;" onclick="deleteBrokerFromModal()">Supprimer</button><button class="btn btn-primary" onclick="saveBroker()">Enregistrer</button></div>
   </div>
 </div>
+<div class="ov" id="contractModal">
+  <div class="modal" style="max-width:520px;">
+    <div class="modal-hd"><span class="modal-title" id="contractModalTitle">Nouveau contrat Wealins</span><button class="close-btn" onclick="closeContractModal()">×</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="ctmId"/>
+      <div class="fg2">
+        <div class="fl"><label>Client (titulaire)</label><select id="ctmClient"></select></div>
+        <div class="fl"><label>N° de contrat Wealins</label><input type="text" id="ctmNum" placeholder="ex: WL-2025-003"/></div>
+      </div>
+      <div class="fl" style="margin-top:8px;"><label>Banque dépositaire</label><input type="text" id="ctmBanque" value="Indosuez Luxembourg"/></div>
+      <div class="fl" style="margin-top:8px;"><label>Notes (optionnel)</label><textarea id="ctmNotes" rows="2" placeholder="Remarques internes, échéances, contacts…"></textarea></div>
+      <div class="form-sep">Étapes préliminaires</div>
+      <div id="ctmPrelim"></div>
+    </div>
+    <div class="modal-ft"><button class="btn" onclick="closeContractModal()">Annuler</button><button class="btn" id="ctmDeleteBtn" style="color:var(--red);border-color:var(--red-bg);display:none;" onclick="deleteContractFromModal()">Supprimer</button><button class="btn btn-primary" onclick="saveContractFromModal()">Enregistrer</button></div>
+  </div>
+</div>
 <div class="ov" id="clientModal">
   <div class="modal" style="max-width:1100px;width:95vw;">
     <div class="modal-hd"><span class="modal-title" id="clientModalTitle">Fiche client</span><button class="close-btn" onclick="closeClientModal()">×</button></div>
@@ -714,19 +754,33 @@
       </div>
 
       <!-- Ligne 2 : Fournisseur / Produit / ISIN / Broker -->
-      <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 16px;margin-bottom:16px;">
+      <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 16px;margin-bottom:12px;">
         <div class="fl"><label>Fournisseur</label><select id="mFourn"><option value="">— Choisir —</option></select></div>
         <div class="fl"><label>Produit / Support</label><input type="text" id="mProduit"/></div>
         <div class="fl"><label>ISIN</label><input type="text" id="mISIN"/></div>
         <div class="fl"><label>Broker</label><select id="mBroker"><option value="">— Aucun —</option><option>KCS</option><option>Silex</option><option>Direct</option><option>Indosuez</option><option>Natixis</option><option>Société Générale</option><option>BNP Paribas CIB</option><option>Oddo BHF</option><option>Caceis</option><option>Autre</option></select></div>
       </div>
 
+      <!-- Ligne 2bis : Wealins type (optionnel) -->
+      <div style="display:grid;grid-template-columns:1fr 3fr;gap:10px 16px;margin-bottom:16px;">
+        <div class="fl"><label>Type Wealins <span style="color:var(--text3);font-weight:400;">(pour suivi conformité)</span></label>
+          <select id="mWealinsType" onchange="onWealinsTypeChange()">
+            <option value="">— Aucun (pas de suivi Wealins) —</option>
+            <option value="structuré">Produit structuré</option>
+            <option value="ucits">Fonds UCITS</option>
+            <option value="alternatif">Fonds alternatif</option>
+          </select>
+        </div>
+        <div id="mWealinsHint" style="font-size:11px;color:var(--text3);align-self:end;padding-bottom:6px;">Sélectionnez un type pour activer la checklist Wealins par client.</div>
+      </div>
+
       <!-- Section clients pleine largeur -->
       <div style="background:var(--surface2);border-radius:var(--rs);padding:14px 16px;margin-bottom:16px;">
-        <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:10px;text-transform:uppercase;letter-spacing:.4px;">Clients & Nominaux</div>
+        <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:10px;text-transform:uppercase;letter-spacing:.4px;">Clients &amp; Nominaux</div>
         <div style="display:flex;gap:8px;margin-bottom:6px;padding:0 2px;">
             <span style="flex:2;min-width:0;font-size:11px;color:var(--text3);font-weight:500;">Client</span>
-            <span style="flex:2;min-width:0;font-size:11px;color:var(--text3);font-weight:500;">Contrat</span>
+            <span style="flex:2;min-width:0;font-size:11px;color:var(--text3);font-weight:500;">Type contrat</span>
+            <span style="flex:2;min-width:0;font-size:11px;color:var(--text3);font-weight:500;">Contrat Wealins</span>
             <span style="flex:2;min-width:0;font-size:11px;color:var(--text3);font-weight:500;">Dépositaire</span>
             <span style="flex:1;min-width:80px;max-width:130px;font-size:11px;color:var(--text3);font-weight:500;">Nominal</span>
             <span style="flex-shrink:0;width:66px;"></span>
@@ -734,6 +788,12 @@
         <div id="clientLines"></div>
         <button type="button" class="btn btn-sm" onclick="addClientLine()" style="margin-top:8px;">+ Ajouter un client</button>
         <div id="addClientRow" style="display:none;margin-top:8px;"><div style="display:flex;gap:6px;"><input type="text" id="newClientInput" placeholder="Nom du nouveau client" style="flex:1;max-width:280px;"/><button type="button" class="btn btn-sm btn-primary" onclick="confirmAddClient()">Ajouter</button><button type="button" class="btn btn-sm" onclick="cancelAddClient()">✕</button></div></div>
+      </div>
+
+      <!-- Wealins per-deal checklist (visible only when wealins_type set + edit mode with single client) -->
+      <div id="mWealinsChecklist" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:var(--rs);padding:14px 16px;margin-bottom:16px;">
+        <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:10px;text-transform:uppercase;letter-spacing:.4px;">Checklist Wealins <span id="mWealinsClientLbl" style="text-transform:none;letter-spacing:0;color:var(--text3);font-weight:400;"></span></div>
+        <div id="mWealinsChecksBody"></div>
       </div>
 
       <div class="fl" style="display:none;"><label>Contrat</label><select id="mContrat"><option>Assurance Vie Lux</option><option>Contrat Assurance Vie</option><option>Contrat de Capitalisation</option><option>CTO</option><option>PER</option></select></div>

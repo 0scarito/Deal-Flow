@@ -100,14 +100,15 @@ async function rapprDelete(fourn,type,period){
 // ── WEALINS CONTRACTS (in-memory + Supabase) ─────────────────────────────────
 var contracts_db=[];
 
-// Domain checklists (Wealins procedures)
-var PRELIM=[
+// Default checklist seeds — each contract/investissement gets its own copy at creation,
+// then can be customized (add / rename / delete steps).
+var PRELIM_DEFAULTS=[
   {id:'p1',label:'Contrat Wealins ouvert'},
   {id:'p2',label:'Mandat tripartite établi (Indosuez / Wealins / Chamfeuil)'},
   {id:'p3',label:'Mandat envoyé à Indosuez — rattachement plateforme'},
   {id:'p4',label:'Avis de virement envoyé à Wealins'}
 ];
-var STEPS={
+var STEPS_DEFAULTS={
   'structuré':[
     {id:'s1',label:'Term Sheet envoyée sur e-Wealins (Vos Investissements)',note:'Joindre DIC'},
     {id:'s2',label:'Code ISIN renseigné dans la demande'},
@@ -134,103 +135,99 @@ var STEPS={
 var WTYPE_LBL={'structuré':'Structuré','ucits':'UCITS','alternatif':'Alternatif'};
 var WTYPE_BADGE={'structuré':'bg','ucits':'bb','alternatif':'ba'};
 
+function newStepId(){return 'st_'+Math.random().toString(36).slice(2,9);}
+function defaultPrelim(){return PRELIM_DEFAULTS.map(function(s){return{id:s.id,label:s.label,done:false};});}
+function defaultStepsFor(type){var arr=STEPS_DEFAULTS[type]||[];return arr.map(function(s){var o={id:s.id,label:s.label,done:false};if(s.note)o.note=s.note;return o;});}
+
+function parseMoney(s){
+  if(!s)return 0;
+  var cleaned=String(s).replace(/[^\d,.\-]/g,'').replace(/\s/g,'');
+  var lastComma=cleaned.lastIndexOf(','),lastDot=cleaned.lastIndexOf('.');
+  var normalized=cleaned;
+  if(lastComma>lastDot)normalized=cleaned.replace(/\./g,'').replace(',','.');
+  else if(lastDot>-1)normalized=cleaned.replace(/,/g,'');
+  var n=parseFloat(normalized);
+  return isNaN(n)?0:n;
+}
+
 function prelimProgress(c){
-  if(!c||!c.prelim)return{done:0,total:PRELIM.length,pct:0};
-  var done=PRELIM.filter(function(s){return c.prelim[s.id];}).length;
-  return{done:done,total:PRELIM.length,pct:Math.round(done/PRELIM.length*100)};
-}
-function dealClientChecks(d,clientName){
-  return (d.wealins_checks&&d.wealins_checks[clientName])||{};
-}
-function dealClientProgress(d,clientName){
-  var steps=STEPS[d.wealins_type]||[];
+  var steps=(c&&Array.isArray(c.prelim))?c.prelim:[];
   if(!steps.length)return{done:0,total:0,pct:0};
-  var checks=dealClientChecks(d,clientName);
-  var done=steps.filter(function(s){return checks[s.id];}).length;
+  var done=steps.filter(function(s){return s.done;}).length;
   return{done:done,total:steps.length,pct:Math.round(done/steps.length*100)};
 }
-function dealAggregateProgress(d){
-  var steps=STEPS[d.wealins_type]||[];
-  if(!steps.length||!d.clients||!d.clients.length)return{done:0,total:0,pct:0,clientsDone:0,clientsTotal:0};
-  var clientsDone=0,sumDone=0,sumTotal=0;
-  d.clients.forEach(function(c){
-    var p=dealClientProgress(d,c);
-    sumDone+=p.done;sumTotal+=p.total;
-    if(p.total>0&&p.done===p.total)clientsDone++;
-  });
-  return{done:sumDone,total:sumTotal,pct:sumTotal?Math.round(sumDone/sumTotal*100):0,clientsDone:clientsDone,clientsTotal:d.clients.length};
+function prodProgress(p){
+  var steps=(p&&Array.isArray(p.steps))?p.steps:[];
+  if(!steps.length)return{done:0,total:0,pct:0};
+  var done=steps.filter(function(s){return s.done;}).length;
+  return{done:done,total:steps.length,pct:Math.round(done/steps.length*100)};
 }
-function contractIsComplete(c){
+function contratStatus(c){
   var pp=prelimProgress(c);
-  if(pp.done!==pp.total)return false;
-  // Look at all deals using this contract
-  var dealsForContract=deals.filter(function(d){return (d.contract_ids||[]).includes(c._id);});
-  if(!dealsForContract.length)return pp.done===pp.total;
-  // Find which client is on this contract within each deal
-  return dealsForContract.every(function(d){
-    var clientName=null;
-    (d.contract_ids||[]).forEach(function(cid,i){if(cid===c._id&&d.clients&&d.clients[i])clientName=d.clients[i];});
-    if(!clientName)return true;
-    var p=dealClientProgress(d,clientName);
-    return p.total>0&&p.done===p.total;
-  });
+  var produits=c.produits||[];
+  if(pp.done===0&&produits.every(function(p){return prodProgress(p).done===0;}))return'new';
+  var allDone=pp.total>0&&pp.done===pp.total&&produits.length>0&&produits.every(function(p){var pr=prodProgress(p);return pr.total>0&&pr.done===pr.total;});
+  return allDone?'done':'in-progress';
 }
-function contractStatus(c){
-  var pp=prelimProgress(c);
-  var dealsForContract=deals.filter(function(d){return (d.contract_ids||[]).includes(c._id);});
-  var allEmpty=pp.done===0&&dealsForContract.every(function(d){
-    var clientName=null;
-    (d.contract_ids||[]).forEach(function(cid,i){if(cid===c._id&&d.clients&&d.clients[i])clientName=d.clients[i];});
-    if(!clientName)return true;
-    return dealClientProgress(d,clientName).done===0;
-  });
-  if(allEmpty)return'new';
-  if(contractIsComplete(c)&&dealsForContract.length>0)return'done';
-  return'in-progress';
-}
-function contractGlobalPct(c){
+function globalPct(c){
   var pp=prelimProgress(c);
   var totalSteps=pp.total,doneSteps=pp.done;
-  var dealsForContract=deals.filter(function(d){return (d.contract_ids||[]).includes(c._id);});
-  dealsForContract.forEach(function(d){
-    var clientName=null;
-    (d.contract_ids||[]).forEach(function(cid,i){if(cid===c._id&&d.clients&&d.clients[i])clientName=d.clients[i];});
-    if(!clientName)return;
-    var p=dealClientProgress(d,clientName);
-    totalSteps+=p.total;doneSteps+=p.done;
-  });
+  (c.produits||[]).forEach(function(p){var pr=prodProgress(p);totalSteps+=pr.total;doneSteps+=pr.done;});
   return totalSteps?Math.round(doneSteps/totalSteps*100):0;
 }
 function pendingProcedures(){
+  // count investments with progress < 100% across all contracts
   var n=0;
-  deals.forEach(function(d){
-    if(!d.wealins_type||!d.clients)return;
-    d.clients.forEach(function(cn){
-      var p=dealClientProgress(d,cn);
-      if(p.total>0&&p.done<p.total)n++;
+  contracts_db.forEach(function(c){
+    (c.produits||[]).forEach(function(p){
+      var pr=prodProgress(p);
+      if(pr.total>0&&pr.done<pr.total)n++;
     });
   });
   return n;
 }
 
+function rowToContract(r){
+  return {
+    _id:r.id,
+    client:r.client,
+    num:r.num||'',
+    banque:r.banque||'Indosuez Luxembourg',
+    notes:r.notes||'',
+    prelim:Array.isArray(r.prelim)?r.prelim:defaultPrelim(),
+    produits:Array.isArray(r.produits)?r.produits:[],
+    created_at:r.created_at
+  };
+}
+
 async function loadContracts(){
   var res=await sb.from('contracts').select('*');
   if(res.error)throw res.error;
-  contracts_db=(res.data||[]).map(function(r){return{_id:r.id,client:r.client,num:r.num||'',banque:r.banque||'Indosuez Luxembourg',notes:r.notes||'',prelim:r.prelim||{},created_at:r.created_at};});
+  contracts_db=(res.data||[]).map(rowToContract);
 }
 async function saveContract(c){
-  var row={client:c.client,num:c.num||null,banque:c.banque||'Indosuez Luxembourg',notes:c.notes||null,prelim:c.prelim||{}};
+  var row={
+    client:c.client,
+    num:c.num||null,
+    banque:c.banque||'Indosuez Luxembourg',
+    notes:c.notes||null,
+    prelim:Array.isArray(c.prelim)?c.prelim:defaultPrelim(),
+    produits:Array.isArray(c.produits)?c.produits:[]
+  };
   if(c._id){
     var res=await sb.from('contracts').update(row).eq('id',c._id).select();
     if(res.error)throw res.error;
     var existing=contracts_db.find(function(x){return x._id===c._id;});
-    if(existing&&res.data&&res.data[0]){Object.assign(existing,{client:res.data[0].client,num:res.data[0].num||'',banque:res.data[0].banque||'',notes:res.data[0].notes||'',prelim:res.data[0].prelim||{}});}
+    if(existing&&res.data&&res.data[0]){
+      var fresh=rowToContract(res.data[0]);
+      Object.assign(existing,fresh);
+    }
     return existing;
   } else {
     var res=await sb.from('contracts').insert(row).select();
     if(res.error)throw res.error;
     if(res.data&&res.data[0]){
-      var nc={_id:res.data[0].id,client:res.data[0].client,num:res.data[0].num||'',banque:res.data[0].banque||'Indosuez Luxembourg',notes:res.data[0].notes||'',prelim:res.data[0].prelim||{},created_at:res.data[0].created_at};
+      var nc=rowToContract(res.data[0]);
       contracts_db.push(nc);
       return nc;
     }
@@ -240,14 +237,6 @@ async function deleteContractDB(id){
   var res=await sb.from('contracts').delete().eq('id',id);
   if(res.error)throw res.error;
   contracts_db=contracts_db.filter(function(c){return c._id!==id;});
-  // Unlink from deals
-  for(var di=0;di<deals.length;di++){
-    var d=deals[di];
-    if(!d.contract_ids)continue;
-    var changed=false;
-    d.contract_ids=d.contract_ids.map(function(cid){if(cid===id){changed=true;return null;}return cid;});
-    if(changed&&d._id)await sbUpdate('deals',d._id,d);
-  }
 }
 function contractsForClient(clientName){
   return contracts_db.filter(function(c){return c.client===clientName;});
@@ -343,29 +332,19 @@ function depositaireSelectHTML(selected){
   return '<option value="">— Dépositaire —</option>'+items.map(function(f){return '<option'+(f.name===selected?' selected':'')+'>'+f.name+'</option>';}).join('');
 }
 
-function wealinsContractSelectHTML(clientName,selectedId){
-  var list=clientName?contractsForClient(clientName):[];
-  var opts='<option value="">— Aucun —</option>';
-  list.forEach(function(c){opts+='<option value="'+c._id+'"'+(c._id===selectedId?' selected':'')+'>'+(c.num||'(sans n°)')+'</option>';});
-  opts+='<option value="__new__">+ Créer contrat Wealins…</option>';
-  return opts;
-}
-
-function renderClientLines(selectedArr, contratsArr, nominalsArr, depositairesArr, wealinsContractIdsArr){
+function renderClientLines(selectedArr, contratsArr, nominalsArr, depositairesArr){
   var container=document.getElementById('clientLines');
   container.innerHTML='';
   (selectedArr||['']).forEach(function(sel,idx){
     var contrat=(contratsArr&&contratsArr[idx])||'Assurance Vie Lux';
     var nominal=(nominalsArr&&nominalsArr[idx])||'';
     var depositaire=(depositairesArr&&depositairesArr[idx])||'';
-    var wealinsId=(wealinsContractIdsArr&&wealinsContractIdsArr[idx])||'';
     var removeBtn=idx>0?'<button type="button" class="btn btn-sm" onclick="removeClientLine(this)" style="color:var(--red);border-color:var(--red-bg);flex-shrink:0;">✕</button>':'<span style="width:30px;"></span>';
     var div=document.createElement('div');
     div.style.cssText='display:flex;gap:8px;align-items:center;margin-bottom:8px;';
     div.innerHTML=
-      '<select class="mClientSel" style="flex:2;min-width:0;" onchange="onClientLineClientChange(this)">'+clientSelectHTML(sel)+'</select>'+
+      '<select class="mClientSel" style="flex:2;min-width:0;">'+clientSelectHTML(sel)+'</select>'+
       '<select class="mContratSel" style="flex:2;min-width:0;">'+contratSelectHTML(contrat)+'</select>'+
-      '<select class="mWealinsContractSel" style="flex:2;min-width:0;" onchange="onWealinsContractChange(this)">'+wealinsContractSelectHTML(sel,wealinsId)+'</select>'+
       '<select class="mDepositaireSel" style="flex:2;min-width:0;">'+depositaireSelectHTML(depositaire)+'</select>'+
       '<input type="number" class="mNomSel" placeholder="Nominal" value="'+nominal+'" style="flex:1;min-width:80px;max-width:130px;" oninput="calcM()"/>'+
       '<button type="button" class="btn btn-sm" onclick="showAddClientForLine(this)" style="flex-shrink:0;padding:6px 10px;font-size:14px;line-height:1;" title="Nouveau client">+</button>'+
@@ -379,9 +358,8 @@ function addClientLine(){
   var div=document.createElement('div');
   div.style.cssText='display:flex;gap:8px;align-items:center;margin-bottom:8px;';
   div.innerHTML=
-    '<select class="mClientSel" style="flex:2;min-width:0;" onchange="onClientLineClientChange(this)">'+clientSelectHTML('')+'</select>'+
+    '<select class="mClientSel" style="flex:2;min-width:0;">'+clientSelectHTML('')+'</select>'+
     '<select class="mContratSel" style="flex:2;min-width:0;">'+contratSelectHTML('Assurance Vie Lux')+'</select>'+
-    '<select class="mWealinsContractSel" style="flex:2;min-width:0;" onchange="onWealinsContractChange(this)">'+wealinsContractSelectHTML('','')+'</select>'+
     '<select class="mDepositaireSel" style="flex:2;min-width:0;">'+depositaireSelectHTML('')+'</select>'+
     '<input type="number" class="mNomSel" placeholder="Nominal" style="flex:1;min-width:80px;max-width:130px;" oninput="calcM()"/>'+
     '<button type="button" class="btn btn-sm" onclick="showAddClientForLine(this)" style="flex-shrink:0;padding:6px 10px;font-size:14px;line-height:1;" title="Nouveau client">+</button>'+
@@ -389,33 +367,9 @@ function addClientLine(){
   container.appendChild(div);
 }
 
-function onClientLineClientChange(sel){
-  // When client changes, refresh that line's Wealins contract dropdown
-  var row=sel.closest('div');
-  var wsel=row.querySelector('.mWealinsContractSel');
-  if(wsel)wsel.innerHTML=wealinsContractSelectHTML(sel.value,'');
-}
-
-function onWealinsContractChange(sel){
-  if(sel.value==='__new__'){
-    var row=sel.closest('div');
-    var clientSel=row.querySelector('.mClientSel');
-    var clientName=clientSel?clientSel.value:'';
-    if(!clientName){alert('Sélectionnez d\'abord un client.');sel.value='';return;}
-    sel.value='';
-    window._contractModalCallback=function(saved){
-      if(saved&&saved._id){
-        sel.innerHTML=wealinsContractSelectHTML(clientName,saved._id);
-      }
-    };
-    openContractModal(null,clientName);
-  }
-}
-
 function getSelectedClients(){
   var sels=document.querySelectorAll('.mClientSel');
   var contSels=document.querySelectorAll('.mContratSel');
-  var wealinsSels=document.querySelectorAll('.mWealinsContractSel');
   var depSels=document.querySelectorAll('.mDepositaireSel');
   var nomSels=document.querySelectorAll('.mNomSel');
   var globalNom=parseFloat(document.getElementById('mNom').value)||0;
@@ -423,12 +377,9 @@ function getSelectedClients(){
   for(var i=0;i<sels.length;i++){
     if(sels[i].value){
       var lineNom=nomSels[i]?parseFloat(nomSels[i].value)||0:0;
-      var wealinsId=wealinsSels[i]?wealinsSels[i].value:'';
-      if(wealinsId==='__new__')wealinsId='';
       result.push({
         client:sels[i].value,
         contrat:contSels[i]?contSels[i].value:'Assurance Vie Lux',
-        wealinsContractId:wealinsId,
         depositaire:depSels[i]?depSels[i].value:'',
         nom:lineNom||globalNom
       });
@@ -527,7 +478,7 @@ function renderKpis(){
   if(nPending>0){
     nbCols=5;
     kpiHtml+=
-      '<div onclick="goTo(\'contrats\',document.querySelectorAll(\'.nbtn\')[7])" style="background:var(--amber-bg);border:1px solid rgba(176,122,16,.3);border-radius:var(--rs);padding:16px 20px;cursor:pointer;">'+
+      '<div onclick="goTo(\'contrats\',document.querySelector(\'.nbtn[onclick*=contrats]\'))" style="background:var(--amber-bg);border:1px solid rgba(176,122,16,.3);border-radius:var(--rs);padding:16px 20px;cursor:pointer;">'+
         '<div style="font-size:11px;color:var(--amber);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Procédures Wealins en attente</div>'+
         '<div style="font-size:24px;font-weight:600;color:var(--amber-t);">'+nPending+'</div>'+
         '<div style="font-size:12px;color:var(--amber);margin-top:4px;">checklists incomplètes</div>'+
@@ -741,28 +692,6 @@ var arbSrcDeal=null;
 function openDet(d){
   var idx=deals.indexOf(d);
   document.getElementById('detTitle').textContent=d.client+' — '+d.fourn;
-  // Wealins status block
-  var wealinsBlock='';
-  if(d.wealins_type){
-    var prog=dealClientProgress(d,d.client);
-    var contractId=(d.contract_ids||[])[0];
-    var ctr=contractId?contracts_db.find(function(x){return x._id===contractId;}):null;
-    var ctrLabel=ctr?(ctr.num||'(sans n°)'):'<span style="color:var(--red);">Aucun contrat rattaché</span>';
-    var pillCls=prog.total>0&&prog.done===prog.total?'pill-done':prog.done>0?'pill-prog':'pill-new';
-    var pillTxt=prog.total>0&&prog.done===prog.total?'Complet':prog.done>0?'En cours':'Non démarré';
-    wealinsBlock=
-      '<div style="background:var(--surface2);border-radius:var(--rs);padding:10px 14px;margin-top:12px;border:1px solid var(--border);">'+
-        '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">'+
-          '<span class="badge '+(WTYPE_BADGE[d.wealins_type]||'bgr')+'">Wealins '+(WTYPE_LBL[d.wealins_type]||d.wealins_type)+'</span>'+
-          '<span style="font-size:12px;color:var(--text2);">Contrat: '+ctrLabel+'</span>'+
-          '<div style="flex:1;"></div>'+
-          '<span class="ctr-pill '+pillCls+'">'+pillTxt+'</span>'+
-          '<span style="font-size:12px;font-weight:600;">'+prog.done+'/'+prog.total+'</span>'+
-        '</div>'+
-      '</div>';
-  } else {
-    wealinsBlock='<div style="background:var(--surface2);border-radius:var(--rs);padding:8px 14px;margin-top:12px;border:1px dashed var(--border-md);font-size:12px;color:var(--text2);">Aucun suivi Wealins. <a href="#" onclick="event.preventDefault();closeDet();openDealModal('+idx+');" style="color:var(--blue);text-decoration:underline;">Activer dans le deal</a></div>';
-  }
   document.getElementById('detBody').innerHTML=
     '<div class="fg2">'+
     '<div><div class="kpi-l">Vendeur</div><div>'+d.v+'</div></div>'+
@@ -774,7 +703,7 @@ function openDet(d){
     (d.ufE>0?'<div><div class="kpi-l">UF</div><div>'+fE(d.ufE)+'</div></div>':'')+
     (d.runE>0?'<div><div class="kpi-l">Running/an</div><div>'+fE(d.runE)+'</div></div>':'')+
     '<div><div class="kpi-l">Statut facture</div><div>'+d.fSt+'</div></div>'+
-    '</div>'+wealinsBlock;
+    '</div>';
   document.getElementById('detHist').innerHTML=(d.hist||[]).slice().reverse().map(function(h){return '<div style="font-size:12px;padding:4px 0;border-bottom:1px solid var(--border);"><span style="color:var(--text3);">'+h.ts+'</span> — '+h.a+'</div>';}).join('');
   document.getElementById('detEdit').onclick=function(){closeDet();openDealModal(idx);};
   document.getElementById('detDelete').onclick=async function(){if(confirm('Supprimer ce deal ?')){if(d._id)await sbDelete('deals',d._id);deals.splice(idx,1);closeDet();renderAll();}};
@@ -1712,45 +1641,14 @@ function openDealModal(idx){
   editIdx=idx!=null?idx:-1;
   rebuildFournSelect();rebuildBrokerSelect();
   document.getElementById('dmTitle').textContent=editIdx>=0?'Modifier le deal':'Nouveau deal';
-  if(editIdx>=0){var d=deals[editIdx];document.getElementById('mV').value=d.v;document.getElementById('mDate').value=d.date;document.getElementById('mStat').value=d.stat;
-    var wealinsId=(d.contract_ids&&d.contract_ids[0])||'';
-    renderClientLines([d.client],[d.contrat],[d.nom],[d.depositaire||''],[wealinsId]);
-    document.getElementById('mContrat').value=d.contrat;document.getElementById('mBroker').value=d.broker||'';document.getElementById('mFourn').value=d.fourn;document.getElementById('mProduit').value=d.produit;document.getElementById('mISIN').value=d.isin||'';document.getElementById('mNom').value=d.nom;document.getElementById('mDev').value=d.dev;document.getElementById('mIssue').value=d.issue||'';document.getElementById('mInvS').value=d.invS||'';document.getElementById('mInv').value=d.inv||'';document.getElementById('mUFR').value=d.ufR;document.getElementById('mRunR').value=d.runR;document.getElementById('mNotes').value=d.notes||'';
-    document.getElementById('mWealinsType').value=d.wealins_type||'';
-    setCT(d.ct);
+  if(editIdx>=0){var d=deals[editIdx];document.getElementById('mV').value=d.v;document.getElementById('mDate').value=d.date;document.getElementById('mStat').value=d.stat;renderClientLines([d.client],[d.contrat],[d.nom],[d.depositaire||'']);document.getElementById('mContrat').value=d.contrat;document.getElementById('mBroker').value=d.broker||'';document.getElementById('mFourn').value=d.fourn;document.getElementById('mProduit').value=d.produit;document.getElementById('mISIN').value=d.isin||'';document.getElementById('mNom').value=d.nom;document.getElementById('mDev').value=d.dev;document.getElementById('mIssue').value=d.issue||'';document.getElementById('mInvS').value=d.invS||'';document.getElementById('mInv').value=d.inv||'';document.getElementById('mUFR').value=d.ufR;document.getElementById('mRunR').value=d.runR;document.getElementById('mNotes').value=d.notes||'';setCT(d.ct);
     var pf=d.pf||{mode:'none'};pfMode=pf.mode||'none';
     var pfBtn=document.getElementById('ctPF');pfBtn.classList.toggle('on',pfMode!=='none');
     document.getElementById('pfRow').style.display=pfMode!=='none'?'block':'none';
     if(pfMode!=='none'){document.getElementById('mPFType').value=pf.type||'pct';document.getElementById('mPFRate').value=pf.rate||'';document.getElementById('mPFHurdle').value=pf.hurdle||'';document.getElementById('mPFFixed').value=pf.amount||'';document.getElementById('mPFFreq').value=pf.freq||'annuel';onPFTypeChange();}
-    onWealinsTypeChange();
-  } else {document.getElementById('mDate').value=today();renderClientLines(['']);document.getElementById('mFourn').value='';document.getElementById('mNom').value='';document.getElementById('mUFR').value='';document.getElementById('mRunR').value='';document.getElementById('mISIN').value='';document.getElementById('mBroker').value='';document.getElementById('mProduit').value='';document.getElementById('mNotes').value='';document.getElementById('mPFRate').value='';document.getElementById('mPFHurdle').value='';document.getElementById('mPFFixed').value='';document.getElementById('mInvS').value='';document.getElementById('mWealinsType').value='';document.getElementById('ctPF').classList.remove('on');document.getElementById('pfRow').style.display='none';pfMode='none';cancelAddClient();setCT('UF');onWealinsTypeChange();}
+  } else {document.getElementById('mDate').value=today();renderClientLines(['']);document.getElementById('mFourn').value='';document.getElementById('mNom').value='';document.getElementById('mUFR').value='';document.getElementById('mRunR').value='';document.getElementById('mISIN').value='';document.getElementById('mBroker').value='';document.getElementById('mProduit').value='';document.getElementById('mNotes').value='';document.getElementById('mPFRate').value='';document.getElementById('mPFHurdle').value='';document.getElementById('mPFFixed').value='';document.getElementById('mInvS').value='';document.getElementById('ctPF').classList.remove('on');document.getElementById('pfRow').style.display='none';pfMode='none';cancelAddClient();setCT('UF');}
   rebuildFournSelect();rebuildBrokerSelect();
   document.getElementById('dealModal').classList.add('on');calcM();
-}
-
-function onWealinsTypeChange(){
-  var typ=document.getElementById('mWealinsType').value;
-  var box=document.getElementById('mWealinsChecklist');
-  var hint=document.getElementById('mWealinsHint');
-  if(!typ){box.style.display='none';if(hint)hint.textContent='Sélectionnez un type pour activer la checklist Wealins par client.';return;}
-  if(hint)hint.textContent='Type "'+(WTYPE_LBL[typ]||typ)+'" sélectionné — '+(STEPS[typ]||[]).length+' étapes par client.';
-  // Render checklist only when editing a single deal (one client)
-  if(editIdx<0){box.style.display='none';if(hint)hint.textContent+=' La checklist sera disponible après création.';return;}
-  var d=deals[editIdx];
-  if(!d){box.style.display='none';return;}
-  var clientName=d.client;
-  document.getElementById('mWealinsClientLbl').textContent='— '+clientName;
-  var checks=(d.wealins_checks&&d.wealins_checks[clientName])||{};
-  var stepsForType=STEPS[typ]||[];
-  document.getElementById('mWealinsChecksBody').innerHTML=stepsForType.map(function(s){
-    var on=!!checks[s.id];
-    return '<div class="step-row">'+
-      '<div class="chk'+(on?' on':'')+'" data-step="'+s.id+'" onclick="this.classList.toggle(\'on\');this.nextElementSibling.classList.toggle(\'struck\');"></div>'+
-      '<span class="step-lbl'+(on?' struck':'')+'">'+escH(s.label)+'</span>'+
-      (s.note?'<span class="step-note">'+escH(s.note)+'</span>':'')+
-    '</div>';
-  }).join('');
-  box.style.display='';
 }
 function closeDM(){document.getElementById('dealModal').classList.remove('on');editIdx=-1;}
 function setCT(t){ct=t;['UF','RUN','BOTH'].forEach(x=>{document.getElementById('ct'+x).classList.remove('on');});document.getElementById('ct'+t).classList.add('on');document.getElementById('ufRow').style.display=(t==='UF'||t==='BOTH')?'grid':'none';document.getElementById('runRow').style.display=(t==='RUN'||t==='BOTH')?'grid':'none';calcM();}
@@ -1813,25 +1711,15 @@ async function saveDeal(){
   var ufP=(parseFloat(document.getElementById('mUFR').value)||0)/100,runP=(parseFloat(document.getElementById('mRunR').value)||0)/100;
   var pf={mode:pfMode};
   if(pfMode!=='none'){var pfType=document.getElementById('mPFType').value;pf.type=pfType;pf.freq=document.getElementById('mPFFreq').value;if(pfType==='pct'){pf.rate=parseFloat(document.getElementById('mPFRate').value)||0;pf.hurdle=parseFloat(document.getElementById('mPFHurdle').value)||0;}else{pf.amount=parseFloat(document.getElementById('mPFFixed').value)||0;}}
-  var wealinsType=document.getElementById('mWealinsType').value||null;
-  var base={v:document.getElementById('mV').value,date:document.getElementById('mDate').value,stat:document.getElementById('mStat').value,contrat:document.getElementById('mContrat').value,broker:document.getElementById('mBroker').value,fourn:document.getElementById('mFourn').value,produit:document.getElementById('mProduit').value,isin:document.getElementById('mISIN').value,nom,dev,fx,issue:document.getElementById('mIssue').value,invS:document.getElementById('mInvS').value,inv:document.getElementById('mInv').value,ct,ufR:parseFloat(document.getElementById('mUFR').value)||0,runR:parseFloat(document.getElementById('mRunR').value)||0,tva:0,ufE:Math.round(dev==='USD'?(nom*ufP/fx):nom*ufP),runE:Math.round(nomE*runP),pf,fSt:'À émettre',fRef:'',notes:document.getElementById('mNotes').value,wealins_type:wealinsType};
+  var base={v:document.getElementById('mV').value,date:document.getElementById('mDate').value,stat:document.getElementById('mStat').value,contrat:document.getElementById('mContrat').value,broker:document.getElementById('mBroker').value,fourn:document.getElementById('mFourn').value,produit:document.getElementById('mProduit').value,isin:document.getElementById('mISIN').value,nom,dev,fx,issue:document.getElementById('mIssue').value,invS:document.getElementById('mInvS').value,inv:document.getElementById('mInv').value,ct,ufR:parseFloat(document.getElementById('mUFR').value)||0,runR:parseFloat(document.getElementById('mRunR').value)||0,tva:0,ufE:Math.round(dev==='USD'?(nom*ufP/fx):nom*ufP),runE:Math.round(nomE*runP),pf,fSt:'À émettre',fRef:'',notes:document.getElementById('mNotes').value};
   if(editIdx>=0){
     var cc=getSelectedClients();
     var lineNom=cc.length&&cc[0].nom?cc[0].nom:nom;
     var ufP2=(parseFloat(document.getElementById('mUFR').value)||0)/100;
     var runP2=(parseFloat(document.getElementById('mRunR').value)||0)/100;
-    // Read checklist from DOM
     var existing=deals[editIdx];
-    var clientName=cc.length?cc[0].client:existing.client;
-    var newChecks=Object.assign({},existing.wealins_checks||{});
-    if(wealinsType){
-      var stepChecks={};
-      document.querySelectorAll('#mWealinsChecksBody .chk').forEach(function(el){stepChecks[el.dataset.step]=el.classList.contains('on');});
-      newChecks[clientName]=stepChecks;
-    }
-    var contractIds=cc.length&&cc[0].wealinsContractId?[cc[0].wealinsContractId]:(existing.contract_ids||[]);
     var prevHist=Array.isArray(existing.hist)?existing.hist:[];
-    var d={...base,nom:lineNom,ufE:Math.round(lineNom*ufP2),runE:Math.round(lineNom*runP2),client:clientName,contrat:cc.length?cc[0].contrat:base.contrat,contract_ids:contractIds,wealins_checks:newChecks,hist:[...prevHist,{ts:nowS(),a:'Deal modifié',by:base.v}]};
+    var d={...base,nom:lineNom,ufE:Math.round(lineNom*ufP2),runE:Math.round(lineNom*runP2),client:cc.length?cc[0].client:existing.client,contrat:cc.length?cc[0].contrat:base.contrat,hist:[...prevHist,{ts:nowS(),a:'Deal modifié',by:base.v}]};
     var _id=existing._id;d._id=_id;if(_id)await sbUpdate('deals',_id,d);deals[editIdx]=d;
     closeDM();renderAll();toast('Deal modifié.');
   } else {
@@ -1840,8 +1728,7 @@ async function saveDeal(){
     for(var ii=0;ii<items.length;ii++){
       var item=items[ii];
       var lineNom2=item.nom||nom;
-      var contractIdsNew=item.wealinsContractId?[item.wealinsContractId]:[];
-      var d={...base,nom:lineNom2,ufE:Math.round(lineNom2*ufP3),runE:Math.round(lineNom2*runP3),client:item.client,contrat:item.contrat,depositaire:item.depositaire||'',contract_ids:contractIdsNew,wealins_checks:{},fSt:'À émettre',hist:[{ts:nowS(),a:'Deal créé',by:base.v}]};
+      var d={...base,nom:lineNom2,ufE:Math.round(lineNom2*ufP3),runE:Math.round(lineNom2*runP3),client:item.client,contrat:item.contrat,depositaire:item.depositaire||'',fSt:'À émettre',hist:[{ts:nowS(),a:'Deal créé',by:base.v}]};
       var res=await sbInsert('deals',d);
       if(res&&res[0])d._id=res[0].id;
       deals.push(d);
@@ -2099,15 +1986,6 @@ async function saveClient(){
     for(var ci=0;ci<ctrToUpdate.length;ci++){
       ctrToUpdate[ci].client=name;
       try{await saveContract(ctrToUpdate[ci]);}catch(e){console.error('Contract rename cascade failed',e);}
-    }
-    // Migrate wealins_checks keyed by old client name
-    for(var dj=0;dj<deals.length;dj++){
-      var ddd=deals[dj];
-      if(ddd.wealins_checks&&ddd.wealins_checks[original]){
-        ddd.wealins_checks[name]=ddd.wealins_checks[original];
-        delete ddd.wealins_checks[original];
-        if(ddd._id)await sbUpdate('deals',ddd._id,ddd);
-      }
     }
   } else {
     var existing=clients_db.find(x=>x.name===name);
@@ -2898,101 +2776,108 @@ async function confirmUFInvoice(){
 }
 
 // ── WEALINS CONTRATS PAGE ────────────────────────────────────────────────────
-var ctrExp={};      // contract id → bool (expanded)
-var ctrDealExp={};  // contractId|dealId → bool (deal expanded inside contract)
-var ctrFilters={};  // search params
-
+var ctrExp={};       // contract id → expanded
+var prodExp={};      // contractId|prodId → expanded
 function escH(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function fmtEUR(n){return new Intl.NumberFormat('fr-FR',{style:'currency',currency:'EUR',maximumFractionDigits:0}).format(n||0);}
+
+function renderContratsStats(){
+  var total=contracts_db.length;
+  var allProds=[];
+  contracts_db.forEach(function(c){(c.produits||[]).forEach(function(p){allProds.push(p);});});
+  var done=0,prog=0,totalEUR=0;
+  allProds.forEach(function(p){
+    var pr=prodProgress(p);
+    if(pr.total>0&&pr.done===pr.total)done++;
+    else if(pr.done>0)prog++;
+    totalEUR+=parseMoney(p.montant);
+  });
+  var html=
+    '<div class="kpi"><div class="kpi-l">Contrats</div><div class="kpi-v">'+total+'</div><div class="kpi-s">clients suivis</div></div>'+
+    '<div class="kpi"><div class="kpi-l">Investissements</div><div class="kpi-v">'+allProds.length+'</div><div class="kpi-s">au total</div></div>'+
+    '<div class="kpi"><div class="kpi-l">Complétés</div><div class="kpi-v" style="color:var(--green-t);">'+done+'</div><div class="kpi-s">checklist 100%</div></div>'+
+    '<div class="kpi'+(prog>0?' warn':'')+'"><div class="kpi-l">En cours</div><div class="kpi-v">'+prog+'</div><div class="kpi-s">à compléter</div></div>'+
+    '<div class="kpi"><div class="kpi-l">Total investi</div><div class="kpi-v">'+fmtEUR(totalEUR)+'</div><div class="kpi-s">portefeuilles cumulés</div></div>';
+  var el=document.getElementById('contratsStats');
+  if(el)el.innerHTML=html;
+}
 
 function renderContrats(){
+  renderContratsStats();
   var search=(document.getElementById('ctSearch')?document.getElementById('ctSearch').value:'').toLowerCase();
   var stat=document.getElementById('ctStat')?document.getElementById('ctStat').value:'';
   var sort=document.getElementById('ctSort')?document.getElementById('ctSort').value:'recent';
   var list=contracts_db.slice();
   if(search){
     list=list.filter(function(c){
-      var hay=(c.client+' '+c.num+' '+c.notes).toLowerCase();
+      var hay=(c.client+' '+(c.num||'')+' '+(c.notes||'')).toLowerCase();
       if(hay.indexOf(search)!==-1)return true;
-      // also match deal product/isin under this contract
-      var ds=deals.filter(function(d){return (d.contract_ids||[]).includes(c._id);});
-      return ds.some(function(d){return ((d.produit||'')+' '+(d.isin||'')).toLowerCase().indexOf(search)!==-1;});
+      return (c.produits||[]).some(function(p){return ((p.name||'')+' '+(p.isin||'')).toLowerCase().indexOf(search)!==-1;});
     });
   }
-  if(stat)list=list.filter(function(c){return contractStatus(c)===stat;});
+  if(stat)list=list.filter(function(c){return contratStatus(c)===stat;});
   if(sort==='name')list.sort(function(a,b){return a.client.localeCompare(b.client);});
-  else if(sort==='progress')list.sort(function(a,b){return contractGlobalPct(b)-contractGlobalPct(a);});
+  else if(sort==='progress')list.sort(function(a,b){return globalPct(b)-globalPct(a);});
   else list.sort(function(a,b){return new Date(b.created_at||0)-new Date(a.created_at||0);});
-
-  // Unlinked deals banner (deals with no contract_ids and that have at least one client)
-  var unlinkedDeals=deals.filter(function(d){return !d.contract_ids||d.contract_ids.every(function(x){return !x;});}).filter(function(d){return d.clients&&d.clients.length;});
-  var bannerHTML='';
-  if(unlinkedDeals.length){
-    bannerHTML='<div class="unlinked-banner"><span>⚠</span><span><b>'+unlinkedDeals.length+' deal'+(unlinkedDeals.length>1?'s':'')+'</b> sans contrat rattaché. Cliquez sur un deal pour le rattacher à un contrat Wealins.</span><div style="flex:1;"></div><button class="btn btn-sm" onclick="goTo(\'deals\',document.querySelectorAll(\'.nbtn\')[1])">Voir les deals</button></div>';
-  }
 
   var container=document.getElementById('contratsList');
   if(!list.length){
-    container.innerHTML=bannerHTML;
-    document.getElementById('contratsEmpty').style.display=bannerHTML?'none':'block';
+    container.innerHTML='';
+    document.getElementById('contratsEmpty').style.display='block';
     return;
   }
   document.getElementById('contratsEmpty').style.display='none';
 
-  container.innerHTML=bannerHTML+list.map(function(c){
-    var st=contractStatus(c);
-    var pct=contractGlobalPct(c);
+  container.innerHTML=list.map(function(c){
+    var st=contratStatus(c);
+    var pct=globalPct(c);
     var pp=prelimProgress(c);
-    var dealsForC=deals.filter(function(d){return (d.contract_ids||[]).includes(c._id);});
+    var produits=c.produits||[];
     var stLbl=st==='done'?'Complété':st==='in-progress'?'En cours':'Non démarré';
     var stCls=st==='done'?'pill-done':st==='in-progress'?'pill-prog':'pill-new';
     var open=ctrExp[c._id];
-    var prelimHTML=PRELIM.map(function(s){
-      var on=!!c.prelim[s.id];
+    var prelimHTML=(c.prelim||[]).map(function(s,idx){
       return '<div class="step-row">'+
-        '<div class="chk'+(on?' on':'')+'" onclick="togglePrelim(\''+c._id+'\',\''+s.id+'\')"></div>'+
-        '<span class="step-lbl'+(on?' struck':'')+'">'+escH(s.label)+'</span>'+
+        '<div class="chk'+(s.done?' on':'')+'" onclick="togglePrelim(\''+c._id+'\','+idx+')"></div>'+
+        '<span class="step-lbl'+(s.done?' struck':'')+'" ondblclick="renamePrelimStep(\''+c._id+'\','+idx+')">'+escH(s.label)+'</span>'+
+        '<button class="btn btn-sm" style="padding:2px 6px;font-size:10px;color:var(--text3);border-color:transparent;" onclick="renamePrelimStep(\''+c._id+'\','+idx+')" title="Renommer">✎</button>'+
+        '<button class="btn btn-sm" style="padding:2px 6px;font-size:10px;color:var(--red);border-color:transparent;" onclick="deletePrelimStep(\''+c._id+'\','+idx+')" title="Supprimer">×</button>'+
       '</div>';
-    }).join('');
+    }).join('')+
+    '<div style="margin-top:6px;"><button class="btn btn-sm" onclick="addPrelimStep(\''+c._id+'\')" style="font-size:11px;">+ Ajouter une étape</button></div>';
 
-    var dealsHTML=dealsForC.length?dealsForC.map(function(d){
-      // Find which client(s) are on this contract within this deal
-      var clientsOnContract=[];
-      (d.contract_ids||[]).forEach(function(cid,i){if(cid===c._id&&d.clients&&d.clients[i])clientsOnContract.push(d.clients[i]);});
-      if(!clientsOnContract.length)return'';
-      var dKey=c._id+'|'+(d._id||deals.indexOf(d));
-      var dOpen=ctrDealExp[dKey];
-      var typ=d.wealins_type||'';
-      var typeBadge=typ?'<span class="badge '+(WTYPE_BADGE[typ]||'bgr')+'">'+WTYPE_LBL[typ]+'</span>':'<span class="badge bgr">Type Wealins ?</span>';
-      var ag=dealAggregateProgress(d);
-      var stepsForType=STEPS[typ]||[];
-      var checksHTML=clientsOnContract.map(function(cn){
-        var prog=dealClientProgress(d,cn);
-        var checks=dealClientChecks(d,cn);
-        if(!stepsForType.length)return'<div style="font-size:11px;color:var(--text3);padding:6px 0;">Sélectionnez un type Wealins (Structuré / UCITS / Alternatif) sur ce deal pour afficher la checklist.</div>';
-        return '<div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);">'+
-          '<div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:6px;">'+escH(cn)+' <span style="color:var(--text3);font-weight:400;">— '+prog.done+'/'+prog.total+'</span></div>'+
-          stepsForType.map(function(s){
-            var on=!!checks[s.id];
-            return '<div class="step-row">'+
-              '<div class="chk'+(on?' on':'')+'" onclick="toggleDealCheck(\''+(d._id||'')+'\',\''+escH(cn).replace(/\\\\/g,'\\\\\\\\').replace(/\\'/g,"\\\\\\'")+'\',\''+s.id+'\')"></div>'+
-              '<span class="step-lbl'+(on?' struck':'')+'">'+escH(s.label)+'</span>'+
-              (s.note?'<span class="step-note">'+escH(s.note)+'</span>':'')+
-            '</div>';
-          }).join('')+
+    var produitsHTML=produits.length?produits.map(function(p){
+      var pr=prodProgress(p);
+      var pKey=c._id+'|'+p.id;
+      var pOpen=prodExp[pKey];
+      var typeLbl=WTYPE_LBL[p.type]||p.type||'?';
+      var typeBadge='<span class="badge '+(WTYPE_BADGE[p.type]||'bgr')+'">'+escH(typeLbl)+'</span>';
+      var stepsHTML=(p.steps||[]).map(function(s,idx){
+        return '<div class="step-row">'+
+          '<div class="chk'+(s.done?' on':'')+'" onclick="toggleProdStep(\''+c._id+'\',\''+p.id+'\','+idx+')"></div>'+
+          '<span class="step-lbl'+(s.done?' struck':'')+'" ondblclick="renameProdStep(\''+c._id+'\',\''+p.id+'\','+idx+')">'+escH(s.label)+'</span>'+
+          (s.note?'<span class="step-note">'+escH(s.note)+'</span>':'')+
+          '<button class="btn btn-sm" style="padding:2px 6px;font-size:10px;color:var(--text3);border-color:transparent;" onclick="renameProdStep(\''+c._id+'\',\''+p.id+'\','+idx+')" title="Renommer">✎</button>'+
+          '<button class="btn btn-sm" style="padding:2px 6px;font-size:10px;color:var(--red);border-color:transparent;" onclick="deleteProdStep(\''+c._id+'\',\''+p.id+'\','+idx+')" title="Supprimer">×</button>'+
         '</div>';
-      }).join('');
+      }).join('')+
+      '<div style="margin-top:6px;"><button class="btn btn-sm" onclick="addProdStep(\''+c._id+'\',\''+p.id+'\')" style="font-size:11px;">+ Ajouter une étape</button></div>';
+
       return '<div class="ctr-deal-card">'+
-        '<div class="ctr-deal-hd" onclick="toggleCtrDeal(\''+dKey+'\')">'+
+        '<div class="ctr-deal-hd" onclick="toggleProdExp(\''+pKey+'\')">'+
           typeBadge+
-          '<span style="font-size:12px;font-weight:600;flex:1;min-width:120px;">'+escH(d.produit||'(sans nom)')+'</span>'+
-          (d.isin?'<span class="mono" style="font-size:11px;color:var(--text2);background:var(--surface);padding:2px 6px;border-radius:4px;">'+escH(d.isin)+'</span>':'')+
-          '<span style="font-size:11px;color:var(--text2);">'+escH(d.fourn||'')+'</span>'+
-          '<span style="font-size:11px;font-weight:600;color:var(--text);">'+ag.pct+'%</span>'+
-          '<span class="chev'+(dOpen?' open':'')+'">▾</span>'+
+          '<span style="font-size:12px;font-weight:600;flex:1;min-width:120px;">'+escH(p.name||'(sans nom)')+'</span>'+
+          (p.isin?'<span class="mono" style="font-size:11px;color:var(--text2);background:var(--surface);padding:2px 6px;border-radius:4px;">'+escH(p.isin)+'</span>':'')+
+          (p.montant?'<span style="font-size:12px;color:var(--text);font-weight:600;">'+escH(p.montant)+'</span>':'')+
+          '<span style="font-size:11px;font-weight:600;color:var(--text);">'+pr.pct+'%</span>'+
+          '<button class="btn btn-sm" onclick="event.stopPropagation();openProdModal(\''+c._id+'\',\''+p.id+'\')">Modifier</button>'+
+          '<button class="btn btn-sm" style="color:var(--red);border-color:var(--red-bg);" onclick="event.stopPropagation();deleteProd(\''+c._id+'\',\''+p.id+'\')">×</button>'+
+          '<span class="chev'+(pOpen?' open':'')+'">▾</span>'+
         '</div>'+
-        (dOpen?checksHTML:'')+
+        '<div class="ctr-bar"><div class="ctr-bar-fill'+(pr.pct===100?' full':'')+'" style="width:'+pr.pct+'%;"></div></div>'+
+        (pOpen?'<div style="padding-top:8px;">'+(p.notes?'<div style="font-size:12px;color:var(--text2);font-style:italic;margin-bottom:8px;padding:6px 10px;background:var(--surface);border-radius:4px;border-left:2px solid var(--amber);">'+escH(p.notes)+'</div>':'')+stepsHTML+'</div>':'')+
       '</div>';
-    }).join(''):'<div style="font-size:12px;color:var(--text3);padding:8px 0;">Aucun deal rattaché à ce contrat. Créez un deal et sélectionnez ce contrat dans la ligne client.</div>';
+    }).join(''):'<div style="font-size:12px;color:var(--text3);padding:8px 0;">Aucun investissement — cliquez sur Ajouter.</div>';
 
     return '<div class="ctr-card '+st+'">'+
       '<div class="ctr-hd" onclick="toggleCtr(\''+c._id+'\')">'+
@@ -3002,13 +2887,14 @@ function renderContrats(){
           '<div class="ctr-meta">'+
             '<span>#'+escH(c.num||'—')+'</span>'+
             '<span>'+escH(c.banque||'')+'</span>'+
-            '<span>'+dealsForC.length+' deal'+(dealsForC.length!==1?'s':'')+'</span>'+
+            '<span>'+produits.length+' investissement'+(produits.length!==1?'s':'')+'</span>'+
           '</div>'+
         '</div>'+
         '<div class="ctr-right">'+
           '<span class="ctr-pill '+stCls+'">'+stLbl+'</span>'+
           '<span class="ctr-pct">'+pct+'%</span>'+
           '<button class="btn btn-sm" onclick="event.stopPropagation();openContractModal(\''+c._id+'\')">Modifier</button>'+
+          '<button class="btn btn-sm" style="color:var(--red);border-color:var(--red-bg);" onclick="event.stopPropagation();deleteContractFromCard(\''+c._id+'\')">×</button>'+
           '<span class="chev'+(open?' open':'')+'">▾</span>'+
         '</div>'+
       '</div>'+
@@ -3017,36 +2903,96 @@ function renderContrats(){
         (c.notes?'<div style="font-size:12px;color:var(--text2);font-style:italic;margin-top:10px;padding:8px 10px;background:var(--amber-bg);border-radius:var(--rs);border-left:3px solid var(--amber);">'+escH(c.notes)+'</div>':'')+
         '<div class="ctr-section-title">Étapes préliminaires <span class="ctr-section-count">'+pp.done+'/'+pp.total+'</span></div>'+
         prelimHTML+
-        '<div class="ctr-section-title">Deals rattachés <span class="ctr-section-count">'+dealsForC.length+'</span></div>'+
-        dealsHTML+
+        '<div class="ctr-section-title">Investissements <span class="ctr-section-count">'+produits.length+'</span><div style="flex:0;"><button class="btn btn-sm" onclick="openProdModal(\''+c._id+'\')" style="font-size:11px;margin-left:8px;">+ Ajouter</button></div></div>'+
+        produitsHTML+
       '</div>':'')+
     '</div>';
   }).join('');
 }
 
 function toggleCtr(id){ctrExp[id]=!ctrExp[id];renderContrats();}
-function toggleCtrDeal(key){ctrDealExp[key]=!ctrDealExp[key];renderContrats();}
+function toggleProdExp(key){prodExp[key]=!prodExp[key];renderContrats();}
 
-async function togglePrelim(contractId,stepId){
-  var c=contracts_db.find(function(x){return x._id===contractId;});
-  if(!c)return;
-  c.prelim=c.prelim||{};
-  c.prelim[stepId]=!c.prelim[stepId];
-  try{await saveContract(c);}catch(e){console.error(e);toast('Erreur sauvegarde');return;}
-  renderContrats();
-  updateContratsBadge();
+async function persistContract(c){try{await saveContract(c);}catch(e){console.error(e);toast('Erreur de sauvegarde.');}}
+
+async function togglePrelim(contractId,idx){
+  var c=contracts_db.find(function(x){return x._id===contractId;});if(!c||!c.prelim||!c.prelim[idx])return;
+  c.prelim[idx].done=!c.prelim[idx].done;
+  await persistContract(c);renderContrats();updateContratsBadge();
+}
+async function addPrelimStep(contractId){
+  var c=contracts_db.find(function(x){return x._id===contractId;});if(!c)return;
+  var label=prompt('Libellé de la nouvelle étape préliminaire :');
+  if(!label||!label.trim())return;
+  c.prelim=c.prelim||[];
+  c.prelim.push({id:newStepId(),label:label.trim(),done:false});
+  await persistContract(c);renderContrats();updateContratsBadge();
+}
+async function renamePrelimStep(contractId,idx){
+  var c=contracts_db.find(function(x){return x._id===contractId;});if(!c||!c.prelim[idx])return;
+  var label=prompt('Renommer cette étape :',c.prelim[idx].label);
+  if(label===null)return;
+  if(!label.trim()){alert('Libellé vide.');return;}
+  c.prelim[idx].label=label.trim();
+  await persistContract(c);renderContrats();
+}
+async function deletePrelimStep(contractId,idx){
+  var c=contracts_db.find(function(x){return x._id===contractId;});if(!c||!c.prelim[idx])return;
+  if(!confirm('Supprimer l\'étape "'+c.prelim[idx].label+'" ?'))return;
+  c.prelim.splice(idx,1);
+  await persistContract(c);renderContrats();updateContratsBadge();
 }
 
-async function toggleDealCheck(dealId,clientName,stepId){
-  if(!dealId){toast('Deal non synchronisé.');return;}
-  var d=deals.find(function(x){return x._id===dealId;});
-  if(!d)return;
-  d.wealins_checks=d.wealins_checks||{};
-  d.wealins_checks[clientName]=d.wealins_checks[clientName]||{};
-  d.wealins_checks[clientName][stepId]=!d.wealins_checks[clientName][stepId];
-  try{await sbUpdate('deals',d._id,d);}catch(e){console.error(e);toast('Erreur sauvegarde');return;}
-  renderContrats();
-  updateContratsBadge();
+async function toggleProdStep(contractId,prodId,idx){
+  var c=contracts_db.find(function(x){return x._id===contractId;});if(!c)return;
+  var p=(c.produits||[]).find(function(x){return x.id===prodId;});if(!p||!p.steps[idx])return;
+  p.steps[idx].done=!p.steps[idx].done;
+  await persistContract(c);renderContrats();updateContratsBadge();
+}
+async function addProdStep(contractId,prodId){
+  var c=contracts_db.find(function(x){return x._id===contractId;});if(!c)return;
+  var p=(c.produits||[]).find(function(x){return x.id===prodId;});if(!p)return;
+  var label=prompt('Libellé de la nouvelle étape :');if(!label||!label.trim())return;
+  var note=prompt('Annotation optionnelle (laissez vide pour aucune) :','');
+  p.steps=p.steps||[];
+  var step={id:newStepId(),label:label.trim(),done:false};
+  if(note&&note.trim())step.note=note.trim();
+  p.steps.push(step);
+  await persistContract(c);renderContrats();updateContratsBadge();
+}
+async function renameProdStep(contractId,prodId,idx){
+  var c=contracts_db.find(function(x){return x._id===contractId;});if(!c)return;
+  var p=(c.produits||[]).find(function(x){return x.id===prodId;});if(!p||!p.steps[idx])return;
+  var label=prompt('Renommer cette étape :',p.steps[idx].label);
+  if(label===null)return;
+  if(!label.trim()){alert('Libellé vide.');return;}
+  p.steps[idx].label=label.trim();
+  await persistContract(c);renderContrats();
+}
+async function deleteProdStep(contractId,prodId,idx){
+  var c=contracts_db.find(function(x){return x._id===contractId;});if(!c)return;
+  var p=(c.produits||[]).find(function(x){return x.id===prodId;});if(!p||!p.steps[idx])return;
+  if(!confirm('Supprimer l\'étape "'+p.steps[idx].label+'" ?'))return;
+  p.steps.splice(idx,1);
+  await persistContract(c);renderContrats();updateContratsBadge();
+}
+
+async function deleteProd(contractId,prodId){
+  var c=contracts_db.find(function(x){return x._id===contractId;});if(!c)return;
+  var p=(c.produits||[]).find(function(x){return x.id===prodId;});if(!p)return;
+  if(!confirm('Supprimer l\'investissement "'+(p.name||'sans nom')+'" ?'))return;
+  c.produits=c.produits.filter(function(x){return x.id!==prodId;});
+  await persistContract(c);renderContrats();updateContratsBadge();
+  toast('Investissement supprimé.');
+}
+async function deleteContractFromCard(contractId){
+  var c=contracts_db.find(function(x){return x._id===contractId;});if(!c)return;
+  if(!confirm('Supprimer le contrat de '+c.client+' et tous ses investissements ?'))return;
+  try{
+    await deleteContractDB(contractId);
+    renderContrats();updateContratsBadge();
+    toast('Contrat supprimé.');
+  }catch(e){console.error(e);alert('Erreur: '+(e.message||e));}
 }
 
 function updateContratsBadge(){
@@ -3062,7 +3008,6 @@ function openContractModal(contractId,prefillClient){
   var c=contractId?contracts_db.find(function(x){return x._id===contractId;}):null;
   document.getElementById('contractModalTitle').textContent=c?'Modifier le contrat Wealins':'Nouveau contrat Wealins';
   document.getElementById('ctmId').value=c?c._id:'';
-  // Build client select
   var sel=document.getElementById('ctmClient');
   var clients=clients_db.map(function(x){return x.name;}).sort(function(a,b){return a.localeCompare(b);});
   var picked=c?c.client:(prefillClient||'');
@@ -3070,15 +3015,11 @@ function openContractModal(contractId,prefillClient){
   document.getElementById('ctmNum').value=c?c.num:'';
   document.getElementById('ctmBanque').value=c?c.banque:'Indosuez Luxembourg';
   document.getElementById('ctmNotes').value=c?(c.notes||''):'';
-  // Render prelim checklist
-  var prelim=c?(c.prelim||{}):{};
-  document.getElementById('ctmPrelim').innerHTML=PRELIM.map(function(s){
-    var on=!!prelim[s.id];
-    return '<div class="step-row">'+
-      '<div class="chk'+(on?' on':'')+'" onclick="this.classList.toggle(\'on\');this.nextElementSibling.classList.toggle(\'struck\');" data-step="'+s.id+'"></div>'+
-      '<span class="step-lbl'+(on?' struck':'')+'">'+escH(s.label)+'</span>'+
-    '</div>';
-  }).join('');
+  // Prelim section in modal: just shows the pre-existing list (read-only — toggling/editing is done on the page card)
+  var prelim=c?(c.prelim||[]):defaultPrelim();
+  document.getElementById('ctmPrelim').innerHTML=
+    '<div style="font-size:11px;color:var(--text3);margin-bottom:8px;">Les étapes seront créées avec ce contrat. Vous pourrez les modifier (cocher / renommer / ajouter) directement sur la fiche contrat après création.</div>'+
+    prelim.map(function(s){return '<div class="step-row"><div class="chk'+(s.done?' on':'')+'" style="cursor:default;"></div><span class="step-lbl">'+escH(s.label)+'</span></div>';}).join('');
   document.getElementById('ctmDeleteBtn').style.display=c?'':'none';
   document.getElementById('contractModal').classList.add('on');
 }
@@ -3091,30 +3032,102 @@ async function saveContractFromModal(){
   var banque=document.getElementById('ctmBanque').value.trim()||'Indosuez Luxembourg';
   var notes=document.getElementById('ctmNotes').value.trim();
   if(!client){alert('Sélectionnez un client.');return;}
-  // Read prelim from DOM checks
-  var prelim={};
-  document.querySelectorAll('#ctmPrelim .chk').forEach(function(el){prelim[el.dataset.step]=el.classList.contains('on');});
-  var c={_id:id||null,client:client,num:num,banque:banque,notes:notes,prelim:prelim};
+  var existing=id?contracts_db.find(function(x){return x._id===id;}):null;
+  var c={
+    _id:id||null,
+    client:client,
+    num:num,
+    banque:banque,
+    notes:notes,
+    prelim:existing?existing.prelim:defaultPrelim(),
+    produits:existing?existing.produits:[]
+  };
   try{
     var saved=await saveContract(c);
     closeContractModal();
     renderContrats();
     updateContratsBadge();
     toast(id?'Contrat mis à jour.':'Contrat créé.');
-    if(window._contractModalCallback){var cb=window._contractModalCallback;window._contractModalCallback=null;cb(saved);}
+    if(saved&&!id&&saved._id){ctrExp[saved._id]=true;renderContrats();}
   }catch(e){console.error(e);alert('Erreur: '+(e.message||e));}
 }
 
 async function deleteContractFromModal(){
   var id=document.getElementById('ctmId').value;
   if(!id)return;
-  if(!confirm('Supprimer ce contrat ? Les deals rattachés seront détachés.'))return;
+  if(!confirm('Supprimer ce contrat ?'))return;
   try{
     await deleteContractDB(id);
     closeContractModal();
     renderContrats();
     updateContratsBadge();
     toast('Contrat supprimé.');
+  }catch(e){console.error(e);alert('Erreur: '+(e.message||e));}
+}
+
+// ── INVESTMENT (PRODUIT) MODAL ───────────────────────────────────────────────
+var _prodEditCtxId=null,_prodEditCtxProdId=null;
+function openProdModal(contractId,prodId){
+  var c=contracts_db.find(function(x){return x._id===contractId;});
+  if(!c){alert('Contrat introuvable.');return;}
+  _prodEditCtxId=contractId;_prodEditCtxProdId=prodId||null;
+  var p=prodId?(c.produits||[]).find(function(x){return x.id===prodId;}):null;
+  document.getElementById('prodModalTitle').textContent=p?"Modifier l'investissement":'Ajouter un investissement';
+  document.getElementById('prodPName').value=p?p.name:'';
+  document.getElementById('prodPISIN').value=p?p.isin:'';
+  document.getElementById('prodPType').value=p?p.type:'structuré';
+  document.getElementById('prodPMontant').value=p?p.montant:'';
+  document.getElementById('prodPNotes').value=p?(p.notes||''):'';
+  document.getElementById('prodPClientLbl').textContent=c.client;
+  document.getElementById('prodDeleteBtn').style.display=p?'':'none';
+  document.getElementById('prodModal').classList.add('on');
+  setTimeout(function(){document.getElementById('prodPName').focus();},50);
+}
+function closeProdModal(){document.getElementById('prodModal').classList.remove('on');_prodEditCtxId=null;_prodEditCtxProdId=null;}
+
+async function saveProdFromModal(){
+  if(!_prodEditCtxId)return;
+  var c=contracts_db.find(function(x){return x._id===_prodEditCtxId;});if(!c){alert('Contrat introuvable.');return;}
+  var name=document.getElementById('prodPName').value.trim();
+  var isin=document.getElementById('prodPISIN').value.trim();
+  var type=document.getElementById('prodPType').value;
+  var montant=document.getElementById('prodPMontant').value.trim();
+  var notes=document.getElementById('prodPNotes').value.trim();
+  if(!name){alert('Nom du produit requis.');return;}
+  c.produits=c.produits||[];
+  if(_prodEditCtxProdId){
+    var p=c.produits.find(function(x){return x.id===_prodEditCtxProdId;});
+    if(!p)return;
+    var oldType=p.type;
+    p.name=name;p.isin=isin;p.type=type;p.montant=montant;p.notes=notes;
+    if(oldType!==type){
+      // Reset steps to the new type's defaults — preserve only if user wants? simplest: full reset.
+      if(confirm('Le type a changé. Réinitialiser la checklist avec les étapes par défaut du nouveau type ? (sinon les étapes existantes seront conservées telles quelles)')){
+        p.steps=defaultStepsFor(type);
+      }
+    }
+  } else {
+    var newP={id:newStepId(),name:name,isin:isin,type:type,montant:montant,notes:notes,steps:defaultStepsFor(type)};
+    c.produits.push(newP);
+    prodExp[c._id+'|'+newP.id]=true;
+    ctrExp[c._id]=true;
+  }
+  try{
+    await saveContract(c);
+    closeProdModal();
+    renderContrats();updateContratsBadge();
+    toast(_prodEditCtxProdId?'Investissement mis à jour.':'Investissement ajouté.');
+  }catch(e){console.error(e);alert('Erreur: '+(e.message||e));}
+}
+async function deleteProdFromModal(){
+  if(!_prodEditCtxId||!_prodEditCtxProdId)return;
+  if(!confirm('Supprimer cet investissement ?'))return;
+  var c=contracts_db.find(function(x){return x._id===_prodEditCtxId;});if(!c)return;
+  c.produits=(c.produits||[]).filter(function(x){return x.id!==_prodEditCtxProdId;});
+  try{
+    await saveContract(c);
+    closeProdModal();renderContrats();updateContratsBadge();
+    toast('Investissement supprimé.');
   }catch(e){console.error(e);alert('Erreur: '+(e.message||e));}
 }
 
@@ -3144,7 +3157,7 @@ async function initApp(){
       }
       contracts_db=[];
     } else {
-      contracts_db=((results[5].data)||[]).map(function(r){return{_id:r.id,client:r.client,num:r.num||'',banque:r.banque||'Indosuez Luxembourg',notes:r.notes||'',prelim:r.prelim||{},created_at:r.created_at};});
+      contracts_db=((results[5].data)||[]).map(rowToContract);
     }
     if(!fourn_db.length)await seedFournisseurs();
     else await mergeFournDefaults();

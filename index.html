@@ -670,14 +670,18 @@
       </div>
       <div class="fl" style="margin-top:8px;"><label>Banque dépositaire</label><input type="text" id="ctmBanque" value="Indosuez Luxembourg"/></div>
       <div class="fl" style="margin-top:8px;"><label>Notes (optionnel)</label><textarea id="ctmNotes" rows="2" placeholder="Remarques internes, échéances, contacts…"></textarea></div>
-      <div class="form-sep">Étapes préliminaires</div>
+      <div class="form-sep" style="display:flex;align-items:center;gap:8px;">Étapes préliminaires<div style="flex:1;"></div>
+        <button type="button" class="btn btn-sm" onclick="ctmAddStep()" style="font-size:11px;">+ Ajouter une étape</button>
+        <button type="button" class="btn btn-sm" onclick="ctmLoadDefaults()" style="font-size:11px;color:var(--text2);" title="Insérer les 4 étapes Wealins standard">Charger défauts</button>
+      </div>
       <div id="ctmPrelim"></div>
+      <div style="font-size:11px;color:var(--text3);margin-top:6px;">Aucune étape proposée par défaut. Ajoutez-en autant que nécessaire — vous pourrez les modifier après création.</div>
     </div>
     <div class="modal-ft"><button class="btn" onclick="closeContractModal()">Annuler</button><button class="btn" id="ctmDeleteBtn" style="color:var(--red);border-color:var(--red-bg);display:none;" onclick="deleteContractFromModal()">Supprimer</button><button class="btn btn-primary" onclick="saveContractFromModal()">Enregistrer</button></div>
   </div>
 </div>
 <div class="ov" id="prodModal">
-  <div class="modal" style="max-width:520px;">
+  <div class="modal" style="max-width:640px;">
     <div class="modal-hd"><span class="modal-title" id="prodModalTitle">Ajouter un investissement</span><button class="close-btn" onclick="closeProdModal()">×</button></div>
     <div class="modal-body">
       <div style="font-size:11px;color:var(--text3);margin-bottom:10px;">Client : <span id="prodPClientLbl" style="color:var(--text);font-weight:500;"></span></div>
@@ -694,7 +698,12 @@
       </div>
       <div class="fl" style="margin-top:8px;"><label>Montant</label><input type="text" id="prodPMontant" placeholder="ex: 250 000 €"/></div>
       <div class="fl" style="margin-top:8px;"><label>Notes (optionnel)</label><textarea id="prodPNotes" rows="2" placeholder="Échéance, conditions particulières…"></textarea></div>
-      <div style="font-size:11px;color:var(--text3);margin-top:10px;">La checklist sera initialisée avec les étapes par défaut du type choisi. Vous pourrez ensuite l'éditer librement (cocher / renommer / ajouter / supprimer) sur la fiche contrat.</div>
+      <div class="form-sep" style="display:flex;align-items:center;gap:8px;">Étapes de la checklist<div style="flex:1;"></div>
+        <button type="button" class="btn btn-sm" onclick="prodAddStep()" style="font-size:11px;">+ Ajouter une étape</button>
+        <button type="button" class="btn btn-sm" onclick="prodLoadDefaults()" style="font-size:11px;color:var(--text2);" title="Insérer les étapes Wealins par défaut pour le type sélectionné">Charger défauts du type</button>
+      </div>
+      <div id="prodPSteps"></div>
+      <div style="font-size:11px;color:var(--text3);margin-top:6px;">Aucune étape proposée par défaut. Ajoutez-en autant que nécessaire — vous pourrez les modifier après création.</div>
     </div>
     <div class="modal-ft"><button class="btn" onclick="closeProdModal()">Annuler</button><button class="btn" id="prodDeleteBtn" style="color:var(--red);border-color:var(--red-bg);display:none;" onclick="deleteProdFromModal()">Supprimer</button><button class="btn btn-primary" onclick="saveProdFromModal()">Enregistrer</button></div>
   </div>

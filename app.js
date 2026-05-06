@@ -136,8 +136,11 @@ var WTYPE_LBL={'structuré':'Structuré','ucits':'UCITS','alternatif':'Alternati
 var WTYPE_BADGE={'structuré':'bg','ucits':'bb','alternatif':'ba'};
 
 function newStepId(){return 'st_'+Math.random().toString(36).slice(2,9);}
-function defaultPrelim(){return PRELIM_DEFAULTS.map(function(s){return{id:s.id,label:s.label,done:false};});}
-function defaultStepsFor(type){var arr=STEPS_DEFAULTS[type]||[];return arr.map(function(s){var o={id:s.id,label:s.label,done:false};if(s.note)o.note=s.note;return o;});}
+function defaultPrelim(){return [];}
+function defaultStepsFor(type){return [];}
+// Defaults remain available via "Charger défauts Wealins" buttons in the modals (optional convenience).
+function seedPrelimDefaults(){return PRELIM_DEFAULTS.map(function(s){return{id:newStepId(),label:s.label,done:false};});}
+function seedStepsForType(type){var arr=STEPS_DEFAULTS[type]||[];return arr.map(function(s){var o={id:newStepId(),label:s.label,done:false};if(s.note)o.note=s.note;return o;});}
 
 function parseMoney(s){
   if(!s)return 0;
@@ -3003,6 +3006,51 @@ function updateContratsBadge(){
   else{badge.style.display='none';}
 }
 
+// ── INLINE STEP EDITOR (used in both contract & investissement modals) ──────
+function renderStepEditorRows(steps,opts){
+  // steps: array of {id?, label, note?, done}
+  // opts.note: true if note field is shown
+  return (steps||[]).map(function(s){
+    var hasNote=opts&&opts.note;
+    return '<div class="step-edit-row" data-id="'+escH(s.id||newStepId())+'" style="display:flex;gap:6px;align-items:center;margin-bottom:4px;">'+
+      '<div class="chk'+(s.done?' on':'')+'" onclick="this.classList.toggle(\'on\')" style="flex-shrink:0;"></div>'+
+      '<input type="text" class="step-edit-label" value="'+escH(s.label||'')+'" placeholder="Libellé de l\'étape" style="flex:1;min-width:0;font-size:12px;padding:5px 8px;"/>'+
+      (hasNote?'<input type="text" class="step-edit-note" value="'+escH(s.note||'')+'" placeholder="Annotation (optionnel)" style="width:140px;font-size:11px;padding:5px 8px;"/>':'')+
+      '<button type="button" class="btn btn-sm" style="padding:3px 8px;font-size:11px;color:var(--red);border-color:var(--red-bg);flex-shrink:0;" onclick="this.closest(\'.step-edit-row\').remove();">×</button>'+
+    '</div>';
+  }).join('');
+}
+function readStepEditorRows(containerEl,opts){
+  var hasNote=opts&&opts.note;
+  var rows=containerEl.querySelectorAll('.step-edit-row');
+  var out=[];
+  rows.forEach(function(row){
+    var labelEl=row.querySelector('.step-edit-label');
+    var label=labelEl?labelEl.value.trim():'';
+    if(!label)return;
+    var s={id:row.dataset.id||newStepId(),label:label,done:row.querySelector('.chk').classList.contains('on')};
+    if(hasNote){var nEl=row.querySelector('.step-edit-note');var note=nEl?nEl.value.trim():'';if(note)s.note=note;}
+    out.push(s);
+  });
+  return out;
+}
+function addEditorStep(containerId,opts){
+  var hasNote=opts&&opts.note;
+  var c=document.getElementById(containerId);
+  var div=document.createElement('div');
+  div.outerHTML;
+  var html=
+    '<div class="step-edit-row" data-id="'+newStepId()+'" style="display:flex;gap:6px;align-items:center;margin-bottom:4px;">'+
+      '<div class="chk" onclick="this.classList.toggle(\'on\')" style="flex-shrink:0;"></div>'+
+      '<input type="text" class="step-edit-label" placeholder="Libellé de l\'étape" style="flex:1;min-width:0;font-size:12px;padding:5px 8px;"/>'+
+      (hasNote?'<input type="text" class="step-edit-note" placeholder="Annotation (optionnel)" style="width:140px;font-size:11px;padding:5px 8px;"/>':'')+
+      '<button type="button" class="btn btn-sm" style="padding:3px 8px;font-size:11px;color:var(--red);border-color:var(--red-bg);flex-shrink:0;" onclick="this.closest(\'.step-edit-row\').remove();">×</button>'+
+    '</div>';
+  c.insertAdjacentHTML('beforeend',html);
+  var inputs=c.querySelectorAll('.step-edit-label');
+  if(inputs.length)inputs[inputs.length-1].focus();
+}
+
 // ── CONTRACT MODAL ───────────────────────────────────────────────────────────
 function openContractModal(contractId,prefillClient){
   var c=contractId?contracts_db.find(function(x){return x._id===contractId;}):null;
@@ -3015,15 +3063,19 @@ function openContractModal(contractId,prefillClient){
   document.getElementById('ctmNum').value=c?c.num:'';
   document.getElementById('ctmBanque').value=c?c.banque:'Indosuez Luxembourg';
   document.getElementById('ctmNotes').value=c?(c.notes||''):'';
-  // Prelim section in modal: just shows the pre-existing list (read-only — toggling/editing is done on the page card)
-  var prelim=c?(c.prelim||[]):defaultPrelim();
-  document.getElementById('ctmPrelim').innerHTML=
-    '<div style="font-size:11px;color:var(--text3);margin-bottom:8px;">Les étapes seront créées avec ce contrat. Vous pourrez les modifier (cocher / renommer / ajouter) directement sur la fiche contrat après création.</div>'+
-    prelim.map(function(s){return '<div class="step-row"><div class="chk'+(s.done?' on':'')+'" style="cursor:default;"></div><span class="step-lbl">'+escH(s.label)+'</span></div>';}).join('');
+  // Editable prelim list — empty by default
+  var prelim=c?(c.prelim||[]):[];
+  document.getElementById('ctmPrelim').innerHTML=renderStepEditorRows(prelim,{note:false});
   document.getElementById('ctmDeleteBtn').style.display=c?'':'none';
   document.getElementById('contractModal').classList.add('on');
 }
 function closeContractModal(){document.getElementById('contractModal').classList.remove('on');}
+function ctmAddStep(){addEditorStep('ctmPrelim',{note:false});}
+function ctmLoadDefaults(){
+  if(!confirm('Charger les 4 étapes Wealins par défaut ? (les étapes existantes seront conservées)'))return;
+  var c=document.getElementById('ctmPrelim');
+  c.insertAdjacentHTML('beforeend',renderStepEditorRows(seedPrelimDefaults(),{note:false}));
+}
 
 async function saveContractFromModal(){
   var id=document.getElementById('ctmId').value;
@@ -3032,6 +3084,7 @@ async function saveContractFromModal(){
   var banque=document.getElementById('ctmBanque').value.trim()||'Indosuez Luxembourg';
   var notes=document.getElementById('ctmNotes').value.trim();
   if(!client){alert('Sélectionnez un client.');return;}
+  var prelim=readStepEditorRows(document.getElementById('ctmPrelim'),{note:false});
   var existing=id?contracts_db.find(function(x){return x._id===id;}):null;
   var c={
     _id:id||null,
@@ -3039,7 +3092,7 @@ async function saveContractFromModal(){
     num:num,
     banque:banque,
     notes:notes,
-    prelim:existing?existing.prelim:defaultPrelim(),
+    prelim:prelim,
     produits:existing?existing.produits:[]
   };
   try{
@@ -3079,11 +3132,23 @@ function openProdModal(contractId,prodId){
   document.getElementById('prodPMontant').value=p?p.montant:'';
   document.getElementById('prodPNotes').value=p?(p.notes||''):'';
   document.getElementById('prodPClientLbl').textContent=c.client;
+  // Editable steps list — empty by default
+  var steps=p?(p.steps||[]):[];
+  document.getElementById('prodPSteps').innerHTML=renderStepEditorRows(steps,{note:true});
   document.getElementById('prodDeleteBtn').style.display=p?'':'none';
   document.getElementById('prodModal').classList.add('on');
   setTimeout(function(){document.getElementById('prodPName').focus();},50);
 }
 function closeProdModal(){document.getElementById('prodModal').classList.remove('on');_prodEditCtxId=null;_prodEditCtxProdId=null;}
+function prodAddStep(){addEditorStep('prodPSteps',{note:true});}
+function prodLoadDefaults(){
+  var type=document.getElementById('prodPType').value;
+  var defs=seedStepsForType(type);
+  if(!defs.length){alert('Aucune étape par défaut pour ce type.');return;}
+  if(!confirm('Charger les '+defs.length+' étapes par défaut pour le type "'+(WTYPE_LBL[type]||type)+'" ? (les étapes existantes seront conservées)'))return;
+  var c=document.getElementById('prodPSteps');
+  c.insertAdjacentHTML('beforeend',renderStepEditorRows(defs,{note:true}));
+}
 
 async function saveProdFromModal(){
   if(!_prodEditCtxId)return;
@@ -3094,20 +3159,14 @@ async function saveProdFromModal(){
   var montant=document.getElementById('prodPMontant').value.trim();
   var notes=document.getElementById('prodPNotes').value.trim();
   if(!name){alert('Nom du produit requis.');return;}
+  var steps=readStepEditorRows(document.getElementById('prodPSteps'),{note:true});
   c.produits=c.produits||[];
   if(_prodEditCtxProdId){
     var p=c.produits.find(function(x){return x.id===_prodEditCtxProdId;});
     if(!p)return;
-    var oldType=p.type;
-    p.name=name;p.isin=isin;p.type=type;p.montant=montant;p.notes=notes;
-    if(oldType!==type){
-      // Reset steps to the new type's defaults — preserve only if user wants? simplest: full reset.
-      if(confirm('Le type a changé. Réinitialiser la checklist avec les étapes par défaut du nouveau type ? (sinon les étapes existantes seront conservées telles quelles)')){
-        p.steps=defaultStepsFor(type);
-      }
-    }
+    p.name=name;p.isin=isin;p.type=type;p.montant=montant;p.notes=notes;p.steps=steps;
   } else {
-    var newP={id:newStepId(),name:name,isin:isin,type:type,montant:montant,notes:notes,steps:defaultStepsFor(type)};
+    var newP={id:newStepId(),name:name,isin:isin,type:type,montant:montant,notes:notes,steps:steps};
     c.produits.push(newP);
     prodExp[c._id+'|'+newP.id]=true;
     ctrExp[c._id]=true;

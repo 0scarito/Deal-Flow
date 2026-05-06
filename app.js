@@ -1,15 +1,116 @@
-// ── DATABASE LAYER (localStorage — swap for Supabase in production) ──────────
-// ── SUPABASE CONFIG ───────────────────────────────────────────────────────────
-// ── MODE LOCAL (localStorage) — remplacer par Supabase pour la prod ──────────
-function lsGet(table){try{return JSON.parse(localStorage.getItem('db_'+table)||'[]');}catch(e){return[];}}
-function lsSave(table,rows){try{localStorage.setItem('db_'+table,JSON.stringify(rows));}catch(e){}}
-function lsNextId(table){var id=parseInt(localStorage.getItem('id_'+table)||'0')+1;localStorage.setItem('id_'+table,id);return String(id);}
+// ── SUPABASE CLIENT ───────────────────────────────────────────────────────────
+var SUPABASE_URL='https://nlnvnqfuuggtbcqvnxag.supabase.co';
+var SUPABASE_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5sbnZucWZ1dWdndGJjcXZueGFnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgwNjYyMjgsImV4cCI6MjA5MzY0MjIyOH0.DpaQdphDzDkl7_Q1VoUfH9Z3EbAP21rTl0GVkBtnwd0';
+var sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
 
-async function sbGet(table){return lsGet(table).map(r=>({id:r._id,data:r}));}
-async function sbInsert(table,data){var id=lsNextId(table);var rows=lsGet(table);rows.push({...data,_id:id});lsSave(table,rows);return [{id:id,data:{...data,_id:id}}];}
-async function sbUpdate(table,id,data){var rows=lsGet(table);var i=rows.findIndex(r=>r._id===id);if(i>=0)rows[i]={...data,_id:id};lsSave(table,rows);return [{id:id,data:{...data,_id:id}}];}
-async function sbDelete(table,id){var rows=lsGet(table).filter(r=>r._id!==id);lsSave(table,rows);return true;}
-async function sbGetAll(table){return lsGet(table);}
+// JS camelCase <-> DB snake_case mapping for deals
+function dealToRow(d){
+  var r=Object.assign({},d);
+  delete r._id; delete r.created_at; delete r.updated_at;
+  r.uf_r=r.ufR; r.run_r=r.runR; r.uf_e=r.ufE; r.run_e=r.runE;
+  r.inv_s=r.invS; r.f_st=r.fSt; r.f_ref=r.fRef;
+  r.arb_id=r.arbId; r.arb_src=r.arbSrc; r.arb_closed=r.arbClosed;
+  r.end_date=r.end;
+  delete r.ufR; delete r.runR; delete r.ufE; delete r.runE;
+  delete r.invS; delete r.fSt; delete r.fRef;
+  delete r.arbId; delete r.arbSrc; delete r.arbClosed; delete r.end;
+  return r;
+}
+function rowToDeal(r){
+  var d=Object.assign({},r);
+  d._id=d.id; delete d.id; delete d.created_at; delete d.updated_at;
+  d.ufR=d.uf_r; d.runR=d.run_r; d.ufE=d.uf_e; d.runE=d.run_e;
+  d.invS=d.inv_s; d.fSt=d.f_st; d.fRef=d.f_ref;
+  d.arbId=d.arb_id; d.arbSrc=d.arb_src; d.arbClosed=d.arb_closed;
+  d.end=d.end_date;
+  delete d.uf_r; delete d.run_r; delete d.uf_e; delete d.run_e;
+  delete d.inv_s; delete d.f_st; delete d.f_ref;
+  delete d.arb_id; delete d.arb_src; delete d.arb_closed; delete d.end_date;
+  return d;
+}
+function rowToRef(r){var d=Object.assign({},r);d._id=d.id;delete d.id;delete d.created_at;delete d.updated_at;return d;}
+
+async function sbGet(table){
+  var res=await sb.from(table).select('*');
+  if(res.error)throw res.error;
+  return (res.data||[]).map(function(r){return{id:r.id,data:table==='deals'?rowToDeal(r):rowToRef(r)};});
+}
+async function sbInsert(table,data){
+  var row=table==='deals'?dealToRow(data):Object.assign({},data);
+  delete row.id; delete row._id;
+  var res=await sb.from(table).insert(row).select();
+  if(res.error)throw res.error;
+  return (res.data||[]).map(function(r){return{id:r.id,data:table==='deals'?rowToDeal(r):rowToRef(r)};});
+}
+async function sbUpdate(table,id,data){
+  var row=table==='deals'?dealToRow(data):Object.assign({},data);
+  delete row.id; delete row._id; delete row.created_at;
+  var res=await sb.from(table).update(row).eq('id',id).select();
+  if(res.error)throw res.error;
+  return (res.data||[]).map(function(r){return{id:r.id,data:table==='deals'?rowToDeal(r):rowToRef(r)};});
+}
+async function sbDelete(table,id){
+  var res=await sb.from(table).delete().eq('id',id);
+  if(res.error)throw res.error;
+  return true;
+}
+async function sbGetAll(table){
+  var res=await sb.from(table).select('*');
+  if(res.error)throw res.error;
+  return (res.data||[]).map(function(r){return table==='deals'?rowToDeal(r):rowToRef(r);});
+}
+
+// ── RAPPROCHEMENT CACHE (in-memory + Supabase) ────────────────────────────────
+var rapprochement_db=[];
+function rapprFind(fourn,type,period){
+  return rapprochement_db.find(function(r){return r.fourn===fourn&&r.type===type&&r.period===(period||null);});
+}
+function rapprRowToObj(r){
+  return {id:r.id,fourn:r.fourn,type:r.type,period:r.period,declared:r.declared,comment:r.comment||'',facture:r.facture||false,factureDate:r.facture_date||'',paid:r.paid||false,paidDate:r.paid_date||'',theoTrim:r.theo_trim||0};
+}
+async function rapprSave(fourn,type,period,data){
+  var existing=rapprFind(fourn,type,period);
+  var row={fourn:fourn,type:type,period:period||null,declared:data.declared,comment:data.comment||'',facture:data.facture||false,facture_date:data.factureDate||null,paid:data.paid||false,paid_date:data.paidDate||null,theo_trim:data.theoTrim||null};
+  if(existing){
+    var res=await sb.from('rapprochement').update(row).eq('id',existing.id).select();
+    if(res.error)throw res.error;
+    if(res.data&&res.data[0])Object.assign(existing,rapprRowToObj(res.data[0]));
+  } else {
+    var res=await sb.from('rapprochement').insert(row).select();
+    if(res.error)throw res.error;
+    if(res.data&&res.data[0])rapprochement_db.push(rapprRowToObj(res.data[0]));
+  }
+}
+async function rapprDelete(fourn,type,period){
+  var existing=rapprFind(fourn,type,period);
+  if(!existing)return;
+  var res=await sb.from('rapprochement').delete().eq('id',existing.id);
+  if(res.error)throw res.error;
+  rapprochement_db=rapprochement_db.filter(function(r){return r.id!==existing.id;});
+}
+
+// ── AUTH ──────────────────────────────────────────────────────────────────────
+async function checkAuth(){
+  var res=await sb.auth.getSession();
+  var session=res.data&&res.data.session;
+  if(session){document.getElementById('loginOverlay').style.display='none';initApp();}
+  else{document.getElementById('loadingOverlay').style.display='none';document.getElementById('loginOverlay').style.display='flex';}
+}
+async function doLogin(){
+  var email=document.getElementById('loginEmail').value.trim();
+  var pw=document.getElementById('loginPw').value;
+  var btn=document.getElementById('loginBtn');
+  var err=document.getElementById('loginErr');
+  btn.disabled=true;btn.textContent='Connexion…';err.textContent='';
+  var res=await sb.auth.signInWithPassword({email:email,password:pw});
+  if(res.error){err.textContent=res.error.message||'Email ou mot de passe incorrect.';btn.disabled=false;btn.textContent='Se connecter';}
+  else{document.getElementById('loginOverlay').style.display='none';initApp();}
+}
+async function doLogout(){
+  await sb.auth.signOut();
+  deals=[];clients_db=[];fourn_db=[];brokers_db=[];rapprochement_db=[];
+  document.getElementById('loginOverlay').style.display='flex';
+}
 
 // ── APP ─────────────────────────────────────────────────────────────────────
 var deals=[],curV='Tous',sCol='date',sDir=-1,editIdx=-1,ct='UF',ftab='all',charts={};
@@ -158,19 +259,9 @@ function renderKpis(){
   var ufPaye=d.filter(x=>(x.ct==='UF'||x.ct==='BOTH')&&x.fSt==='Payé'&&x.inv&&x.inv.startsWith(year));
   var tUFPaye=ufPaye.reduce(function(s,x){return s+(x.ufE||0);},0);
 
-  // Running payés — montants réellement déclarés et payés (localStorage)
+  // Running payés — montants réellement déclarés et payés (Supabase cache)
   var tRunPaye=0,nbFourn=0;
-  try{
-    for(var ki=0;ki<localStorage.length;ki++){
-      var k=localStorage.key(ki);
-      if(!k||k.indexOf('recapfact_')!==0)continue;
-      var obj=JSON.parse(localStorage.getItem(k)||'{}');
-      if(!obj.paid||!obj.declared)continue;
-      var kparts=k.replace('recapfact_','').split('_');
-      if(kparts[kparts.length-1]!==year)continue;
-      tRunPaye+=obj.declared;nbFourn++;
-    }
-  }catch(e){}
+  rapprochement_db.filter(function(r){return r.type==='run'&&r.paid&&r.declared&&r.period&&r.period.endsWith('_'+year);}).forEach(function(r){tRunPaye+=r.declared;nbFourn++;});
 
   // Perf fees payés (deals fSt=Payé avec pf.amount ou pf.rate, date inv dans l'année)
   var tPF=0;
@@ -247,13 +338,11 @@ function renderCAChart(){
       if(d.ct==='RUN'||d.ct==='BOTH'){
         if(!d.invS) continue;
         var t=Math.ceil(parseInt(d.invS.substring(5,7))/3);
-        var key='recapfact_'+d.fourn+'_T'+t+'_'+yr;
-        if(seen[key]) continue; seen[key]=1;
-        try{
-          var sv=JSON.parse(localStorage.getItem(key)||'null');
-          if(sv&&sv.paid&&sv.declared) tRun+=sv.declared;
-          else tRun+=(d.runE||0)/4;
-        }catch(ignored){}
+        var rKey='T'+t+'_'+yr;
+        if(seen[rKey]) continue; seen[rKey]=1;
+        var rv=rapprFind(d.fourn,'run',rKey);
+        if(rv&&rv.paid&&rv.declared) tRun+=rv.declared;
+        else tRun+=(d.runE||0)/4;
       }
     }
 
@@ -643,10 +732,12 @@ function initRecapTrim(){
   if(btn){btn.style.background='var(--text)';btn.style.color='var(--surface)';btn.style.borderColor='var(--text)';}
 }
 
-// Storage key for declared amounts
-function recapFactKey(fourn,trim,year){return 'recapfact_'+fourn+'_T'+trim+'_'+year;}
-function loadRecapFact(fourn){try{var s=localStorage.getItem(recapFactKey(fourn,recapTrim,recapTrimYear));return s?JSON.parse(s):null;}catch(e){return null;}}
-function saveRecapFactData(fourn,data){try{localStorage.setItem(recapFactKey(fourn,recapTrim,recapTrimYear),JSON.stringify(data));}catch(e){}}
+// Running rapprochement — reads from in-memory cache, writes async to Supabase
+function loadRecapFact(fourn){
+  var r=rapprFind(fourn,'run','T'+recapTrim+'_'+recapTrimYear);
+  return r?{declared:r.declared,comment:r.comment,facture:r.facture,factureDate:r.factureDate,paid:r.paid,paidDate:r.paidDate,theoTrim:r.theoTrim}:null;
+}
+async function saveRecapFactData(fourn,data){await rapprSave(fourn,'run','T'+recapTrim+'_'+recapTrimYear,data);}
 
 function getTrimDates(trim,year){
   var starts=[[1,1],[4,1],[7,1],[10,1]];
@@ -791,25 +882,12 @@ function setRunInvTab(tab,btn){
 }
 
 function getAllRunInvoices(){
-  // Scan all localStorage keys matching recapfact_*
-  var invoices=[];
-  try{
-    for(var i=0;i<localStorage.length;i++){
-      var k=localStorage.key(i);
-      if(k&&k.startsWith('recapfact_')){
-        var parts=k.replace('recapfact_','').split('_');
-        // format: FOURNNAME_T1_2026 (fournisseur name may have underscores, last two parts are T# and year)
-        var year=parts[parts.length-1];
-        var trim=parts[parts.length-2];
-        var fourn=parts.slice(0,parts.length-2).join('_');
-        var data=JSON.parse(localStorage.getItem(k)||'{}');
-        if(data.declared!=null){
-          invoices.push({fourn,trim,year,theoTrim:data.theoTrim||0,declared:data.declared,factureDate:data.factureDate||'',facture:data.facture||false,paid:data.paid||false,paidDate:data.paidDate||''});
-        }
-      }
-    }
-  }catch(e){}
-  return invoices.sort((a,b)=>b.year.localeCompare(a.year)||b.trim.localeCompare(a.trim)||a.fourn.localeCompare(b.fourn));
+  return rapprochement_db.filter(function(r){return r.type==='run'&&r.declared!=null;}).map(function(r){
+    var parts=(r.period||'').split('_');
+    var year=parts[parts.length-1];
+    var trim=parts.slice(0,parts.length-1).join('_');
+    return {fourn:r.fourn,trim:trim,year:year,theoTrim:r.theoTrim||0,declared:r.declared,factureDate:r.factureDate||'',facture:r.facture||false,paid:r.paid||false,paidDate:r.paidDate||''};
+  }).sort(function(a,b){return b.year.localeCompare(a.year)||b.trim.localeCompare(a.trim)||a.fourn.localeCompare(b.fourn);});
 }
 
 function renderRunInvTable(){
@@ -833,33 +911,29 @@ function renderRunInvTable(){
   });
 }
 
-function deleteRunInv(fourn,trim,year){
+async function deleteRunInv(fourn,trim,year){
   if(!confirm('Supprimer cette facture Running de "'+fourn+'" ('+trim+' '+year+') ?'))return;
-  var key='recapfact_'+fourn+'_'+trim+'_'+year;
-  localStorage.removeItem(key);
+  await rapprDelete(fourn,'run',trim+'_'+year);
   renderRunInvTable();renderRecapFourn();
   toast('Facture supprimée.');
 }
 
-function markRunInvPaid(fourn,trim,year){
-  var key='recapfact_'+fourn+'_'+trim+'_'+year;
+async function markRunInvPaid(fourn,trim,year){
   try{
-    var data=JSON.parse(localStorage.getItem(key)||'{}');
+    var r=rapprFind(fourn,'run',trim+'_'+year);
+    if(!r)return;
     var paidDate=new Date().toISOString().split('T')[0];
-    data.paid=true;
-    data.paidDate=paidDate;
-    localStorage.setItem(key,JSON.stringify(data));
-    // Get trim dates to identify correct deals
+    await rapprSave(fourn,'run',trim+'_'+year,{declared:r.declared,comment:r.comment,facture:r.facture,factureDate:r.factureDate,paid:true,paidDate:paidDate,theoTrim:r.theoTrim});
     var trimNum=parseInt(trim.replace('T',''));
     var yearNum=parseInt(year);
     var trimDates=getTrimDates(trimNum,yearNum);
-    // Update deals: only Running deals of this fournisseur whose invS matches the trim end date
-    deals.filter(d=>(d.ct==='RUN'||d.ct==='BOTH')&&d.fourn===fourn&&(d.fSt==='Facturé')&&d.invS===trimDates.endStr).forEach(d=>{
-      d.fSt='Payé';
-      d.inv=paidDate; // invoice payment date = today
+    var toUpdate=deals.filter(function(d){return(d.ct==='RUN'||d.ct==='BOTH')&&d.fourn===fourn&&d.fSt==='Facturé'&&d.invS===trimDates.endStr;});
+    for(var i=0;i<toUpdate.length;i++){
+      var d=toUpdate[i];
+      d.fSt='Payé';d.inv=paidDate;
       d.hist.push({ts:nowS(),a:'Facture Running payée — '+trim+' '+year,by:'Système'});
-      var{_id,...dd}=d;if(_id)sbUpdate('deals',_id,dd);
-    });
+      if(d._id)await sbUpdate('deals',d._id,d);
+    }
     renderRunInvTable();renderFact();renderKpis();updateAlertBadge();
     toast('Facture '+fourn+' '+trim+' '+year+' marquée comme payée. Commissions mises à jour.');
   }catch(e){toast('Erreur lors de la mise à jour.');}
@@ -871,9 +945,8 @@ function markRunInvPaid(fourn,trim,year){
 var pfRapprCurrentFourn=null, pfRapprCurrentTheo=0;
 var pfInvTabCurrent='all';
 
-function pfRapprKey(fourn){return 'pfrappr_'+fourn;}
-function loadPFRappr(fourn){try{var s=localStorage.getItem(pfRapprKey(fourn));return s?JSON.parse(s):null;}catch(e){return null;}}
-function savePFRapprData(fourn,data){try{localStorage.setItem(pfRapprKey(fourn),JSON.stringify(data));}catch(e){}}
+function loadPFRappr(fourn){var r=rapprFind(fourn,'pf',null);return r?{declared:r.declared,comment:r.comment,facture:r.facture,factureDate:r.factureDate}:null;}
+async function savePFRapprData(fourn,data){await rapprSave(fourn,'pf',null,data);}
 
 function setPFInvTab(tab,btn){
   pfInvTabCurrent=tab;
@@ -951,10 +1024,10 @@ function openPFRapprModal(fournName){
   setTimeout(()=>document.getElementById('pfRmDeclared').focus(),50);
 }
 function closePFRapprModal(){document.getElementById('pfRapprModal').classList.remove('on');pfRapprCurrentFourn=null;}
-function resetPFRappr(){
+async function resetPFRappr(){
   if(!pfRapprCurrentFourn)return;
   if(!confirm('Réinitialiser la saisie pour '+pfRapprCurrentFourn+' ?'))return;
-  localStorage.removeItem(pfRapprKey(pfRapprCurrentFourn));
+  await rapprDelete(pfRapprCurrentFourn,'pf',null);
   closePFRapprModal();renderPFRappr();toast('Saisie réinitialisée.');
 }
 function updatePFRapprEcart(){
@@ -964,26 +1037,27 @@ function updatePFRapprEcart(){
   document.getElementById('pfRmEcart').textContent=(ecart>=0?'+':'')+fE(ecart);
   document.getElementById('pfRmEcart').style.color=Math.abs(ecart)<1?'var(--green)':ecart>0?'var(--purple)':'var(--red)';
 }
-function savePFRappr(){
+async function savePFRappr(){
   if(!pfRapprCurrentFourn)return;
   var declared=parseFloat(document.getElementById('pfRmDeclared').value);
   if(isNaN(declared)){alert('Veuillez saisir un montant.');return;}
   var saved=loadPFRappr(pfRapprCurrentFourn)||{};
-  savePFRapprData(pfRapprCurrentFourn,{declared,comment:document.getElementById('pfRmComment').value,facture:saved.facture||false});
+  await savePFRapprData(pfRapprCurrentFourn,{declared:declared,comment:document.getElementById('pfRmComment').value,facture:saved.facture||false});
   closePFRapprModal();renderPFRappr();toast('Montant enregistré pour '+pfRapprCurrentFourn+'.');
 }
-function genPFRapprFacture(){
+async function genPFRapprFacture(){
   if(!pfRapprCurrentFourn)return;
   var declared=parseFloat(document.getElementById('pfRmDeclared').value);
   if(isNaN(declared)||declared===0){alert('Veuillez saisir le montant avant de générer la facture.');return;}
   var comment=document.getElementById('pfRmComment').value;
-  savePFRapprData(pfRapprCurrentFourn,{declared,comment,facture:true,factureDate:new Date().toISOString().split('T')[0]});
-  var fDeals=filt().filter(d=>d.pf&&d.pf.mode!=='none'&&d.pf.amount>0&&d.fourn===pfRapprCurrentFourn&&(!d.fSt||d.fSt==='À émettre'));
-  fDeals.forEach(d=>{
+  await savePFRapprData(pfRapprCurrentFourn,{declared:declared,comment:comment,facture:true,factureDate:new Date().toISOString().split('T')[0]});
+  var fDeals=filt().filter(function(d){return d.pf&&d.pf.mode!=='none'&&d.pf.amount>0&&d.fourn===pfRapprCurrentFourn&&(!d.fSt||d.fSt==='À émettre');});
+  for(var i=0;i<fDeals.length;i++){
+    var d=fDeals[i];
     d.fSt='Facturé';d.invS=new Date().toISOString().split('T')[0];
     d.hist.push({ts:nowS(),a:'Facture Perf fees générée',by:'Système'});
-    var{_id,...data}=d;if(_id)sbUpdate('deals',_id,data);
-  });
+    if(d._id)await sbUpdate('deals',d._id,d);
+  }
   genInvoicePDF(pfRapprCurrentFourn,'PF',null,declared,fDeals);
   closePFRapprModal();renderPFRappr();renderPFInvTable();renderFact();renderKpis();
   toast('Facture Perf fees générée pour '+pfRapprCurrentFourn+'.');
@@ -1019,11 +1093,11 @@ function renderPFInvTable(){
   });
 }
 
-function markPFInvPaid(idx){
+async function markPFInvPaid(idx){
   var d=deals[idx];if(!d)return;
   d.fSt='Payé';d.inv=new Date().toISOString().split('T')[0];
   d.hist.push({ts:nowS(),a:'Facture Perf fees payée',by:'Système'});
-  var{_id,...data}=d;if(_id)sbUpdate('deals',_id,data);
+  if(d._id)await sbUpdate('deals',d._id,d);
   renderPFInvTable();renderPFRappr();renderFact();renderKpis();updateAlertBadge();
   toast('Facture Perf fees de '+d.client+' marquée payée.');
 }
@@ -1039,9 +1113,8 @@ function setUFFam(f,btn){
   renderUFRappr();
 }
 
-function ufRapprKey(fourn){return 'ufrappr_'+fourn;}
-function loadUFRappr(fourn){try{var s=localStorage.getItem(ufRapprKey(fourn));return s?JSON.parse(s):null;}catch(e){return null;}}
-function saveUFRapprData(fourn,data){try{localStorage.setItem(ufRapprKey(fourn),JSON.stringify(data));}catch(e){}}
+function loadUFRappr(fourn){var r=rapprFind(fourn,'uf',null);return r?{declared:r.declared,comment:r.comment,facture:r.facture,factureDate:r.factureDate}:null;}
+async function saveUFRapprData(fourn,data){await rapprSave(fourn,'uf',null,data);}
 
 function renderUFRappr(){
   var data=filt();
@@ -1114,10 +1187,10 @@ function openUFRapprModal(fournName){
 }
 function closeUFRapprModal(){document.getElementById('ufRapprModal').classList.remove('on');ufRapprCurrentFourn=null;}
 
-function resetUFRappr(){
+async function resetUFRappr(){
   if(!ufRapprCurrentFourn)return;
   if(!confirm('Réinitialiser la saisie pour '+ufRapprCurrentFourn+' ?'))return;
-  localStorage.removeItem(ufRapprKey(ufRapprCurrentFourn));
+  await rapprDelete(ufRapprCurrentFourn,'uf',null);
   closeUFRapprModal();renderUFRappr();toast('Saisie réinitialisée pour '+ufRapprCurrentFourn+'.');
 }
 
@@ -1129,27 +1202,28 @@ function updateUFRapprEcart(){
   document.getElementById('ufRmEcart').style.color=Math.abs(ecart)<1?'var(--green)':ecart>0?'var(--purple)':'var(--red)';
 }
 
-function saveUFRappr(){
+async function saveUFRappr(){
   if(!ufRapprCurrentFourn)return;
   var declared=parseFloat(document.getElementById('ufRmDeclared').value);
   if(isNaN(declared)){alert('Veuillez saisir un montant.');return;}
   var saved=loadUFRappr(ufRapprCurrentFourn)||{};
-  saveUFRapprData(ufRapprCurrentFourn,{declared,comment:document.getElementById('ufRmComment').value,facture:saved.facture||false});
+  await saveUFRapprData(ufRapprCurrentFourn,{declared:declared,comment:document.getElementById('ufRmComment').value,facture:saved.facture||false});
   closeUFRapprModal();renderUFRappr();toast('Montant enregistré pour '+ufRapprCurrentFourn+'.');
 }
 
-function genUFRapprFacture(){
+async function genUFRapprFacture(){
   if(!ufRapprCurrentFourn)return;
   var declared=parseFloat(document.getElementById('ufRmDeclared').value);
   if(isNaN(declared)||declared===0){alert('Veuillez saisir le montant avant de générer la facture.');return;}
   var comment=document.getElementById('ufRmComment').value;
-  saveUFRapprData(ufRapprCurrentFourn,{declared,comment,facture:true,factureDate:new Date().toISOString().split('T')[0]});
-  var fDeals=filt().filter(d=>(d.ct==='UF'||d.ct==='BOTH')&&d.fourn===ufRapprCurrentFourn&&(!d.fSt||d.fSt==='À émettre'));
-  fDeals.forEach(d=>{
+  await saveUFRapprData(ufRapprCurrentFourn,{declared:declared,comment:comment,facture:true,factureDate:new Date().toISOString().split('T')[0]});
+  var fDeals=filt().filter(function(d){return(d.ct==='UF'||d.ct==='BOTH')&&d.fourn===ufRapprCurrentFourn&&(!d.fSt||d.fSt==='À émettre');});
+  for(var i=0;i<fDeals.length;i++){
+    var d=fDeals[i];
     d.fSt='Facturé';d.invS=new Date().toISOString().split('T')[0];
     d.hist.push({ts:nowS(),a:'Facture UF générée',by:'Système'});
-    var{_id,...data}=d;if(_id)sbUpdate('deals',_id,data);
-  });
+    if(d._id)await sbUpdate('deals',d._id,d);
+  }
   genInvoicePDF(ufRapprCurrentFourn,'UF',null,declared,fDeals);
   closeUFRapprModal();renderUFRappr();renderUFInvTable();renderFact();renderKpis();
   toast('Facture UF générée pour '+ufRapprCurrentFourn+' — '+fDeals.length+' deal'+(fDeals.length!==1?'s':'')+' mis à jour.');
@@ -1198,33 +1272,33 @@ function renderUFInvTable(){
   });
 }
 
-function deleteUFInv(idx){
+async function deleteUFInv(idx){
   var d=deals[idx];if(!d)return;
   if(!confirm('Réinitialiser la facture UF de "'+d.client+'" chez '+d.fourn+' ?'))return;
   d.fSt='À émettre';d.invS='';d.inv='';
   d.hist.push({ts:nowS(),a:'Facture UF réinitialisée',by:'Système'});
-  var{_id,...data}=d;if(_id)sbUpdate('deals',_id,data);
+  if(d._id)await sbUpdate('deals',d._id,d);
   renderUFInvTable();renderFact();renderKpis();updateAlertBadge();
   toast('Facture UF réinitialisée.');
 }
 
-function markUFInvFact(idx){
+async function markUFInvFact(idx){
   var d=deals[idx];if(!d)return;
   d.fSt='Facturé';
   d.invS=new Date().toISOString().split('T')[0];
   d.hist.push({ts:nowS(),a:'Facture UF émise',by:'Système'});
-  var{_id,...data}=d;if(_id)sbUpdate('deals',_id,data);
+  if(d._id)await sbUpdate('deals',d._id,d);
   renderUFInvTable();renderFact();renderKpis();updateAlertBadge();
   toast('Facture UF de '+d.client+' marquée comme facturée.');
 }
 
-function markUFInvPaid(idx){
+async function markUFInvPaid(idx){
   var d=deals[idx];if(!d)return;
   var paidDate=new Date().toISOString().split('T')[0];
   d.fSt='Payé';
   d.inv=paidDate;
   d.hist.push({ts:nowS(),a:'Facture UF payée',by:'Système'});
-  var{_id,...data}=d;if(_id)sbUpdate('deals',_id,data);
+  if(d._id)await sbUpdate('deals',d._id,d);
   renderUFInvTable();renderFact();renderKpis();updateAlertBadge();
   toast('Facture UF de '+d.client+' marquée comme payée. Commissions mises à jour.');
 }
@@ -1258,15 +1332,15 @@ function updateRecapEcart(){
   document.getElementById('rfmEcart').style.color=Math.abs(ecart)<1?'var(--green)':ecart>0?'var(--purple)':'var(--red)';
   document.getElementById('rfmEcartNote').textContent=pct?pct+' par rapport à la facturation théorique':'';
 }
-function saveRecapFact(){
+async function saveRecapFact(){
   if(!recapCurrentFourn)return;
   var declared=parseFloat(document.getElementById('rfmDeclared').value);
   if(isNaN(declared)){alert('Veuillez saisir un montant.');return;}
   var saved=loadRecapFact(recapCurrentFourn)||{};
-  saveRecapFactData(recapCurrentFourn,{declared,comment:document.getElementById('rfmComment').value,facture:saved.facture||false,paid:saved.paid||false,paidDate:saved.paidDate||'',theoTrim:recapCurrentTheo});
+  await saveRecapFactData(recapCurrentFourn,{declared:declared,comment:document.getElementById('rfmComment').value,facture:saved.facture||false,paid:saved.paid||false,paidDate:saved.paidDate||'',theoTrim:recapCurrentTheo});
   closeRecapFactModal();renderRecapFourn();renderRunInvTable();toast('Montant enregistré pour '+recapCurrentFourn+'.');
 }
-function genFactureRecap(){
+async function genFactureRecap(){
   if(!recapCurrentFourn)return;
   var declared=parseFloat(document.getElementById('rfmDeclared').value);
   if(isNaN(declared)||declared===0){alert('Veuillez saisir le montant déclaré avant de générer la facture.');return;}
@@ -1274,15 +1348,13 @@ function genFactureRecap(){
   var year=recapTrimYear;
   var trimDates=getTrimDates(recapTrim,year);
   var trimLabel='T'+recapTrim+' '+year;
-  saveRecapFactData(recapCurrentFourn,{declared,comment,facture:true,factureDate:new Date().toISOString().split('T')[0],paid:false,paidDate:'',theoTrim:recapCurrentTheo});
-  // Get deals for this fournisseur
-  var fDeals=filt().filter(d=>(d.ct==='RUN'||d.ct==='BOTH')&&d.fourn===recapCurrentFourn);
-  // Mark as Facturé
+  await saveRecapFactData(recapCurrentFourn,{declared:declared,comment:comment,facture:true,factureDate:new Date().toISOString().split('T')[0],paid:false,paidDate:'',theoTrim:recapCurrentTheo});
+  var fDeals=filt().filter(function(d){return(d.ct==='RUN'||d.ct==='BOTH')&&d.fourn===recapCurrentFourn;});
   var updated=0;
-  fDeals.forEach(d=>{
-    if(d.fSt!=='Payé'){d.fSt='Facturé';d.invS=trimDates.endStr;d.hist.push({ts:nowS(),a:'Facture Running générée — '+trimLabel,by:'Système'});var{_id,...data}=d;if(_id)sbUpdate('deals',_id,data);updated++;}
-  });
-  // Generate PDF
+  for(var i=0;i<fDeals.length;i++){
+    var d=fDeals[i];
+    if(d.fSt!=='Payé'){d.fSt='Facturé';d.invS=trimDates.endStr;d.hist.push({ts:nowS(),a:'Facture Running générée — '+trimLabel,by:'Système'});if(d._id)await sbUpdate('deals',d._id,d);updated++;}
+  }
   genInvoicePDF(recapCurrentFourn,'RUN',trimLabel,declared,fDeals);
   closeRecapFactModal();renderRecapFourn();renderRunInvTable();renderFact();renderKpis();
   toast('Facture générée pour '+recapCurrentFourn+' — '+updated+' deal'+(updated>1?'s':'')+' mis à jour.');
@@ -1301,16 +1373,8 @@ function renderFact(){
   var runDeals=data.filter(d=>d.ct==='RUN'||d.ct==='BOTH');
   var runFact=runDeals.filter(d=>d.fSt==='Facturé');
   var runPaye=runDeals.filter(d=>d.fSt==='Payé');
-  // Running facturé + payé : lire les montants réels depuis localStorage
   var totalRunFact=0;
-  try{
-    for(var ki=0;ki<localStorage.length;ki++){
-      var k=localStorage.key(ki);
-      if(!k||k.indexOf('recapfact_')!==0)continue;
-      var obj=JSON.parse(localStorage.getItem(k)||'{}');
-      if(obj.declared&&(obj.facture||obj.paid))totalRunFact+=obj.declared;
-    }
-  }catch(e){}
+  rapprochement_db.filter(function(r){return r.type==='run'&&r.declared&&(r.facture||r.paid);}).forEach(function(r){totalRunFact+=r.declared;});
   var runFactNb=runFact.length+runPaye.length;
   document.getElementById('factKpi').innerHTML=
     kH('UF facturé + payé','',fE(totalFact),fa.length+pa.length+' factures')+
@@ -1349,10 +1413,10 @@ function fCard(d){
   '</div>';
 }
 
-function cycleFS(idx){
+async function cycleFS(idx){
   var o=['À émettre','Facturé','Payé','Litige'],d=deals[idx],i=o.indexOf(d.fSt),n=o[(i+1)%o.length];
   d.hist.push({ts:nowS(),a:'Statut → '+n,by:d.v});d.fSt=n;
-  var{_id,...data}=d;if(_id)sbUpdate('deals',_id,data);
+  if(d._id)await sbUpdate('deals',d._id,d);
   renderFact();renderKpis();updateAlertBadge();toast('Statut → '+n);
 }
 function setFT(t,btn){ftab=t;document.querySelectorAll('#factTabs .stab').forEach(b=>b.classList.remove('on'));btn.classList.add('on');renderFact();}
@@ -1452,7 +1516,7 @@ function calcM(){
   }
 }
 
-function saveDeal(){
+async function saveDeal(){
   var nom=parseFloat(document.getElementById('mNom').value)||0;
   var items=getSelectedClients();
   if(!items.length){alert('Au moins un client requis.');return;}
@@ -1468,16 +1532,19 @@ function saveDeal(){
     var ufP2=(parseFloat(document.getElementById('mUFR').value)||0)/100;
     var runP2=(parseFloat(document.getElementById('mRunR').value)||0)/100;
     var d={...base,nom:lineNom,ufE:Math.round(lineNom*ufP2),runE:Math.round(lineNom*runP2),client:cc.length?cc[0].client:deals[editIdx].client,contrat:cc.length?cc[0].contrat:base.contrat,hist:[...deals[editIdx].hist,{ts:nowS(),a:'Deal modifié',by:base.v}]};
-    var _id=deals[editIdx]._id;d._id=_id;if(_id){var{_id:id,...data}=d;sbUpdate('deals',id,data);}deals[editIdx]=d;
+    var _id=deals[editIdx]._id;d._id=_id;if(_id)await sbUpdate('deals',_id,d);deals[editIdx]=d;
     closeDM();renderAll();toast('Deal modifié.');
   } else {
     var ufP3=(parseFloat(document.getElementById('mUFR').value)||0)/100;
     var runP3=(parseFloat(document.getElementById('mRunR').value)||0)/100;
-    items.forEach(function(item){
+    for(var ii=0;ii<items.length;ii++){
+      var item=items[ii];
       var lineNom2=item.nom||nom;
       var d={...base,nom:lineNom2,ufE:Math.round(lineNom2*ufP3),runE:Math.round(lineNom2*runP3),client:item.client,contrat:item.contrat,depositaire:item.depositaire||'',fSt:'À émettre',hist:[{ts:nowS(),a:'Deal créé',by:base.v}]};
-      deals.push(d);sbInsert('deals',d).then(function(res){if(res&&res[0])d._id=res[0].id;});
-    });
+      var res=await sbInsert('deals',d);
+      if(res&&res[0])d._id=res[0].id;
+      deals.push(d);
+    }
     closeDM();renderAll();toast(items.length>1?items.length+' deals enregistrés.':'Nouveau deal enregistré.');
   }
 }
@@ -1491,7 +1558,20 @@ function exportCSV(){
 function importCSV(e){
   var file=e.target.files[0];if(!file)return;
   var reader=new FileReader();
-  reader.onload=function(ev){var lines=ev.target.result.split('\n').filter(l=>l.trim()),imp=0;lines.slice(1).forEach(line=>{var c=line.split(',');if(c.length<10)return;deals.push({v:c[0]||'Audrey',date:c[1]||today(),stat:'Deal réalisé',client:c[2]||'',contrat:c[3]||'',fourn:c[4]||'',broker:c[5]||'',produit:c[6]||'',isin:c[7]||'',nom:parseFloat(c[8])||0,dev:c[9]||'EUR',fx:parseFloat(c[10])||1,issue:c[11]||'',end:c[12]||'',inv:c[21]||'',ct:c[13]||'UF',ufR:parseFloat(c[14])||0,runR:parseFloat(c[15])||0,ufE:parseFloat(c[16])||0,runE:parseFloat(c[17])||0,tva:0.20,fSt:c[19]||'À émettre',fRef:c[20]||'',notes:c[22]||'',hist:[{ts:nowS(),a:'Importé depuis CSV',by:'Import'}]});imp++;});saveLocal();alert(imp+' deal(s) importé(s).');renderAll();e.target.value='';};
+  reader.onload=async function(ev){
+    var lines=ev.target.result.split('\n').filter(function(l){return l.trim();}),imp=0;
+    for(var li=1;li<lines.length;li++){
+      var c=lines[li].split(',');if(c.length<10)continue;
+      // Column order: 0=Vendeur,1=Date,2=Client,3=Contrat,4=Fournisseur,5=Broker,6=Produit,7=ISIN,
+      // 8=Nominal,9=Devise,10=FX,11=Issue,12=End,13=Type,14=UF%,15=Run%,16=UF EUR,17=Run EUR,
+      // 18=Statut,19=Ref,20=Invoice,21=Notes
+      var d={v:c[0]||'Audrey',date:c[1]||today(),stat:'Deal réalisé',client:c[2]||'',contrat:c[3]||'',fourn:c[4]||'',broker:c[5]||'',produit:c[6]||'',isin:c[7]||'',nom:parseFloat(c[8])||0,dev:c[9]||'EUR',fx:parseFloat(c[10])||1,issue:c[11]||'',end:c[12]||'',ct:c[13]||'UF',ufR:parseFloat(c[14])||0,runR:parseFloat(c[15])||0,ufE:parseFloat(c[16])||0,runE:parseFloat(c[17])||0,tva:0,fSt:c[18]||'À émettre',fRef:c[19]||'',inv:c[20]||'',notes:c[21]||'',hist:[{ts:nowS(),a:'Importé depuis CSV',by:'Import'}]};
+      var res=await sbInsert('deals',d);
+      if(res&&res[0])d._id=res[0].id;
+      deals.push(d);imp++;
+    }
+    alert(imp+' deal(s) importé(s).');renderAll();e.target.value='';
+  };
   reader.readAsText(file);
 }
 
@@ -1671,11 +1751,11 @@ function openAddClientModal(name){
 }
 function closeClientModal(){document.getElementById('clientModal').classList.remove('on');document.getElementById('cName').dataset.original='';}
 function deleteClientFromModal(){var o=document.getElementById('cName').dataset.original;if(!o)return;closeClientModal();deleteClient(o);}
-function deleteDeal(idx){
+async function deleteDeal(idx){
   if(idx<0||idx>=deals.length)return;
   var d=deals[idx];
   if(!confirm('Supprimer le deal "'+d.client+' — '+d.produit+'" ? Cette action est irréversible.'))return;
-  if(d._id)sbDelete('deals',d._id);
+  if(d._id)await sbDelete('deals',d._id);
   deals.splice(idx,1);
   renderAll();toast('Deal supprimé.');
 }
@@ -1695,7 +1775,7 @@ async function saveClient(){
   if(original&&original!==name){
     var c=clients_db.find(x=>x.name===original);
     if(c){entry._id=c._id;await sbUpdate('clients',c._id,entry);Object.assign(c,entry);}
-    deals.forEach(d=>{if(d.client===original){d.client=name;if(d._id){var{_id,...data}=d;sbUpdate('deals',d._id,data);}}});
+    for(var di=0;di<deals.length;di++){var dd=deals[di];if(dd.client===original){dd.client=name;if(dd._id)await sbUpdate('deals',dd._id,dd);}}
   } else {
     var existing=clients_db.find(x=>x.name===name);
     if(existing){await sbUpdate('clients',existing._id,entry);Object.assign(existing,entry);}
@@ -1802,7 +1882,7 @@ async function saveFourn(){
   if(original&&original!==name){
     var f=fourn_db.find(x=>x.name===original);
     if(f){Object.assign(f,payload);await sbUpdate('fournisseurs',f._id,payload);}
-    deals.forEach(d=>{if(d.fourn===original){d.fourn=name;if(d._id){var{_id,...data}=d;sbUpdate('deals',d._id,data);}}});
+    for(var di=0;di<deals.length;di++){var dd=deals[di];if(dd.fourn===original){dd.fourn=name;if(dd._id)await sbUpdate('deals',dd._id,dd);}}
   } else {
     var existing=fourn_db.find(x=>x.name===name);
     if(existing){Object.assign(existing,payload);await sbUpdate('fournisseurs',existing._id,payload);}
@@ -1832,13 +1912,11 @@ function setFournSub(sub,btn){
 // ── RAPPROCHEMENT ENCOURS ────────────────────────────────────────────────────
 var rapprTrim=1, rapprYear=new Date().getFullYear();
 // Cache: {fournisseur_trim_year: {declared, comment}}
-function rapprKey(fourn,trim,year){return 'rappr_'+fourn+'_T'+trim+'_'+year;}
 function loadRapprData(fourn,trim,year){
-  try{var s=localStorage.getItem(rapprKey(fourn,trim,year));return s?JSON.parse(s):null;}catch(e){return null;}
+  var r=rapprFind(fourn,'encours','T'+trim+'_'+year);
+  return r?{declared:r.declared,comment:r.comment}:null;
 }
-function saveRapprData(fourn,trim,year,data){
-  try{localStorage.setItem(rapprKey(fourn,trim,year),JSON.stringify(data));}catch(e){}
-}
+async function saveRapprData(fourn,trim,year,data){await rapprSave(fourn,'encours','T'+trim+'_'+year,data);}
 
 function initRapprTrim(){
   var years=[...new Set(deals.map(d=>d.date?d.date.substring(0,4):null).filter(Boolean))].sort().reverse();
@@ -1961,13 +2039,13 @@ function updateRapprCalc(){
   document.getElementById('rapprEcartDisplay').style.color=Math.abs(ecart)<100?'var(--green)':ecart>0?'var(--purple)':'var(--red)';
   document.getElementById('rapprEcartPct').textContent=pct?' ('+pct+' par rapport au nominal app)':'';
 }
-function saveRapprochement(){
+async function saveRapprochement(){
   if(!rapprCurrentFourn)return;
   var declared=parseFloat(document.getElementById('rapprDeclared').value);
   if(isNaN(declared)){alert('Veuillez saisir un montant.');return;}
   var comment=document.getElementById('rapprComment').value;
   var year=parseInt(document.getElementById('rapprYear').value)||new Date().getFullYear();
-  saveRapprData(rapprCurrentFourn,rapprTrim,year,{declared,comment});
+  await saveRapprData(rapprCurrentFourn,rapprTrim,year,{declared:declared,comment:comment});
   closeRapprModal();renderRapprochement();toast('Encours enregistré pour '+rapprCurrentFourn+'.');
 }
 
@@ -2015,8 +2093,8 @@ async function saveBroker(){
   if(!name){alert('Nom requis.');return;}
   if(original&&original!==name){
     var b=brokers_db.find(x=>x.name===original);
-    if(b){b.name=name;await sbUpdate('brokers',b._id,{name});}
-    deals.forEach(d=>{if(d.broker===original){d.broker=name;if(d._id){var{_id,...data}=d;sbUpdate('deals',d._id,data);}}});
+    if(b){b.name=name;await sbUpdate('brokers',b._id,{name:name});}
+    for(var di=0;di<deals.length;di++){var dd=deals[di];if(dd.broker===original){dd.broker=name;if(dd._id)await sbUpdate('deals',dd._id,dd);}}
   } else {
     if(!brokers_db.find(x=>x.name===name)){var res=await sbInsert('brokers',{name});if(res&&res[0])brokers_db.push({name,_id:res[0].id});}
   }
@@ -2036,15 +2114,14 @@ async function seedFournisseurs(){
 async function seedBrokers(){
   for(var name of BROKER_DEFAULTS){var res=await sbInsert('brokers',{name});if(res&&res[0])brokers_db.push({name,_id:res[0].id});}
 }
-// Ensure fournisseurs always have addresses preserved
-function mergeFournDefaults(){
-  FOURN_DEFAULTS.forEach(function(def){
+async function mergeFournDefaults(){
+  for(var i=0;i<FOURN_DEFAULTS.length;i++){
+    var def=FOURN_DEFAULTS[i];
     if(!fourn_db.find(function(f){return f.name===def.name;})){
-      var id=String(Date.now())+Math.random();
-      fourn_db.push({...def,_id:id});
-      sbInsert('fournisseurs',def);
+      var res=await sbInsert('fournisseurs',def);
+      if(res&&res[0])fourn_db.push(Object.assign({},def,{_id:res[0].id}));
     }
-  });
+  }
 }
 
 // ── COMMISSIONS MODULE ────────────────────────────────────────────────────────
@@ -2137,18 +2214,9 @@ function commSummary(data){
     var vendeurRunE=vendeurDeals.reduce(function(s,x){return s+(x.runE||0)*splitFactor(x);},0);
     var share=vendeurRunE/allRunE;
 
-    // Chercher toutes les factures payées de ce fournisseur
-    try{
-      for(var ki=0;ki<localStorage.length;ki++){
-        var k=localStorage.key(ki);
-        if(!k||k.indexOf('recapfact_'+fourn+'_')!==0) continue;
-        var obj=JSON.parse(localStorage.getItem(k)||'{}');
-        if(!obj.paid||!obj.declared) continue;
-        var invYear=k.split('_').pop();
-        if(year&&invYear!==year) continue;
-        run+=obj.declared*share;
-      }
-    }catch(e){}
+    rapprochement_db.filter(function(r){
+      return r.type==='run'&&r.fourn===fourn&&r.paid&&r.declared&&(!year||(r.period&&r.period.endsWith('_'+year)));
+    }).forEach(function(r){run+=r.declared*share;});
   }
 
   var pf=0;
@@ -2490,19 +2558,26 @@ function confirmUFInvoice(){
 async function initApp(){
   document.getElementById('loadingOverlay').style.display='flex';
   try{
-    var[d,c,f,b]=await Promise.all([sbGet('deals'),sbGet('clients'),sbGet('fournisseurs'),sbGet('brokers')]);
-    deals=(d||[]).map(r=>({...r.data,_id:r.id}));
-    clients_db=(c||[]).map(r=>({...r.data,_id:r.id}));
-    fourn_db=(f||[]).map(r=>({...r.data,_id:r.id}));
-    brokers_db=(b||[]).map(r=>({...r.data,_id:r.id}));
+    var results=await Promise.all([
+      sbGetAll('deals'),
+      sbGetAll('clients'),
+      sbGetAll('fournisseurs'),
+      sbGetAll('brokers'),
+      sb.from('rapprochement').select('*')
+    ]);
+    deals=results[0]||[];
+    clients_db=results[1]||[];
+    fourn_db=results[2]||[];
+    brokers_db=results[3]||[];
+    rapprochement_db=((results[4].data)||[]).map(rapprRowToObj);
     if(!fourn_db.length)await seedFournisseurs();
-    else mergeFournDefaults();
+    else await mergeFournDefaults();
     if(!brokers_db.length)await seedBrokers();
   }catch(e){console.error('Init error',e);}
   document.getElementById('loadingOverlay').style.display='none';
   renderAll();rebuildFournSelect();rebuildBrokerSelect();
 }
 
-initApp();
+checkAuth();
 
 

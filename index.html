@@ -13,6 +13,9 @@
   <!-- Chart.js -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 
+  <!-- Supabase -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
   <!-- App styles -->
   <link rel="stylesheet" href="style.css" />
 </head>
@@ -860,6 +863,19 @@
 
 <div class="toast" id="toast"></div>
 
+<!-- Login overlay -->
+<div id="loginOverlay" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:10000;align-items:center;justify-content:center;flex-direction:column;">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:36px 40px;width:360px;box-shadow:0 20px 60px rgba(0,0,0,.12);">
+    <div style="font-size:20px;font-weight:600;letter-spacing:-.3px;margin-bottom:3px;">Deal Tracker</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:24px;">Connectez-vous pour accéder</div>
+    <div style="font-size:11px;font-weight:500;color:var(--text2);margin-bottom:4px;">Email</div>
+    <input type="email" id="loginEmail" placeholder="votre@email.com" style="width:100%;margin-bottom:12px;" onkeydown="if(event.key==='Enter')document.getElementById('loginPw').focus()"/>
+    <div style="font-size:11px;font-weight:500;color:var(--text2);margin-bottom:4px;">Mot de passe</div>
+    <input type="password" id="loginPw" placeholder="••••••••" style="width:100%;margin-bottom:8px;" onkeydown="if(event.key==='Enter')doLogin()"/>
+    <div id="loginErr" style="color:var(--red);font-size:12px;min-height:18px;margin-bottom:14px;"></div>
+    <button id="loginBtn" class="btn btn-primary" style="width:100%;padding:10px;font-size:13px;" onclick="doLogin()">Se connecter</button>
+  </div>
+</div>
 
   <!-- App script -->
   <script src="app.js"></script>

@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Deal Tracker</title>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+  <!-- Chart.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+
+  <!-- App styles -->
+  <link rel="stylesheet" href="style.css" />
+</head>
+<div id="loadingOverlay" style="display:flex;position:fixed;inset:0;background:rgba(247,246,243,0.95);z-index:9999;align-items:center;justify-content:center;flex-direction:column;gap:16px;">
+  <div style="width:40px;height:40px;border:3px solid var(--border-md);border-top-color:var(--blue);border-radius:50%;animation:spin 0.8s linear infinite;"></div>
+  <div style="font-size:14px;color:var(--text2);font-family:'DM Sans',sans-serif;">Connexion à la base de données…</div>
+</div>
+<style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+<div class="app">
+  <aside class="sidebar">
+    <div class="sb-logo"><div class="name">Deal Tracker</div><div class="sub">Suivi des commissions</div></div>
+    <div class="sb-section">
+      <div class="sb-label">Vue par vendeur</div>
+      <button class="vbtn on" onclick="setV('Tous',this)"><span class="av av-all">∗</span>Tous les deals</button>
+      <button class="vbtn" onclick="setV('Audrey',this)"><span class="av av-a">A</span>Audrey</button>
+      <button class="vbtn" onclick="setV('David',this)"><span class="av av-d">D</span>David</button>
+
+    </div>
+    <div class="sb-section" style="flex:1;">
+      <div class="sb-label" style="margin-top:6px;">Navigation</div>
+      <button class="nbtn on" onclick="goTo('synthese',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/></svg>Synthèse</button>
+      <button class="nbtn" onclick="goTo('deals',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12M2 8h12M2 12h8"/></svg>Tous les deals</button>
+      <button class="nbtn" onclick="goTo('facturation',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="1" width="12" height="14" rx="1.5"/><path d="M5 5h6M5 8h6M5 11h3"/></svg>Facturation</button>
+      <button class="nbtn" onclick="goTo('graphiques',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 13V7l4-3 4 3 4-4v10H2z"/></svg>Graphiques</button>
+      <button class="nbtn" onclick="goTo('commissions',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 13V5l4-3 4 3 4-3v11"/><path d="M6 13V9h4v4"/><path d="M8 3v2"/></svg>Commissions</button>
+      <button class="nbtn" onclick="goTo('clients',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="5" r="2.5"/><path d="M1 13c0-2.8 2.2-5 5-5s5 2.2 5 5"/><circle cx="12" cy="5" r="2"/><path d="M12 8.5c1.7.3 3 1.8 3 3.5"/></svg>Clients</button>
+      <button class="nbtn" onclick="goTo('fournisseurs',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M5 3V2a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1"/><path d="M1 7h14"/></svg>Fournisseurs</button>
+      <button class="nbtn" onclick="goTo('brokers',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 12V5l6-3 6 3v7"/><path d="M6 12V9h4v3"/><rect x="1" y="12" width="14" height="2" rx="1"/></svg>Brokers</button>
+    </div>
+    <div class="sb-bottom">
+      <button class="btn" style="width:100%;margin-bottom:6px;" onclick="document.getElementById('importFile').click()">↑ Importer CSV</button>
+      <input type="file" id="importFile" accept=".csv" style="display:none" onchange="importCSV(event)"/>
+      <button class="btn" style="width:100%;" onclick="exportCSV()">↓ Exporter CSV</button>
+    </div>
+  </aside>
+
+  <div class="main">
+    <div class="topbar">
+      <div class="page-title" id="pageTitle">Synthèse</div>
+      <div class="topbar-r">
+        <input type="text" id="gSearch" placeholder="Rechercher…" style="width:190px;padding:6px 10px;" oninput="onSearch()"/>
+        <button class="btn btn-primary" onclick="openDealModal()">+ Nouveau deal</button>
+      </div>
+    </div>
+    <div class="content">
+
+      <!-- SYNTHESE -->
+      <div class="page on" id="p-synthese">
+
+        <!-- KPIs top -->
+        <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:20px;" id="kpiGrid"></div>
+
+        <!-- Cards row -->
+        <div class="g2" style="margin-top:0;">
+          <div class="card" style="border-top:3px solid var(--green);padding:18px 20px;">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="var(--green)" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 4v4l3 2"/></svg>
+              <span style="font-size:12px;font-weight:600;color:var(--green);text-transform:uppercase;letter-spacing:.5px;">Deal pipe</span>
+            </div>
+            <div id="synthPipe"></div>
+          </div>
+          <div class="card" style="border-top:3px solid var(--blue);padding:18px 20px;">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="var(--blue)" stroke-width="1.5"><path d="M2 12V5l4-3 4 3 4-3v10H2z"/><path d="M6 12V9h4v3"/></svg>
+              <span style="font-size:12px;font-weight:600;color:var(--blue);text-transform:uppercase;letter-spacing:.5px;">Deals payés</span>
+            </div>
+            <div id="synthPaye"></div>
+          </div>
+        </div>
+
+        <!-- Graphique CA annuel -->
+        <div class="card" style="margin-top:16px;padding:18px 20px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+            <div>
+              <div style="font-size:12px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;">Évolution du CA <span id="caChartYear" style="color:var(--blue);"></span></div>
+              <div style="font-size:11px;color:var(--text3);margin-top:2px;">Cumul mensuel — UF + Running payés</div>
+            </div>
+            <div style="font-size:11px;color:var(--text2);display:flex;align-items:center;gap:6px;">
+              <span style="display:inline-block;width:28px;height:3px;background:#1d5fd4;border-radius:2px;"></span> CA cumulé
+            </div>
+          </div>
+          <div style="position:relative;height:220px;"><canvas id="cCA"></canvas></div>
+        </div>
+
+      </div>
+
+      <!-- DEALS -->
+      <div class="page" id="p-deals">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center;">
+          <input type="text" id="srch" placeholder="Client, fournisseur, ISIN…" style="width:200px;" oninput="renderDeals()"/>
+          <select id="flT" onchange="renderDeals()" style="width:auto;"><option value="">Tous types</option><option value="UF">UF</option><option value="RUN">Running</option><option value="BOTH">UF+Running</option></select>
+          <select id="flF" onchange="renderDeals()" style="width:auto;"><option value="">Tous statuts</option><option>À émettre</option><option>Facturé</option><option>Payé</option><option>Litige</option></select>
+          <select id="flDev" onchange="renderDeals()" style="width:auto;"><option value="">EUR+USD</option><option>EUR</option><option>USD</option></select>
+          <select id="flFourn" onchange="renderDeals()" style="width:auto;"><option value="">Tous fournisseurs</option></select>
+        </div>
+        <div class="card" style="padding:0;overflow:hidden;">
+          <div class="tw"><table id="dealsT">
+            <tr><th><button class="sort-btn" onclick="sBy('date')">Date↕</button></th><th>Vendeur</th><th>Client</th><th>Contrat</th><th>Produit</th><th>Fournisseur</th><th>Broker</th><th><button class="sort-btn" onclick="sBy('nom')">Nominal↕</button></th><th>Dev.</th><th>ISIN</th><th>Trade date</th><th>Invoice sending</th><th>Invoice payment</th><th>Type</th><th><button class="sort-btn" onclick="sBy('ufE')">UF€↕</button></th><th><button class="sort-btn" onclick="sBy('runE')">Run/an↕</button></th><th>Réf.</th><th>Facture</th><th>Notes</th><th></th></tr>
+          </table></div>
+          <div id="dealsEmpty" class="empty">Aucun deal correspondant.</div>
+        </div>
+      </div>
+
+      <!-- FACTURATION -->
+      <div class="page" id="p-facturation">
+
+        <!-- KPIs globaux -->
+        <div class="kpi-grid" style="grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:20px;" id="factKpi"></div>
+
+        <!-- Onglets UF / Running / Perf fees -->
+        <div style="display:flex;gap:0;border-bottom:2px solid var(--border);margin-bottom:20px;">
+          <button id="ftUFTab" onclick="setFactType('UF',this)" style="padding:10px 32px;border:none;background:none;font-size:13px;font-weight:600;color:var(--blue);border-bottom:3px solid var(--blue);margin-bottom:-2px;cursor:pointer;font-family:inherit;">⬆ Up-Front</button>
+          <button id="ftRUNTab" onclick="setFactType('RUN',this)" style="padding:10px 32px;border:none;background:none;font-size:13px;font-weight:500;color:var(--text2);border-bottom:3px solid transparent;margin-bottom:-2px;cursor:pointer;font-family:inherit;">↻ Running</button>
+          <button id="ftPFTab" onclick="setFactType('PF',this)" style="padding:10px 32px;border:none;background:none;font-size:13px;font-weight:500;color:var(--text2);border-bottom:3px solid transparent;margin-bottom:-2px;cursor:pointer;font-family:inherit;">★ Perf fees</button>
+        </div>
+
+        <!-- ═══ UF ═══ -->
+        <div id="factUFSection">
+
+          <!-- Filtres famille -->
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:16px;flex-wrap:wrap;">
+            <div style="display:flex;gap:4px;" id="ufFamTabs">
+              <button class="btn btn-sm" id="ufFamAll" onclick="setUFFam('ALL',this)" style="background:var(--text);color:var(--surface);border-color:var(--text);">Tous</button>
+              <button class="btn btn-sm" onclick="setUFFam('SDG',this)">SDG</button>
+              <button class="btn btn-sm" onclick="setUFFam('Banque',this)">Banque</button>
+              <button class="btn btn-sm" onclick="setUFFam('Assureur',this)">Assureurs</button>
+            </div>
+          </div>
+
+          <!-- KPIs UF -->
+          <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:16px;" id="ufKpi"></div>
+
+          <!-- Rapprochement UF par fournisseur -->
+          <div class="card" style="padding:0;overflow:hidden;margin-bottom:16px;">
+            <div style="padding:14px 16px 8px;font-size:13px;font-weight:600;">Up-Front — Deals à facturer par fournisseur</div>
+            <div class="tw" style="margin-top:4px;"><table id="ufRapprT">
+              <tr><th>Fournisseur</th><th>Famille</th><th>Nb deals</th><th>Nominal total</th><th>Montant UF théorique</th><th>Montant déclaré</th><th>Statut</th><th></th></tr>
+            </table></div>
+            <div id="ufRapprEmpty" class="empty">Aucun deal UF à facturer.</div>
+          </div>
+
+          <!-- Suivi factures UF -->
+          <div class="card" style="padding:0;overflow:hidden;">
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px 0;flex-wrap:wrap;gap:8px;">
+              <div style="font-size:13px;font-weight:600;">Suivi des factures Up-Front</div>
+              <div style="display:flex;gap:4px;" id="ufInvTabs">
+                <button class="btn btn-sm" id="uiAll" onclick="setUFInvTab('all',this)" style="background:var(--text);color:var(--surface);border-color:var(--text);">Toutes</button>
+                <button class="btn btn-sm" id="uiAE" onclick="setUFInvTab('aE',this)">À émettre</button>
+                <button class="btn btn-sm" id="uiFact" onclick="setUFInvTab('fact',this)">Facturées</button>
+                <button class="btn btn-sm" id="uiPay" onclick="setUFInvTab('pay',this)">Payées</button>
+              </div>
+            </div>
+            <div class="tw" style="margin-top:12px;"><table id="ufInvT">
+              <tr><th>Fournisseur</th><th>Client</th><th>Produit</th><th>Trade date</th><th>Montant UF</th><th>Date génération</th><th>Date paiement</th><th>Statut</th><th></th></tr>
+            </table></div>
+            <div id="ufInvEmpty" class="empty">Aucune facture UF enregistrée.</div>
+          </div>
+
+        </div>
+
+        <!-- ═══ RUNNING ═══ -->
+        <div id="factRUNSection" style="display:none;">
+
+          <!-- Filtres -->
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:16px;flex-wrap:wrap;">
+            <div style="display:flex;gap:3px;background:var(--surface2);border-radius:var(--rs);padding:3px;" id="recapTrimTabs">
+              <button class="btn btn-sm" id="rcT1" onclick="setRecapTrim(1,this)">T1</button>
+              <button class="btn btn-sm" id="rcT2" onclick="setRecapTrim(2,this)">T2</button>
+              <button class="btn btn-sm" id="rcT3" onclick="setRecapTrim(3,this)">T3</button>
+              <button class="btn btn-sm" id="rcT4" onclick="setRecapTrim(4,this)">T4</button>
+            </div>
+            <select id="recapTrimYear" onchange="renderRecapFourn()" style="width:auto;"></select>
+            <div style="display:flex;gap:4px;" id="recapFamTabs">
+              <button class="btn btn-sm" id="rfAll" onclick="setRecapFam('ALL',this)" style="background:var(--text);color:var(--surface);border-color:var(--text);">Tous</button>
+              <button class="btn btn-sm" id="rfSDG" onclick="setRecapFam('SDG',this)">SDG</button>
+              <button class="btn btn-sm" id="rfBanque" onclick="setRecapFam('Banque',this)">Banque</button>
+              <button class="btn btn-sm" id="rfAssureur" onclick="setRecapFam('Assureur',this)">Assureurs</button>
+            </div>
+            <span style="font-size:12px;color:var(--text2);margin-left:auto;" id="recapPeriodLabel"></span>
+          </div>
+
+          <!-- KPIs Running -->
+          <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:16px;" id="recapKpi"></div>
+
+          <!-- Rapprochement -->
+          <div class="card" style="padding:0;overflow:hidden;margin-bottom:16px;">
+            <div style="padding:14px 16px 8px;font-size:13px;font-weight:600;">Rapprochement par fournisseur <span style="font-weight:400;font-size:11px;color:var(--text3);" id="recapPeriodLabel2"></span></div>
+            <div class="tw"><table id="recapRUNT">
+              <tr><th>Fournisseur</th><th>Famille</th><th>Nb deals</th><th>Encours (EUR)</th><th>Running /an</th><th>Fact. théorique</th><th>Déclaré fourn.</th><th>Écart</th><th>Statut</th><th></th></tr>
+            </table></div>
+            <div id="recapRUNEmpty" class="empty">Aucun deal Running sur cette période.</div>
+          </div>
+
+          <!-- Suivi factures Running -->
+          <div class="card" style="padding:0;overflow:hidden;">
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px 0;flex-wrap:wrap;gap:8px;">
+              <div style="font-size:13px;font-weight:600;">Suivi des factures Running</div>
+              <div style="display:flex;gap:4px;" id="runInvTabs">
+                <button class="btn btn-sm" id="riAll" onclick="setRunInvTab('all',this)" style="background:var(--text);color:var(--surface);border-color:var(--text);">Toutes</button>
+                <button class="btn btn-sm" id="riAE" onclick="setRunInvTab('aE',this)">À émettre</button>
+                <button class="btn btn-sm" id="riFact" onclick="setRunInvTab('fact',this)">Facturées</button>
+                <button class="btn btn-sm" id="riPay" onclick="setRunInvTab('pay',this)">Payées</button>
+              </div>
+            </div>
+            <div class="tw" style="margin-top:12px;"><table id="runInvT">
+              <tr><th>Fournisseur</th><th>Trimestre</th><th>Montant théorique</th><th>Montant déclaré</th><th>Date génération</th><th>Statut</th><th></th></tr>
+            </table></div>
+            <div id="runInvEmpty" class="empty">Aucune facture Running enregistrée.</div>
+          </div>
+
+        </div>
+
+        <!-- ═══ PERF FEES ═══ -->
+        <div id="factPFSection" style="display:none;">
+
+          <!-- KPIs Perf fees -->
+          <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:16px;" id="pfKpi"></div>
+
+          <!-- Rapprochement Perf fees par fournisseur -->
+          <div class="card" style="padding:0;overflow:hidden;margin-bottom:16px;">
+            <div style="padding:14px 16px 8px;font-size:13px;font-weight:600;">Perf fees — Deals à facturer par fournisseur</div>
+            <div class="tw" style="margin-top:4px;"><table id="pfRapprT">
+              <tr><th>Fournisseur</th><th>Famille</th><th>Nb deals</th><th>Montant PF théorique</th><th>Montant déclaré</th><th>Statut</th><th></th></tr>
+            </table></div>
+            <div id="pfRapprEmpty" class="empty">Aucun deal avec perf fees.</div>
+          </div>
+
+          <!-- Suivi factures Perf fees -->
+          <div class="card" style="padding:0;overflow:hidden;">
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px 0;flex-wrap:wrap;gap:8px;">
+              <div style="font-size:13px;font-weight:600;">Suivi des factures Perf fees</div>
+              <div style="display:flex;gap:4px;" id="pfInvTabs">
+                <button class="btn btn-sm" onclick="setPFInvTab('all',this)" style="background:var(--text);color:var(--surface);border-color:var(--text);">Toutes</button>
+                <button class="btn btn-sm" onclick="setPFInvTab('aE',this)">À émettre</button>
+                <button class="btn btn-sm" onclick="setPFInvTab('fact',this)">Facturées</button>
+                <button class="btn btn-sm" onclick="setPFInvTab('pay',this)">Payées</button>
+              </div>
+            </div>
+            <div class="tw" style="margin-top:12px;"><table id="pfInvT">
+              <tr><th>Fournisseur</th><th>Client</th><th>Produit</th><th>Montant PF</th><th>Date génération</th><th>Date paiement</th><th>Statut</th><th></th></tr>
+            </table></div>
+            <div id="pfInvEmpty" class="empty">Aucune facture Perf fees enregistrée.</div>
+          </div>
+
+        </div>
+
+        <!-- Éléments cachés pour compatibilité JS -->
+        <div style="display:none;">
+          <div id="factRECAPSection"></div>
+          <div id="factList"></div>
+          <div id="factTabs"></div>
+          <table id="recapUFT"><tr></tr></table>
+          <div id="recapUFEmpty"></div>
+          <table id="ufInvT"><tr></tr></table>
+          <div id="ufInvEmpty"></div>
+          <div id="ufInvTabs"></div>
+        </div>
+
+      </div>
+      <div class="page" id="p-graphiques">
+        <div class="g2">
+          <div class="card"><div class="card-hd">UF par fournisseur</div><div style="position:relative;height:190px;"><canvas id="cUF" role="img" aria-label="UF par fournisseur"></canvas></div><div id="legUF" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;font-size:11px;color:var(--text2);"></div></div>
+          <div class="card"><div class="card-hd">Running annuel par fournisseur</div><div id="cRunW" style="position:relative;height:200px;"><canvas id="cRun" role="img" aria-label="Running par fournisseur"></canvas></div></div>
+        </div>
+        <div class="card">
+          <div class="card-hd">Évolution mensuelle — UF + Running
+            <div style="display:flex;gap:10px;font-size:11px;color:var(--text2);font-weight:400;"><span style="display:flex;align-items:center;gap:3px;"><span style="width:9px;height:9px;border-radius:2px;background:#1d5fd4;display:inline-block;"></span>UF</span><span style="display:flex;align-items:center;gap:3px;"><span style="width:9px;height:9px;border-radius:2px;background:#1a8a4a;display:inline-block;"></span>Running</span></div>
+          </div>
+          <div style="position:relative;height:200px;"><canvas id="cTL" role="img" aria-label="Timeline mensuelle"></canvas></div>
+        </div>
+        <div class="g2">
+          <div class="card"><div class="card-hd">Statut facturation</div><div style="position:relative;height:160px;"><canvas id="cFact" role="img" aria-label="Statut facturation"></canvas></div><div id="legFact" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;font-size:11px;color:var(--text2);"></div></div>
+          <div class="card"><div class="card-hd">Par devise (nominal)</div><div style="position:relative;height:160px;"><canvas id="cDev" role="img" aria-label="Devise"></canvas></div><div id="legDev" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;font-size:11px;color:var(--text2);"></div></div>
+        </div>
+      </div>
+
+      <!-- ALERTES -->
+
+      <!-- OBJECTIFS -->
+      <!-- CLIENTS -->
+      <div class="page" id="p-clients">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+          <div style="display:flex;gap:6px;">
+            <button class="btn" id="tabAll" onclick="setClientTab('ALL',this)" style="background:var(--text);color:var(--surface);border-color:var(--text);">Tous</button>
+            <button class="btn" id="tabPP" onclick="setClientTab('PP',this)">Personnes physiques</button>
+            <button class="btn" id="tabPM" onclick="setClientTab('PM',this)">Personnes morales</button>
+          </div>
+          <button class="btn btn-primary" onclick="openAddClientModal()">+ Nouveau client</button>
+        </div>
+        <div class="card" style="padding:0;overflow:hidden;">
+          <table id="clientsT">
+            <tr>
+              <th>Nom</th>
+              <th>Type</th>
+              <th>Vendeur référent</th>
+              <th>Nb deals</th>
+              <th>Encours total</th>
+              <th>UF total</th>
+              <th>Running /an</th>
+              <th>Dernier deal</th>
+              <th></th>
+            </tr>
+          </table>
+          <div id="clientsEmpty" class="empty">Aucun client.</div>
+        </div>
+      </div>
+
+      <!-- FOURNISSEURS -->
+      <div class="page" id="p-fournisseurs">
+
+        <!-- Sous-onglets Référentiel / Rapprochement -->
+        <div class="subtabs" id="fournSubTabs" style="margin-bottom:14px;">
+          <button class="stab on" id="fstRef" onclick="setFournSub('ref',this)">Référentiel</button>
+          <button class="stab" id="fstRappr" onclick="setFournSub('rappr',this)">Rapprochement encours</button>
+        </div>
+
+        <!-- RÉFÉRENTIEL -->
+        <div id="fournRefSection">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
+            <div style="display:flex;gap:6px;" id="fournTabs">
+              <button class="btn" id="ftAll" onclick="setFournTab('ALL',this)" style="background:var(--text);color:var(--surface);border-color:var(--text);">Tous</button>
+              <button class="btn" id="ftSDG" onclick="setFournTab('SDG',this)">Société de gestion</button>
+              <button class="btn" id="ftBanque" onclick="setFournTab('Banque',this)">Banque</button>
+              <button class="btn" id="ftAssureur" onclick="setFournTab('Assureur',this)">Assureurs</button>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="font-size:12px;color:var(--text2);" id="fournCount"></span>
+              <button class="btn btn-primary" onclick="openFournModal()">+ Nouveau fournisseur</button>
+            </div>
+          </div>
+          <div class="card" style="padding:0;overflow:hidden;">
+            <table id="fournT">
+              <tr>
+                <th>Nom</th><th>Famille</th><th>Nb deals</th><th>UF total</th><th>Running /an</th><th>Dernier deal</th>
+              </tr>
+            </table>
+            <div id="fournEmpty" class="empty">Aucun fournisseur.</div>
+          </div>
+        </div>
+
+        <!-- RAPPROCHEMENT -->
+        <div id="fournRapprSection" style="display:none;">
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap;">
+            <div style="display:flex;gap:4px;" id="rapprTrimTabs">
+              <button class="btn" id="rrT1" onclick="setRapprTrim(1,this)">T1</button>
+              <button class="btn" id="rrT2" onclick="setRapprTrim(2,this)">T2</button>
+              <button class="btn" id="rrT3" onclick="setRapprTrim(3,this)">T3</button>
+              <button class="btn" id="rrT4" onclick="setRapprTrim(4,this)">T4</button>
+            </div>
+            <select id="rapprYear" onchange="renderRapprochement()" style="width:auto;"></select>
+            <span style="font-size:12px;color:var(--text2);" id="rapprLabel"></span>
+          </div>
+
+          <!-- KPIs rapprochement -->
+          <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:14px;" id="rapprKpi"></div>
+
+          <!-- Tableau rapprochement par fournisseur -->
+          <div class="card" style="padding:0;overflow:hidden;">
+            <table id="rapprT">
+              <tr>
+                <th>Fournisseur</th>
+                <th>Famille</th>
+                <th>Nominal app (EUR)</th>
+                <th>Déclaré fournisseur</th>
+                <th>Écart</th>
+                <th>Statut</th>
+                <th></th>
+              </tr>
+            </table>
+            <div id="rapprEmpty" class="empty">Aucun deal sur cette période.</div>
+          </div>
+
+        </div>
+
+      </div>
+
+      <!-- BROKERS -->
+      <div class="page" id="p-brokers">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+          <span style="font-size:12px;color:var(--text2);" id="brokerCount"></span>
+          <button class="btn btn-primary" onclick="openBrokerModal()">+ Nouveau broker</button>
+        </div>
+        <div class="card" style="padding:0;overflow:hidden;">
+          <table id="brokerT">
+            <tr>
+              <th>Nom</th>
+              <th>Nb deals</th>
+              <th>UF total</th>
+              <th>Running /an</th>
+              <th>Dernier deal</th>
+              <th></th>
+            </tr>
+          </table>
+          <div id="brokerEmpty" class="empty">Aucun broker.</div>
+        </div>
+      </div>
+
+      <!-- COMMISSIONS -->
+      <div class="page" id="p-commissions">
+
+        <!-- Filtres période -->
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px;">
+          <div style="display:flex;gap:4px;" id="commPeriodTabs">
+            <button class="btn" id="cpMois" onclick="setCommPeriod('mois',this)">Mois</button>
+            <button class="btn" id="cpTrim" onclick="setCommPeriod('trimestre',this)">Trimestre</button>
+            <button class="btn" id="cpAnnee" onclick="setCommPeriod('annee',this)" style="background:var(--text);color:var(--surface);border-color:var(--text);">Année</button>
+          </div>
+          <select id="commYear" onchange="renderCommissions()" style="width:auto;"></select>
+          <select id="commMonth" onchange="renderCommissions()" style="width:auto;display:none;"></select>
+          <select id="commTrim" onchange="renderCommissions()" style="width:auto;display:none;">
+            <option value="1">T1 (Jan-Mar)</option>
+            <option value="2">T2 (Avr-Jun)</option>
+            <option value="3">T3 (Jul-Sep)</option>
+            <option value="4">T4 (Oct-Déc)</option>
+          </select>
+          <div style="margin-left:auto;font-size:12px;color:var(--text2);" id="commPeriodLabel"></div>
+        </div>
+
+        <!-- KPIs globaux -->
+        <div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin-bottom:16px;" id="commKpiGrid"></div>
+
+        <!-- Cards par vendeur -->
+        <div class="g2" id="commVendeurCards"></div>
+
+        <!-- Tableau drill-down -->
+        <div class="card" id="commDrillCard" style="display:none;">
+          <div class="card-hd" id="commDrillTitle" style="cursor:pointer;" onclick="closeCommDrill()">
+            ← Retour
+          </div>
+          <div class="subtabs" id="commDrillTabs">
+            <button class="stab on" onclick="setDrillTab('fournisseur',this)">Par fournisseur</button>
+            <button class="stab" onclick="setDrillTab('client',this)">Par client</button>
+            <button class="stab" onclick="setDrillTab('deal',this)">Par deal</button>
+          </div>
+          <div class="tw"><table id="commDrillT"></table></div>
+          <div id="commDrillEmpty" class="empty">Aucune donnée.</div>
+        </div>
+
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- MODAL SAISIE ENCOURS FOURNISSEUR -->
+<div class="ov" id="rapprModal">
+  <div class="modal" style="max-width:480px;">
+    <div class="modal-hd"><span class="modal-title" id="rapprModalTitle">Saisir encours déclaré</span><button class="close-btn" onclick="closeRapprModal()">×</button></div>
+    <div class="modal-body">
+      <div style="margin-bottom:12px;">
+        <div style="font-size:12px;color:var(--text2);margin-bottom:4px;">Fournisseur</div>
+        <div style="font-size:15px;font-weight:600;" id="rapprModalFourn">—</div>
+      </div>
+      <div style="background:var(--surface2);border-radius:var(--rs);padding:10px 14px;margin-bottom:14px;display:flex;justify-content:space-between;">
+        <div><div style="font-size:10px;color:var(--text3);">Nominal app</div><div style="font-size:15px;font-weight:600;color:var(--blue);" id="rapprModalApp">—</div></div>
+        <div><div style="font-size:10px;color:var(--text3);">Période</div><div style="font-size:13px;font-weight:500;" id="rapprModalPeriod">—</div></div>
+      </div>
+      <div class="fl"><label class="field-label">Montant déclaré par le fournisseur (EUR)</label><input type="number" id="rapprDeclared" placeholder="ex: 2500000" oninput="updateRapprCalc()"/></div>
+      <div style="margin-top:10px;background:var(--surface2);border-radius:var(--rs);padding:10px 14px;border:1px solid var(--border);">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-size:12px;color:var(--text2);">Écart</span>
+          <span style="font-size:16px;font-weight:600;" id="rapprEcartDisplay">—</span>
+        </div>
+        <div style="font-size:11px;color:var(--text3);margin-top:3px;" id="rapprEcartPct"></div>
+      </div>
+      <div class="fl" style="margin-top:10px;"><label class="field-label">Commentaire</label><textarea id="rapprComment" rows="2" style="width:100%;resize:vertical;" placeholder="Ex: écart sur contrat client X..."></textarea></div>
+    </div>
+    <div class="modal-ft">
+      <button class="btn" onclick="closeRapprModal()">Annuler</button>
+      <button class="btn btn-primary" onclick="saveRapprochement()">Enregistrer</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL SAISIE MONTANT FOURNISSEUR (RECAP FACTURATION) -->
+<div class="ov" id="recapFactModal">
+  <div class="modal" style="max-width:500px;">
+    <div class="modal-hd"><span class="modal-title" id="recapFactModalTitle">Saisir montant fournisseur</span><button class="close-btn" onclick="closeRecapFactModal()">×</button></div>
+    <div class="modal-body">
+      <div style="background:var(--surface2);border-radius:var(--rs);padding:12px 16px;margin-bottom:14px;">
+        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;">
+          <div><div style="font-size:10px;color:var(--text3);">Fournisseur</div><div style="font-size:13px;font-weight:600;" id="rfmFourn">—</div></div>
+          <div><div style="font-size:10px;color:var(--text3);">Encours app</div><div style="font-size:13px;font-weight:600;color:var(--blue);" id="rfmEncours">—</div></div>
+          <div><div style="font-size:10px;color:var(--text3);">Fact. théorique</div><div style="font-size:13px;font-weight:600;color:var(--green);" id="rfmTheo">—</div></div>
+        </div>
+      </div>
+      <div class="fl"><label class="field-label">Montant déclaré par le fournisseur (EUR)</label><input type="number" id="rfmDeclared" placeholder="ex: 12500" style="width:100%;" oninput="updateRecapEcart()"/></div>
+      <div style="margin-top:10px;background:var(--surface2);border-radius:var(--rs);padding:10px 14px;border:1px solid var(--border);">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-size:12px;color:var(--text2);">Écart (déclaré − théorique)</span>
+          <span style="font-size:16px;font-weight:600;" id="rfmEcart">—</span>
+        </div>
+        <div style="font-size:11px;color:var(--text3);margin-top:3px;" id="rfmEcartNote"></div>
+      </div>
+      <div class="fl" style="margin-top:10px;"><label class="field-label">Commentaire</label><textarea id="rfmComment" rows="2" style="width:100%;resize:vertical;" placeholder="Ex: écart sur contrat X, à vérifier..."></textarea></div>
+    </div>
+    <div class="modal-ft">
+      <button class="btn" onclick="closeRecapFactModal()">Annuler</button>
+      <button class="btn" id="rfmGenBtn" style="background:var(--green);color:white;border-color:var(--green);" onclick="genFactureRecap()">✓ Valider et générer facture</button>
+      <button class="btn btn-primary" onclick="saveRecapFact()">Enregistrer</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL SAISIE PERF FEES -->
+<div class="ov" id="pfRapprModal">
+  <div class="modal" style="max-width:500px;">
+    <div class="modal-hd"><span class="modal-title" id="pfRapprTitle">Facture Perf fees</span><button class="close-btn" onclick="closePFRapprModal()">×</button></div>
+    <div class="modal-body">
+      <div style="background:var(--surface2);border-radius:var(--rs);padding:12px 16px;margin-bottom:14px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <div><div style="font-size:10px;color:var(--text3);">Fournisseur</div><div style="font-size:13px;font-weight:600;" id="pfRmFourn">—</div></div>
+          <div><div style="font-size:10px;color:var(--text3);">Montant théorique</div><div style="font-size:13px;font-weight:600;color:var(--green);" id="pfRmTheo">—</div></div>
+        </div>
+      </div>
+      <div id="pfRmDealsList" style="margin-bottom:14px;max-height:160px;overflow-y:auto;font-size:12px;"></div>
+      <div class="fl"><label class="field-label">Montant déclaré (EUR)</label><input type="number" id="pfRmDeclared" placeholder="ex: 3000" style="width:100%;" oninput="updatePFRapprEcart()"/></div>
+      <div style="margin-top:10px;background:var(--surface2);border-radius:var(--rs);padding:10px 14px;border:1px solid var(--border);">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-size:12px;color:var(--text2);">Écart</span>
+          <span style="font-size:16px;font-weight:600;" id="pfRmEcart">—</span>
+        </div>
+      </div>
+      <div class="fl" style="margin-top:10px;"><label class="field-label">Commentaire</label><textarea id="pfRmComment" rows="2" style="width:100%;resize:vertical;"></textarea></div>
+    </div>
+    <div class="modal-ft">
+      <button class="btn" onclick="closePFRapprModal()">Annuler</button>
+      <button class="btn" style="color:var(--red);border-color:var(--red-bg);" onclick="resetPFRappr()">Réinitialiser</button>
+      <button class="btn" style="background:var(--green);color:white;border-color:var(--green);" onclick="genPFRapprFacture()">✓ Valider et générer facture</button>
+      <button class="btn btn-primary" onclick="savePFRappr()">Enregistrer</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL SAISIE MONTANT UF (RAPPROCHEMENT) -->
+<div class="ov" id="ufRapprModal">
+  <div class="modal" style="max-width:500px;">
+    <div class="modal-hd"><span class="modal-title" id="ufRapprTitle">Émettre facture UF</span><button class="close-btn" onclick="closeUFRapprModal()">×</button></div>
+    <div class="modal-body">
+      <div style="background:var(--surface2);border-radius:var(--rs);padding:12px 16px;margin-bottom:14px;">
+        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;">
+          <div><div style="font-size:10px;color:var(--text3);">Fournisseur</div><div style="font-size:13px;font-weight:600;" id="ufRmFourn">—</div></div>
+          <div><div style="font-size:10px;color:var(--text3);">Nb deals</div><div style="font-size:13px;font-weight:600;color:var(--blue);" id="ufRmNb">—</div></div>
+          <div><div style="font-size:10px;color:var(--text3);">Montant théorique</div><div style="font-size:13px;font-weight:600;color:var(--green);" id="ufRmTheo">—</div></div>
+        </div>
+      </div>
+      <div id="ufRmDealsList" style="margin-bottom:14px;max-height:160px;overflow-y:auto;font-size:12px;"></div>
+      <div class="fl"><label class="field-label">Montant déclaré (EUR)</label><input type="number" id="ufRmDeclared" placeholder="ex: 5000" oninput="updateUFRapprEcart()"/></div>
+      <div style="margin-top:10px;background:var(--surface2);border-radius:var(--rs);padding:10px 14px;border:1px solid var(--border);">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-size:12px;color:var(--text2);">Écart (déclaré − théorique)</span>
+          <span style="font-size:16px;font-weight:600;" id="ufRmEcart">—</span>
+        </div>
+      </div>
+      <div class="fl" style="margin-top:10px;"><label class="field-label">Commentaire</label><textarea id="ufRmComment" rows="2" style="width:100%;resize:vertical;"></textarea></div>
+    </div>
+    <div class="modal-ft">
+      <button class="btn" onclick="closeUFRapprModal()">Annuler</button>
+      <button class="btn" style="color:var(--red);border-color:var(--red-bg);" onclick="resetUFRappr()">Réinitialiser</button>
+      <button class="btn" style="background:var(--green);color:white;border-color:var(--green);" onclick="genUFRapprFacture()">✓ Valider et générer facture</button>
+      <button class="btn btn-primary" onclick="saveUFRappr()">Enregistrer</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL FACTURATION UF -->
+<div class="ov" id="ufFactModal">
+  <div class="modal" style="max-width:500px;">
+    <div class="modal-hd"><span class="modal-title" id="ufFactModalTitle">Émettre facture UF</span><button class="close-btn" onclick="closeUFFactModal()">×</button></div>
+    <div class="modal-body">
+      <div style="background:var(--surface2);border-radius:var(--rs);padding:12px 16px;margin-bottom:14px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <div><div style="font-size:10px;color:var(--text3);">Fournisseur</div><div style="font-size:13px;font-weight:600;" id="ufFmFourn">—</div></div>
+          <div><div style="font-size:10px;color:var(--text3);">Montant UF total</div><div style="font-size:15px;font-weight:600;color:var(--blue);" id="ufFmAmount">—</div></div>
+        </div>
+      </div>
+      <div id="ufFmDeals" style="margin-bottom:14px;max-height:200px;overflow-y:auto;font-size:12px;"></div>
+      <div class="fl"><label class="field-label">Commentaire (optionnel)</label><textarea id="ufFmComment" rows="2" style="width:100%;resize:vertical;"></textarea></div>
+    </div>
+    <div class="modal-ft">
+      <button class="btn" onclick="closeUFFactModal()">Annuler</button>
+      <button class="btn btn-primary" style="background:var(--green);border-color:var(--green);" onclick="confirmUFInvoice()">✓ Générer la facture PDF</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL FOURNISSEUR -->
+<div class="ov" id="fournModal">
+  <div class="modal" style="max-width:520px;">
+    <div class="modal-hd"><span class="modal-title" id="fournModalTitle">Nouveau fournisseur</span><button class="close-btn" onclick="closeFournModal()">×</button></div>
+    <div class="modal-body">
+      <div class="fg2">
+        <div class="fl"><label>Nom du fournisseur</label><input type="text" id="fName" placeholder="ex: Amundi AM"/></div>
+        <div class="fl"><label>Famille</label><select id="fFamille"><option value="SDG">Société de gestion</option><option value="Banque">Banque</option><option value="Assureur">Assureur</option></select></div>
+      </div>
+      <div class="form-sep">Coordonnées (pour facturation)</div>
+      <div class="fg2" style="margin-top:0;">
+        <div class="fl"><label>Adresse ligne 1</label><input type="text" id="fAddr1" placeholder="ex: 24-26, avenue des Champs-Elysées"/></div>
+        <div class="fl"><label>Adresse ligne 2</label><input type="text" id="fAddr2" placeholder="ex: 75008 Paris"/></div>
+      </div>
+      <div class="fg2" style="margin-top:8px;">
+        <div class="fl"><label>Contact (Attention)</label><input type="text" id="fContact" placeholder="ex: Nadine Zrek"/></div>
+        <div class="fl"><label>Email</label><input type="text" id="fEmail" placeholder="ex: contact@fournisseur.com"/></div>
+      </div>
+    </div>
+    <div class="modal-ft"><button class="btn" onclick="closeFournModal()">Annuler</button><button class="btn" id="fournDeleteBtn" style="color:var(--red);border-color:var(--red-bg);display:none;" onclick="deleteFournFromModal()">Supprimer</button><button class="btn btn-primary" onclick="saveFourn()">Enregistrer</button></div>
+  </div>
+</div>
+
+<!-- MODAL BROKER -->
+<div class="ov" id="brokerModal">
+  <div class="modal" style="max-width:400px;">
+    <div class="modal-hd"><span class="modal-title" id="brokerModalTitle">Nouveau broker</span><button class="close-btn" onclick="closeBrokerModal()">×</button></div>
+    <div class="modal-body">
+      <div class="fl"><label>Nom du broker</label><input type="text" id="bName" placeholder="ex: KCS"/></div>
+    </div>
+    <div class="modal-ft"><button class="btn" onclick="closeBrokerModal()">Annuler</button><button class="btn" id="brokerDeleteBtn" style="color:var(--red);border-color:var(--red-bg);display:none;" onclick="deleteBrokerFromModal()">Supprimer</button><button class="btn btn-primary" onclick="saveBroker()">Enregistrer</button></div>
+  </div>
+</div>
+<div class="ov" id="clientModal">
+  <div class="modal" style="max-width:1100px;width:95vw;">
+    <div class="modal-hd"><span class="modal-title" id="clientModalTitle">Fiche client</span><button class="close-btn" onclick="closeClientModal()">×</button></div>
+    <div class="modal-body" style="padding:0;">
+
+      <!-- Layout 2 colonnes -->
+      <div style="display:grid;grid-template-columns:280px 1fr;min-height:500px;">
+
+        <!-- Colonne gauche : infos client + édition -->
+        <div style="background:var(--surface2);border-right:1px solid var(--border);padding:20px;display:flex;flex-direction:column;gap:14px;">
+          <div>
+            <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;font-weight:600;">Informations client</div>
+            <div class="fl"><label>Nom</label><input type="text" id="cName" placeholder="ex: Jean Dupont"/></div>
+            <div class="fl" style="margin-top:8px;"><label>Type</label><select id="cType"><option value="PP">Personne physique</option><option value="PM">Personne morale</option></select></div>
+            <div class="fl" style="margin-top:8px;"><label>Vendeur référent</label><select id="cVendeur"><option value="">— Aucun —</option><option>Audrey</option><option>David</option></select></div>
+            <div class="fl" style="margin-top:8px;"><label>Email</label><input type="text" id="cEmail" placeholder="jean.dupont@email.com"/></div>
+            <div class="fl" style="margin-top:8px;"><label>Notes</label><textarea id="cNotes" rows="3" style="width:100%;resize:vertical;"></textarea></div>
+          </div>
+
+          <!-- KPIs client -->
+          <div id="clientKpis" style="display:none;">
+            <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;font-weight:600;">Encours</div>
+            <div id="clientKpisContent"></div>
+          </div>
+
+          <div style="margin-top:auto;display:flex;flex-direction:column;gap:6px;">
+            <button class="btn btn-primary" onclick="saveClient()" style="width:100%;">Enregistrer</button>
+            <button class="btn" id="clientDeleteBtn" style="color:var(--red);border-color:var(--red-bg);display:none;width:100%;" onclick="deleteClientFromModal()">Supprimer le client</button>
+          </div>
+        </div>
+
+        <!-- Colonne droite : investissements + historique -->
+        <div style="padding:20px;overflow-y:auto;max-height:80vh;">
+
+          <!-- Lignes d'investissement -->
+          <div id="clientInvestSection" style="display:none;margin-bottom:24px;">
+            <div style="font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px;display:flex;align-items:center;gap:8px;">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 12V5l4-3 4 3 4-3v10H2z"/></svg>
+              Portefeuille en cours
+            </div>
+            <div id="clientInvestLines"></div>
+          </div>
+
+          <!-- Historique -->
+          <div id="clientHistSection" style="display:none;">
+            <div style="font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px;display:flex;align-items:center;gap:8px;">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 4v4l3 2"/></svg>
+              Historique des opérations
+            </div>
+            <div id="clientHistLines"></div>
+          </div>
+
+          <!-- Placeholder si nouveau client -->
+          <div id="clientNewPlaceholder" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:300px;color:var(--text3);">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" style="margin-bottom:12px;opacity:.4;"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            <div style="font-size:13px;">Renseignez les informations et enregistrez le client</div>
+          </div>
+
+        </div>
+      </div>
+
+    </div>
+    <!-- Footer retiré : boutons dans la colonne gauche -->
+  </div>
+</div>
+<div class="ov" id="dealModal">
+  <div class="modal" style="max-width:900px;">
+    <div class="modal-hd"><span class="modal-title" id="dmTitle">Nouveau deal</span><button class="close-btn" onclick="closeDM()">×</button></div>
+    <div class="modal-body">
+
+      <!-- Ligne 1 : Vendeur / Trade date / Statut / Devise -->
+      <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 16px;margin-bottom:12px;">
+        <div class="fl"><label>Vendeur</label><select id="mV"><option>Audrey</option><option>David</option><option>Audrey & David</option></select></div>
+        <div class="fl"><label>Trade date</label><input type="date" id="mDate"/></div>
+        <div class="fl"><label>Statut</label><select id="mStat"><option>Deal réalisé</option><option>Deal pipe</option></select></div>
+        <div class="fl"><label>Devise</label><select id="mDev" onchange="calcM()"><option>EUR</option><option>USD</option></select></div>
+      </div>
+
+      <!-- Ligne 2 : Fournisseur / Produit / ISIN / Broker -->
+      <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 16px;margin-bottom:16px;">
+        <div class="fl"><label>Fournisseur</label><select id="mFourn"><option value="">— Choisir —</option></select></div>
+        <div class="fl"><label>Produit / Support</label><input type="text" id="mProduit"/></div>
+        <div class="fl"><label>ISIN</label><input type="text" id="mISIN"/></div>
+        <div class="fl"><label>Broker</label><select id="mBroker"><option value="">— Aucun —</option><option>KCS</option><option>Silex</option><option>Direct</option><option>Indosuez</option><option>Natixis</option><option>Société Générale</option><option>BNP Paribas CIB</option><option>Oddo BHF</option><option>Caceis</option><option>Autre</option></select></div>
+      </div>
+
+      <!-- Section clients pleine largeur -->
+      <div style="background:var(--surface2);border-radius:var(--rs);padding:14px 16px;margin-bottom:16px;">
+        <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:10px;text-transform:uppercase;letter-spacing:.4px;">Clients & Nominaux</div>
+        <div style="display:flex;gap:8px;margin-bottom:6px;padding:0 2px;">
+            <span style="flex:2;min-width:0;font-size:11px;color:var(--text3);font-weight:500;">Client</span>
+            <span style="flex:2;min-width:0;font-size:11px;color:var(--text3);font-weight:500;">Contrat</span>
+            <span style="flex:2;min-width:0;font-size:11px;color:var(--text3);font-weight:500;">Dépositaire</span>
+            <span style="flex:1;min-width:80px;max-width:130px;font-size:11px;color:var(--text3);font-weight:500;">Nominal</span>
+            <span style="flex-shrink:0;width:66px;"></span>
+          </div>
+        <div id="clientLines"></div>
+        <button type="button" class="btn btn-sm" onclick="addClientLine()" style="margin-top:8px;">+ Ajouter un client</button>
+        <div id="addClientRow" style="display:none;margin-top:8px;"><div style="display:flex;gap:6px;"><input type="text" id="newClientInput" placeholder="Nom du nouveau client" style="flex:1;max-width:280px;"/><button type="button" class="btn btn-sm btn-primary" onclick="confirmAddClient()">Ajouter</button><button type="button" class="btn btn-sm" onclick="cancelAddClient()">✕</button></div></div>
+      </div>
+
+      <div class="fl" style="display:none;"><label>Contrat</label><select id="mContrat"><option>Assurance Vie Lux</option><option>Contrat Assurance Vie</option><option>Contrat de Capitalisation</option><option>CTO</option><option>PER</option></select></div>
+      <div style="display:none;"><input type="number" id="mNom"/><input type="hidden" id="mInvS"/><input type="hidden" id="mInv"/><input type="date" id="mIssue"/></div>
+      <div class="form-sep">Structure de commission</div>
+      <div class="ctype-row">
+        <button class="ctype on" id="ctUF" onclick="setCT('UF')">Up-Front</button>
+        <button class="ctype" id="ctRUN" onclick="setCT('RUN')">Running</button>
+        <button class="ctype" id="ctBOTH" onclick="setCT('BOTH')">UF + Running</button>
+      </div>
+      <div class="fg2" id="ufRow">
+        <div class="fl"><label>Taux UF (%)</label><input type="number" id="mUFR" step="0.01" oninput="calcM()"/></div>
+        
+      </div>
+      <div class="fg2" id="runRow" style="display:none;margin-top:8px;">
+        <div class="fl"><label>Taux Running (%/an)</label><input type="number" id="mRunR" step="0.001" oninput="calcM()"/></div>
+        <div class="fl"><label>Running start</label><input type="date" id="mRunStart"/></div>
+      </div>
+      <div class="calc-strip">
+        <div><div class="cs-l">UF (devise)</div><div class="cs-v" id="csD">—</div></div>
+        <div><div class="cs-l">UF (EUR)</div><div class="cs-v" id="csUF" style="color:var(--blue);">—</div></div>
+        <div><div class="cs-l">Running /an</div><div class="cs-v" id="csRun" style="color:var(--green);">—</div></div>
+        <div><div class="cs-l">Total</div><div class="cs-v" id="csTTC" style="font-size:16px;">—</div></div>
+      </div>
+      <div class="form-sep">Perf fees <span style="font-size:10px;font-weight:400;color:var(--text3);">(optionnel)</span></div>
+      <div class="ctype-row">
+        <button class="ctype" id="ctPF" onclick="togglePF(this)">Perf fees</button>
+      </div>
+      <div id="pfRow" style="display:none;">
+        <div class="fg">
+          <div class="fl"><label>Type</label>
+            <select id="mPFType" onchange="onPFTypeChange()">
+              <option value="pct">% sur performance</option>
+              <option value="fixed">Montant fixe</option>
+            </select>
+          </div>
+          <div class="fl" id="pfRateWrap"><label>Taux perf fees (%)</label><input type="number" id="mPFRate" step="0.01" placeholder="ex: 20" oninput="calcM()"/></div>
+          <div class="fl" id="pfFixedWrap" style="display:none;"><label>Montant fixe (EUR)</label><input type="number" id="mPFFixed" step="1" placeholder="ex: 50000" oninput="calcM()"/></div>
+        </div>
+        <div class="fg" style="margin-top:8px;">
+          <div class="fl" id="pfHurdleWrap"><label>Hurdle rate (%) <span style="font-weight:400;color:var(--text3);">optionnel</span></label><input type="number" id="mPFHurdle" step="0.01" placeholder="ex: 8"/></div>
+          <div class="fl"><label>Fréquence</label>
+            <select id="mPFFreq">
+              <option value="annuel">Annuelle</option>
+              <option value="cloture">À la clôture</option>
+              <option value="valorisation">À chaque valorisation</option>
+              <option value="variable">Variable</option>
+            </select>
+          </div>
+        </div>
+        <div style="background:var(--surface2);border-radius:var(--rs);padding:9px 13px;border:1px solid var(--border);margin-top:10px;display:flex;gap:24px;">
+          <div><div style="font-size:10px;color:var(--text3);margin-bottom:2px;">Type</div><div style="font-size:13px;font-weight:500;color:var(--purple);" id="pfSummType">—</div></div>
+          <div><div style="font-size:10px;color:var(--text3);margin-bottom:2px;">Condition</div><div style="font-size:13px;font-weight:500;" id="pfSummCond">—</div></div>
+          <div><div style="font-size:10px;color:var(--text3);margin-bottom:2px;">Fréquence</div><div style="font-size:13px;font-weight:500;" id="pfSummFreq">—</div></div>
+        </div>
+      </div>
+      <div class="fl" style="margin-top:8px;"><label>Notes</label><textarea id="mNotes" rows="2" style="resize:vertical;"></textarea></div>
+    </div>
+    <div class="modal-ft"><button class="btn" onclick="closeDM()">Annuler</button><button class="btn btn-primary" onclick="saveDeal()">Enregistrer</button></div>
+  </div>
+</div>
+
+<!-- MODAL DETAIL -->
+<div class="ov" id="detModal">
+  <div class="modal">
+    <div class="modal-hd"><span class="modal-title" id="detTitle">Détail</span><button class="close-btn" onclick="closeDet()">×</button></div>
+    <div class="modal-body"><div id="detBody"></div><div class="form-sep">Historique</div><div id="detHist"></div></div>
+    <div class="modal-ft"><button class="btn" onclick="closeDet()">Fermer</button><button class="btn" id="detDelete" style="color:var(--red);border-color:var(--red-bg);">Supprimer</button><button class="btn" id="detArbitre" style="display:none;background:var(--purple,#7c3aed);color:white;border-color:var(--purple,#7c3aed);" onclick="openArbitrage()">⇄ Arbitrer</button><button class="btn btn-primary" id="detEdit">Modifier</button></div>
+  </div>
+</div>
+
+<!-- MODAL ARBITRAGE -->
+<div class="ov" id="arbModal">
+  <div class="modal" style="max-width:900px;">
+    <div class="modal-hd"><span class="modal-title">Enregistrer un arbitrage</span><button class="close-btn" onclick="closeArbModal()">×</button></div>
+    <div class="modal-body">
+
+      <!-- Deal source -->
+      <div style="background:var(--surface2);border-radius:var(--rs);padding:12px 16px;margin-bottom:16px;">
+        <div style="font-size:11px;color:var(--text3);margin-bottom:6px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;">Deal de sortie</div>
+        <div style="display:flex;justify-content:space-between;">
+          <div><span style="font-weight:600;" id="arbSrcFourn">—</span> · <span id="arbSrcClient" style="color:var(--text2);"></span></div>
+          <div><span style="color:var(--blue);font-weight:600;" id="arbSrcNom">—</span> · <span style="color:var(--text2);font-size:12px;" id="arbSrcRun">—</span></div>
+        </div>
+      </div>
+
+      <!-- Date arbitrage -->
+      <div style="display:flex;gap:16px;align-items:flex-end;margin-bottom:14px;">
+        <div class="fl" style="margin:0;">
+          <label>Date de l'arbitrage</label>
+          <input type="date" id="arbDate" style="width:200px;" oninput="updateArbProrata();updateArbSummary()"/>
+        </div>
+        <div id="arbProrataInfo" style="background:var(--surface2);border-radius:var(--rs);padding:8px 12px;font-size:12px;color:var(--text2);display:none;flex:1;">
+          <span id="arbProrataText"></span>
+        </div>
+      </div>
+
+      <!-- Lignes de destination -->
+      <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px;">Vers — nouveaux investissements</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 120px 120px 80px 80px 80px auto;gap:6px;margin-bottom:6px;">
+        <span style="font-size:11px;color:var(--text3);">Fournisseur</span>
+        <span style="font-size:11px;color:var(--text3);">Produit</span>
+        <span style="font-size:11px;color:var(--text3);">Contrat</span>
+        <span style="font-size:11px;color:var(--text3);">Dépositaire</span>
+        <span style="font-size:11px;color:var(--text3);">Montant</span>
+        <span style="font-size:11px;color:var(--text3);">Type</span>
+        <span style="font-size:11px;color:var(--text3);">Taux (%)</span>
+        <span></span>
+      </div>
+      <div id="arbDestLines"></div>
+      <button class="btn btn-sm" onclick="addArbDestLine()" style="margin-top:6px;">+ Ajouter un fournisseur cible</button>
+
+      <!-- Résumé -->
+      <div style="margin-top:14px;padding:10px 14px;border-radius:var(--rs);border:1px solid var(--border);font-size:12px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
+        <div style="display:flex;justify-content:space-between;"><span style="color:var(--text2);">Nominal disponible</span><span style="font-weight:600;" id="arbNomDispo">—</span></div>
+        <div style="display:flex;justify-content:space-between;"><span style="color:var(--text2);">Total arbitré</span><span style="font-weight:600;" id="arbTotalArb">—</span></div>
+        <div style="display:flex;justify-content:space-between;"><span style="color:var(--text2);">Solde restant chez <span id="arbSrcFourn2"></span></span><span style="font-weight:600;" id="arbSolde">—</span></div>
+      </div>
+    </div>
+    <div class="modal-ft">
+      <button class="btn" onclick="closeArbModal()">Annuler</button>
+      <button class="btn btn-primary" onclick="confirmArbitrage()">✓ Enregistrer l'arbitrage</button>
+    </div>
+  </div>
+</div>
+
+
+<div class="toast" id="toast"></div>
+
+
+  <!-- App script -->
+  <script src="app.js"></script>
+</body>
+</html>

@@ -69,6 +69,14 @@ function rapprRowToObj(r){
   return {id:r.id,fourn:r.fourn,type:r.type,period:r.period,declared:r.declared,comment:r.comment||'',facture:r.facture||false,factureDate:r.facture_date||'',paid:r.paid||false,paidDate:r.paid_date||'',theoTrim:r.theo_trim||0};
 }
 async function rapprSave(fourn,type,period,data){
+  // Validate period format: 'run'/'encours' need T#_YEAR; 'uf'/'pf' need null
+  if(type==='run'||type==='encours'){
+    if(!period||!/^T[1-4]_\d{4}$/.test(period))throw new Error('Période invalide pour '+type+': "'+period+'" (attendu T#_YYYY)');
+  } else if(type==='uf'||type==='pf'){
+    if(period)throw new Error('Période non vide pour type '+type+' (attendu null)');
+  } else {
+    throw new Error('Type rapprochement inconnu: '+type);
+  }
   var existing=rapprFind(fourn,type,period);
   var row={fourn:fourn,type:type,period:period||null,declared:data.declared,comment:data.comment||'',facture:data.facture||false,facture_date:data.factureDate||null,paid:data.paid||false,paid_date:data.paidDate||null,theo_trim:data.theoTrim||null};
   if(existing){
@@ -252,15 +260,34 @@ async function checkAuth(){
   if(session){document.getElementById('loginOverlay').style.display='none';initApp();}
   else{document.getElementById('loadingOverlay').style.display='none';document.getElementById('loginOverlay').style.display='flex';}
 }
+var TEAM_PASSWORD='Chamfeuil2026';
+var ALLOWED_DOMAIN='@chamfeuilcapital.com';
 async function doLogin(){
-  var email=document.getElementById('loginEmail').value.trim();
+  var email=document.getElementById('loginEmail').value.trim().toLowerCase();
   var pw=document.getElementById('loginPw').value;
   var btn=document.getElementById('loginBtn');
   var err=document.getElementById('loginErr');
   btn.disabled=true;btn.textContent='Connexion…';err.textContent='';
+  if(!email.endsWith(ALLOWED_DOMAIN)){err.textContent='Email '+ALLOWED_DOMAIN+' requis.';btn.disabled=false;btn.textContent='Se connecter';return;}
+  if(pw!==TEAM_PASSWORD){err.textContent='Mot de passe incorrect.';btn.disabled=false;btn.textContent='Se connecter';return;}
+  // Try sign-in; on "Invalid credentials", auto-register and retry
   var res=await sb.auth.signInWithPassword({email:email,password:pw});
-  if(res.error){err.textContent=res.error.message||'Email ou mot de passe incorrect.';btn.disabled=false;btn.textContent='Se connecter';}
-  else{document.getElementById('loginOverlay').style.display='none';initApp();}
+  if(res.error){
+    var msg=(res.error.message||'').toLowerCase();
+    if(msg.indexOf('invalid')!==-1||msg.indexOf('not found')!==-1||msg.indexOf('user')!==-1){
+      // First-time login: register then sign in
+      btn.textContent='Création du compte…';
+      var su=await sb.auth.signUp({email:email,password:pw});
+      if(su.error){err.textContent=su.error.message;btn.disabled=false;btn.textContent='Se connecter';return;}
+      // Try sign-in again (works if email confirmation is disabled in Supabase)
+      var res2=await sb.auth.signInWithPassword({email:email,password:pw});
+      if(res2.error){err.textContent='Compte créé mais connexion impossible. Vérifiez que la confirmation email est désactivée dans Supabase Auth → Providers → Email.';btn.disabled=false;btn.textContent='Se connecter';return;}
+      document.getElementById('loginOverlay').style.display='none';initApp();return;
+    }
+    err.textContent=res.error.message||'Email ou mot de passe incorrect.';btn.disabled=false;btn.textContent='Se connecter';
+  } else {
+    document.getElementById('loginOverlay').style.display='none';initApp();
+  }
 }
 async function doLogout(){
   await sb.auth.signOut();
@@ -1831,21 +1858,38 @@ function exportCSV(){
 }
 function importCSV(e){
   var file=e.target.files[0];if(!file)return;
+  var fileInput=e.target;
+  var EXPECTED_COLS=22;
   var reader=new FileReader();
   reader.onload=async function(ev){
-    var lines=ev.target.result.split('\n').filter(function(l){return l.trim();}),imp=0;
-    for(var li=1;li<lines.length;li++){
-      var c=lines[li].split(',');if(c.length<10)continue;
-      // Column order: 0=Vendeur,1=Date,2=Client,3=Contrat,4=Fournisseur,5=Broker,6=Produit,7=ISIN,
-      // 8=Nominal,9=Devise,10=FX,11=Issue,12=End,13=Type,14=UF%,15=Run%,16=UF EUR,17=Run EUR,
-      // 18=Statut,19=Ref,20=Invoice,21=Notes
-      var d={v:c[0]||'Audrey',date:c[1]||today(),stat:'Deal réalisé',client:c[2]||'',contrat:c[3]||'',fourn:c[4]||'',broker:c[5]||'',produit:c[6]||'',isin:c[7]||'',nom:parseFloat(c[8])||0,dev:c[9]||'EUR',fx:parseFloat(c[10])||1,issue:c[11]||'',end:c[12]||'',ct:c[13]||'UF',ufR:parseFloat(c[14])||0,runR:parseFloat(c[15])||0,ufE:parseFloat(c[16])||0,runE:parseFloat(c[17])||0,tva:0,fSt:c[18]||'À émettre',fRef:c[19]||'',inv:c[20]||'',notes:c[21]||'',hist:[{ts:nowS(),a:'Importé depuis CSV',by:'Import'}]};
-      var res=await sbInsert('deals',d);
-      if(res&&res[0])d._id=res[0].id;
-      deals.push(d);imp++;
+    var lines=ev.target.result.split('\n').filter(function(l){return l.trim();}),imp=0,skipped=0,errors=[];
+    try{
+      for(var li=1;li<lines.length;li++){
+        var c=lines[li].split(',');
+        if(c.length<EXPECTED_COLS){skipped++;errors.push('Ligne '+(li+1)+': '+c.length+' colonnes (attendu '+EXPECTED_COLS+')');continue;}
+        // Column order: 0=Vendeur,1=Date,2=Client,3=Contrat,4=Fournisseur,5=Broker,6=Produit,7=ISIN,
+        // 8=Nominal,9=Devise,10=FX,11=Issue,12=End,13=Type,14=UF%,15=Run%,16=UF EUR,17=Run EUR,
+        // 18=Statut,19=Ref,20=Invoice,21=Notes
+        var d={v:c[0]||'Audrey',date:c[1]||today(),stat:'Deal réalisé',client:c[2]||'',contrat:c[3]||'',fourn:c[4]||'',broker:c[5]||'',produit:c[6]||'',isin:c[7]||'',nom:parseFloat(c[8])||0,dev:c[9]||'EUR',fx:parseFloat(c[10])||1,issue:c[11]||'',end:c[12]||'',ct:c[13]||'UF',ufR:parseFloat(c[14])||0,runR:parseFloat(c[15])||0,ufE:parseFloat(c[16])||0,runE:parseFloat(c[17])||0,tva:0,fSt:c[18]||'À émettre',fRef:c[19]||'',inv:c[20]||'',notes:c[21]||'',hist:[{ts:nowS(),a:'Importé depuis CSV',by:'Import'}]};
+        try{
+          var res=await sbInsert('deals',d);
+          if(res&&res[0])d._id=res[0].id;
+          deals.push(d);imp++;
+        }catch(insErr){
+          skipped++;errors.push('Ligne '+(li+1)+': '+(insErr.message||insErr));
+        }
+      }
+      var msg=imp+' deal(s) importé(s).';
+      if(skipped)msg+='\n\n'+skipped+' ligne(s) ignorée(s):\n'+errors.slice(0,5).join('\n')+(errors.length>5?'\n…':'');
+      alert(msg);renderAll();
+    }catch(fatal){
+      alert('Import interrompu: '+(fatal.message||fatal)+'\n\n'+imp+' deal(s) importé(s) avant l\'erreur.');
+      renderAll();
+    }finally{
+      fileInput.value='';
     }
-    alert(imp+' deal(s) importé(s).');renderAll();e.target.value='';
   };
+  reader.onerror=function(){alert('Erreur de lecture du fichier.');fileInput.value='';};
   reader.readAsText(file);
 }
 
@@ -3089,15 +3133,39 @@ async function initApp(){
     clients_db=results[1]||[];
     fourn_db=results[2]||[];
     brokers_db=results[3]||[];
-    rapprochement_db=((results[4].data)||[]).map(rapprRowToObj);
-    contracts_db=((results[5].data)||[]).map(function(r){return{_id:r.id,client:r.client,num:r.num||'',banque:r.banque||'Indosuez Luxembourg',notes:r.notes||'',prelim:r.prelim||{},created_at:r.created_at};});
+    if(results[4].error){console.error('Rapprochement fetch failed',results[4].error);toast('Erreur chargement rapprochement — facturation peut être incomplète.');rapprochement_db=[];}
+    else rapprochement_db=((results[4].data)||[]).map(rapprRowToObj);
+    if(results[5].error){
+      var msg=String(results[5].error.message||'').toLowerCase();
+      if(msg.indexOf('does not exist')!==-1||msg.indexOf('relation')!==-1){
+        console.warn('Contracts table missing — Wealins layer disabled. Run the SQL in Supabase to enable it.');
+      } else {
+        console.error('Contracts fetch failed',results[5].error);
+      }
+      contracts_db=[];
+    } else {
+      contracts_db=((results[5].data)||[]).map(function(r){return{_id:r.id,client:r.client,num:r.num||'',banque:r.banque||'Indosuez Luxembourg',notes:r.notes||'',prelim:r.prelim||{},created_at:r.created_at};});
+    }
     if(!fourn_db.length)await seedFournisseurs();
     else await mergeFournDefaults();
     if(!brokers_db.length)await seedBrokers();
-  }catch(e){console.error('Init error',e);}
+  }catch(e){
+    console.error('Init error',e);
+    document.getElementById('loadingOverlay').style.display='none';
+    alert('Erreur de chargement: '+(e.message||e)+'\n\nVérifiez votre connexion ou rechargez la page.');
+    return;
+  }
   document.getElementById('loadingOverlay').style.display='none';
   renderAll();rebuildFournSelect();rebuildBrokerSelect();
 }
+
+// Auth state listener — handle session expiry mid-use
+sb.auth.onAuthStateChange(function(event,session){
+  if(event==='SIGNED_OUT'||(event==='TOKEN_REFRESHED'&&!session)){
+    deals=[];clients_db=[];fourn_db=[];brokers_db=[];rapprochement_db=[];contracts_db=[];
+    document.getElementById('loginOverlay').style.display='flex';
+  }
+});
 
 checkAuth();
 

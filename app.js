@@ -625,7 +625,14 @@ function f0(n){return new Intl.NumberFormat('fr-FR',{maximumFractionDigits:0}).f
 function fE(n){return '€\u202f'+f0(n);}
 function today(){return new Date().toISOString().split('T')[0];}
 function nowS(){return new Date().toLocaleString('fr-FR');}
-function filt(){return curV==='Tous'?deals:deals.filter(d=>d.v===curV);}
+// `filt()` keeps archived deals in scope — the commission they generated
+// was real and must keep counting in stats (CA, Pilotage, Commissions).
+// Archived deals are visually excluded only from:
+//  • the Deals table (renderDeals filters !archived)
+//  • the Suivi Contrats auto-link (saveDeal flow creates fresh deals)
+// Facturation includes them and shows a "Deal supprimé" warning on the card.
+function filt(){return curV==='Tous'?deals:deals.filter(function(d){return d.v===curV;});}
+function filtIncludingArchived(){return filt();} // alias kept for clarity at call sites
 function toast(m){var t=document.getElementById('toast');t.textContent=m;t.classList.add('on');setTimeout(()=>t.classList.remove('on'),2200);}
 async function saveLocal(){
   // Sync all deals to Supabase
@@ -1079,6 +1086,7 @@ function renderDeals(){
   var dFrom=(document.getElementById('flDateFrom')||{}).value||'';
   var dTo=(document.getElementById('flDateTo')||{}).value||'';
   var data=filt().filter(d=>{
+    if(d.archived)return false; // archived (soft-deleted) — only shown on Facturation
     if(ft&&d.ct!==ft)return false;
     if(ff&&d.fSt!==ff)return false;
     if(fd&&d.dev!==fd)return false;
@@ -1203,7 +1211,7 @@ var arbSrcDeal=null;
 
 function openDet(d){
   var idx=deals.indexOf(d);
-  document.getElementById('detTitle').textContent=d.client+' — '+d.fourn;
+  document.getElementById('detTitle').textContent=(d.archived?'⚠ ':'')+d.client+' — '+d.fourn;
 
   // Build arbitrage chain block
   var arbBlock='';
@@ -1259,6 +1267,17 @@ function openDet(d){
         goTo('contrats',document.querySelector('.nbtn[onclick*=contrats]'));
         return;
       }
+      if(action==='archive'){
+        try{
+          d.archived=true;
+          if(!d.hist)d.hist=[];
+          d.hist.push({ts:nowS(),a:'Deal archivé (soft-delete)',by:'Système'});
+          if(d._id)await sbUpdate('deals',d._id,d);
+          closeDet();renderAll();
+          toast('Deal archivé. La facture reste dans Facturation avec mention "Deal supprimé".');
+        }catch(e){console.error(e);alert('Erreur : '+(e.message||e));}
+        return;
+      }
       try{
         if(d._id)await sbDelete('deals',d._id);
         deals.splice(idx,1);
@@ -1267,7 +1286,7 @@ function openDet(d){
           await saveContract(link.contract);
         }
         closeDet();renderAll();
-        toast(action==='delete-both'?'Deal et investissement supprimés.':link?'Deal supprimé. Investissement conservé.':'Deal supprimé.');
+        toast(action==='delete-both'?'Deal et investissement supprimés définitivement.':link?'Deal supprimé. Investissement conservé.':'Deal supprimé définitivement.');
       }catch(e){console.error(e);alert('Erreur : '+(e.message||e));}
     });
   };
@@ -2254,7 +2273,8 @@ async function genFactureRecap(){
 }
 
 function renderFact(){
-  var data=filt();
+  // Include archived deals on the Facturation page so the trace of past invoices stays visible
+  var data=filtIncludingArchived();
   var ufDeals=data.filter(d=>d.ct==='UF'||d.ct==='BOTH');
   var aE=ufDeals.filter(d=>d.fSt==='À émettre');
   var fa=ufDeals.filter(d=>d.fSt==='Facturé');
@@ -2283,7 +2303,11 @@ function renderFact(){
 function fCard(d){
   var ht=d.ufE;
   var idx=deals.indexOf(d);
-  return '<div class="fact-card">'+
+  var arch=!!d.archived;
+  // Visual distinction for archived (faded + bottom-right warning panel)
+  var archBanner=arch?'<div style="position:absolute;bottom:0;right:0;background:var(--red-bg);color:var(--red-t);font-size:10px;font-weight:600;padding:4px 10px;border-top-left-radius:8px;border-left:1px solid rgba(194,59,59,.3);border-top:1px solid rgba(194,59,59,.3);display:flex;align-items:center;gap:5px;" title="Le deal a été supprimé. La facture est conservée pour historique.">⚠ Deal supprimé</div>':'';
+  var statusButtons=arch?'':'<button class="btn btn-sm" onclick="cycleFS('+idx+')">Changer statut</button>';
+  return '<div class="fact-card" style="position:relative;'+(arch?'opacity:.85;border-style:dashed;':'')+'">'+
     '<div style="display:flex;justify-content:space-between;align-items:flex-start;">'+
       '<div>'+
         '<div style="font-size:11px;color:var(--text3);">'+(d.fRef||'Sans référence')+' · '+d.date+'</div>'+
@@ -2291,18 +2315,17 @@ function fCard(d){
         '<div style="font-size:11px;color:var(--text2);">'+d.fourn+(d.produit?' · '+d.produit:'')+'</div>'+
         '<div style="margin-top:4px;"><span class="badge bb" style="font-size:9px;">UF</span> <span style="font-size:11px;color:var(--text2);">Trade date : '+(d.issue||'—')+'</span></div>'+
       '</div>'+
-      '<div style="display:flex;gap:6px;align-items:center;">'+fBadge(d.fSt)+
-        '<button class="btn btn-sm" onclick="cycleFS('+idx+')">Changer statut</button>'+
+      '<div style="display:flex;gap:6px;align-items:center;">'+fBadge(d.fSt)+statusButtons+
       '</div>'+
     '</div>'+
     '<div class="fact-det">'+
       '<div><div class="fd-l">HT</div><div class="fd-v">'+fE(ht)+'</div></div>'+
-
       '<div><div class="fd-l">Total</div><div class="fd-v" style="font-size:15px;">'+fE(ht)+'</div></div>'+
       '<div><div class="fd-l">Invoice sending</div><div class="fd-v">'+(d.invS||'—')+'</div></div>'+
       '<div><div class="fd-l">Invoice payment</div><div class="fd-v">'+(d.inv||'—')+'</div></div>'+
       '<div><div class="fd-l">Vendeur</div><div class="fd-v">'+d.v+'</div></div>'+
     '</div>'+
+    archBanner+
   '</div>';
 }
 
@@ -3174,21 +3197,27 @@ function findLinkedInvestissement(deal){
 }
 
 // Show the linked-deletion confirm modal. callback(action, link)
-// action ∈ {'cancel','view','delete-deal-only','delete-both'}
+// action ∈ {'cancel','view','archive','delete-deal-only','delete-both'}
 var _ddcCallback=null;
 function showDealDeleteConfirm(deal,callback){
   var link=findLinkedInvestissement(deal);
-  if(!link){
-    // No linked investissement, fallback to plain confirm
-    if(confirm('Supprimer le deal "'+(deal.client||'')+' — '+(deal.produit||'')+'" ?\n\nCette action est irréversible.'))callback('delete-deal-only',null);
-    else callback('cancel',null);
-    return;
-  }
-  document.getElementById('ddcClient').textContent=link.contract.client;
+  // Always show the modal (even when no linked investissement) so the user
+  // can choose between archive (keep facture trace) and hard delete.
+  document.getElementById('ddcClient').textContent=link?link.contract.client:(deal.client||'—');
   document.getElementById('ddcDealLabel').textContent=(deal.client||'')+' — '+(deal.produit||'');
-  document.getElementById('ddcDetails').innerHTML=
-    '<div><b>Investissement</b> : '+escH(link.prod.name||'(sans nom)')+(link.prod.isin?' · ISIN '+escH(link.prod.isin):'')+(link.prod.montant?' · '+escH(link.prod.montant):'')+'</div>'+
-    '<div style="margin-top:4px;"><b>Contrat</b> : '+escH(link.contract.client)+(link.contract.num?' (#'+escH(link.contract.num)+')':'')+'</div>';
+  if(link){
+    document.getElementById('ddcDetails').innerHTML=
+      '<div><b>Investissement lié</b> : '+escH(link.prod.name||'(sans nom)')+(link.prod.isin?' · ISIN '+escH(link.prod.isin):'')+(link.prod.montant?' · '+escH(link.prod.montant):'')+'</div>'+
+      '<div style="margin-top:4px;"><b>Contrat</b> : '+escH(link.contract.client)+(link.contract.num?' (#'+escH(link.contract.num)+')':'')+'</div>';
+  } else {
+    var paidNote=(deal.fSt==='Payé'||deal.fSt==='Facturé')?'<div style="margin-top:6px;color:var(--amber-t);"><b>⚠ Facture '+escH(deal.fSt.toLowerCase())+'</b> — l\'archivage est recommandé pour garder la trace.</div>':'';
+    document.getElementById('ddcDetails').innerHTML=
+      '<div>Statut facture : <b>'+escH(deal.fSt||'—')+'</b></div>'+
+      '<div>Aucun investissement Suivi Contrats lié à ce deal.</div>'+paidNote;
+  }
+  // Show / hide the "Tout supprimer" option based on link presence
+  var deleteBothBtn=document.querySelector('#dealDeleteConfirmModal .modal-ft button[onclick*="delete-both"]');
+  if(deleteBothBtn)deleteBothBtn.style.display=link?'':'none';
   _ddcCallback=function(action){callback(action,link);};
   document.getElementById('dealDeleteConfirmModal').classList.add('on');
 }
@@ -3207,9 +3236,19 @@ async function deleteDeal(idx){
   showDealDeleteConfirm(d,async function(action,link){
     if(action==='cancel')return;
     if(action==='view'){
-      // Navigate to Suivi Contrats with the relevant contract expanded
-      ctrExp[link.contract._id]=true;
+      if(link)ctrExp[link.contract._id]=true;
       goTo('contrats',document.querySelector('.nbtn[onclick*=contrats]'));
+      return;
+    }
+    if(action==='archive'){
+      try{
+        d.archived=true;
+        if(!d.hist)d.hist=[];
+        d.hist.push({ts:nowS(),a:'Deal archivé (soft-delete)',by:'Système'});
+        if(d._id)await sbUpdate('deals',d._id,d);
+        renderAll();
+        toast('Deal archivé. La facture reste visible dans Facturation avec la mention "Deal supprimé".');
+      }catch(e){console.error(e);alert('Erreur : '+(e.message||e));}
       return;
     }
     try{
@@ -3220,7 +3259,7 @@ async function deleteDeal(idx){
         await saveContract(link.contract);
       }
       renderAll();
-      toast(action==='delete-both'?'Deal et investissement supprimés.':link?'Deal supprimé. Investissement conservé.':'Deal supprimé.');
+      toast(action==='delete-both'?'Deal et investissement supprimés définitivement.':link?'Deal supprimé. Investissement conservé.':'Deal supprimé définitivement.');
     }catch(e){console.error(e);alert('Erreur : '+(e.message||e));}
   });
 }

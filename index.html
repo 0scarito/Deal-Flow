@@ -73,8 +73,9 @@
       </div>
       <div class="modal-ft" style="flex-direction:column;gap:8px;align-items:stretch;padding:14px 22px;">
         <button class="btn btn-primary" style="text-align:left;padding:10px 14px;" onclick="ddcAction('view')">📄&nbsp;&nbsp;Voir le suivi d'abord <span style="color:rgba(255,255,255,.7);font-weight:400;font-size:11px;">— annule la suppression</span></button>
-        <button class="btn" style="text-align:left;padding:10px 14px;" onclick="ddcAction('delete-deal-only')">🗑&nbsp;&nbsp;Supprimer uniquement le deal <span style="color:var(--text3);font-weight:400;font-size:11px;">— l'investissement reste dans Suivi Contrats</span></button>
-        <button class="btn" style="text-align:left;padding:10px 14px;color:var(--red-t);border-color:rgba(194,59,59,.4);background:var(--red-bg);" onclick="ddcAction('delete-both')">⚠&nbsp;&nbsp;Supprimer les deux <span style="color:var(--red);opacity:.85;font-weight:400;font-size:11px;">— deal + investissement lié</span></button>
+        <button class="btn" style="text-align:left;padding:10px 14px;color:var(--amber-t);border-color:rgba(176,122,16,.4);background:var(--amber-bg);" onclick="ddcAction('archive')">📁&nbsp;&nbsp;Archiver le deal <span style="color:var(--amber);font-weight:400;font-size:11px;">— recommandé : garde la facture avec mention "Deal supprimé"</span></button>
+        <button class="btn" style="text-align:left;padding:10px 14px;" onclick="ddcAction('delete-deal-only')">🗑&nbsp;&nbsp;Supprimer définitivement <span style="color:var(--text3);font-weight:400;font-size:11px;">— l'investissement reste dans Suivi Contrats</span></button>
+        <button class="btn" style="text-align:left;padding:10px 14px;color:var(--red-t);border-color:rgba(194,59,59,.4);background:var(--red-bg);" onclick="ddcAction('delete-both')">⚠&nbsp;&nbsp;Tout supprimer <span style="color:var(--red);opacity:.85;font-weight:400;font-size:11px;">— deal + investissement lié</span></button>
         <button class="btn" onclick="closeDealDeleteConfirm()" style="color:var(--text2);text-align:center;margin-top:4px;">Annuler</button>
       </div>
     </div>

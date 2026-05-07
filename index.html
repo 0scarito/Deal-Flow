@@ -786,14 +786,6 @@
         <div class="fl"><label>Devise</label><select id="mDev" onchange="calcM()"><option>EUR</option><option>USD</option></select></div>
       </div>
 
-      <!-- Ligne 2 : Fournisseur / Produit / ISIN / Broker -->
-      <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 16px;margin-bottom:12px;">
-        <div class="fl"><label>Fournisseur</label><select id="mFourn"><option value="">— Choisir —</option></select></div>
-        <div class="fl"><label>Produit / Support</label><input type="text" id="mProduit"/></div>
-        <div class="fl"><label>ISIN</label><input type="text" id="mISIN"/></div>
-        <div class="fl"><label>Broker</label><select id="mBroker"><option value="">— Aucun —</option><option>KCS</option><option>Silex</option><option>Direct</option><option>Indosuez</option><option>Natixis</option><option>Société Générale</option><option>BNP Paribas CIB</option><option>Oddo BHF</option><option>Caceis</option><option>Autre</option></select></div>
-      </div>
-
       <!-- Section clients pleine largeur -->
       <div style="background:var(--surface2);border-radius:var(--rs);padding:14px 16px;margin-bottom:16px;">
         <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:10px;text-transform:uppercase;letter-spacing:.4px;">Clients &amp; Nominaux</div>
@@ -809,8 +801,22 @@
         <div id="addClientRow" style="display:none;margin-top:8px;"><div style="display:flex;gap:6px;"><input type="text" id="newClientInput" placeholder="Nom du nouveau client" style="flex:1;max-width:280px;"/><button type="button" class="btn btn-sm btn-primary" onclick="confirmAddClient()">Ajouter</button><button type="button" class="btn btn-sm" onclick="cancelAddClient()">✕</button></div></div>
       </div>
 
+      <!-- Section codification & échéance -->
+      <div style="background:var(--surface2);border-radius:var(--rs);padding:14px 16px;margin-bottom:16px;">
+        <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:10px;text-transform:uppercase;letter-spacing:.4px;">Codification &amp; Échéance</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 110px 1fr 28px;gap:6px;margin-bottom:6px;padding:0 2px;">
+          <span style="font-size:11px;color:var(--text3);font-weight:500;">Fournisseur</span>
+          <span style="font-size:11px;color:var(--text3);font-weight:500;">Produit / Support</span>
+          <span style="font-size:11px;color:var(--text3);font-weight:500;">ISIN</span>
+          <span style="font-size:11px;color:var(--text3);font-weight:500;">Broker</span>
+          <span></span>
+        </div>
+        <div id="codifLines"></div>
+        <button type="button" class="btn btn-sm" onclick="addCodifLine()" style="margin-top:8px;">+ Ajouter un produit</button>
+      </div>
+
       <div class="fl" style="display:none;"><label>Contrat</label><select id="mContrat"><option>Assurance Vie Lux</option><option>Contrat Assurance Vie</option><option>Contrat de Capitalisation</option><option>CTO</option><option>PER</option></select></div>
-      <div style="display:none;"><input type="number" id="mNom"/><input type="hidden" id="mInvS"/><input type="hidden" id="mInv"/><input type="date" id="mIssue"/></div>
+      <div style="display:none;"><input type="number" id="mNom"/><input type="hidden" id="mInvS"/><input type="hidden" id="mInv"/><input type="date" id="mIssue"/><select id="mFourn"></select><select id="mBroker"></select><input type="hidden" id="mProduit"/><input type="hidden" id="mISIN"/></div>
       <div class="form-sep">Structure de commission</div>
       <div class="ctype-row">
         <button class="ctype on" id="ctUF" onclick="setCT('UF')">Up-Front</button>

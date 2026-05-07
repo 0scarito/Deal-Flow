@@ -39,6 +39,7 @@
     <div class="sb-section" style="flex:1;">
       <div class="sb-label" style="margin-top:6px;">Navigation</div>
       <button class="nbtn on" onclick="goTo('synthese',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/></svg>Synthèse</button>
+      <button class="nbtn" onclick="goTo('alertes',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1l7 13H1z"/><path d="M8 6v4M8 12.5v.5"/></svg>Alertes <span id="alertesBadge" class="alert-dot-badge" style="display:none;"></span></button>
       <button class="nbtn" onclick="goTo('deals',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12M2 8h12M2 12h8"/></svg>Tous les deals</button>
       <button class="nbtn" onclick="goTo('facturation',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="1" width="12" height="14" rx="1.5"/><path d="M5 5h6M5 8h6M5 11h3"/></svg>Facturation</button>
       <button class="nbtn" onclick="goTo('graphiques',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 13V7l4-3 4 3 4-4v10H2z"/></svg>Graphiques</button>
@@ -68,15 +69,6 @@
 
       <!-- SYNTHESE -->
       <div class="page on" id="p-synthese">
-
-        <!-- ALERTES (produits arrivant à terme) -->
-        <div class="card" style="border-top:3px solid var(--amber);padding:16px 18px;margin-bottom:14px;">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="var(--amber)" stroke-width="1.5"><path d="M8 1l7 13H1z"/><path d="M8 6v4M8 12.5v.5"/></svg>
-            <span style="font-size:12px;font-weight:600;color:var(--amber-t);text-transform:uppercase;letter-spacing:.5px;">Alertes produits — termes à 6 mois</span>
-          </div>
-          <div id="alertesPanel"></div>
-        </div>
 
         <!-- KPIs top -->
         <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:20px;" id="kpiGrid"></div>
@@ -120,6 +112,31 @@
           <div style="position:relative;height:220px;"><canvas id="cCA"></canvas></div>
         </div>
 
+      </div>
+
+      <!-- ALERTES -->
+      <div class="page" id="p-alertes">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">
+          <span style="font-size:12px;color:var(--text2);" id="alertesSummary"></span>
+          <div style="flex:1;"></div>
+          <select id="alertSeverity" onchange="renderAlertesPage()" style="width:auto;">
+            <option value="">Toutes sévérités</option>
+            <option value="urgent">Urgent</option>
+            <option value="warning">Attention</option>
+            <option value="info">Info</option>
+          </select>
+          <select id="alertCategory" onchange="renderAlertesPage()" style="width:auto;">
+            <option value="">Toutes catégories</option>
+            <option value="produits">Produits / Échéances</option>
+            <option value="deals">Cohérence des deals</option>
+            <option value="contrats">Suivi Contrats</option>
+            <option value="rapprochement">Rapprochements</option>
+            <option value="orphans">Données orphelines</option>
+          </select>
+          <button class="btn btn-sm" onclick="renderAlertesPage()" title="Recalculer">↻</button>
+        </div>
+        <div id="alertesList"></div>
+        <div id="alertesEmpty" class="empty" style="display:none;">Aucune alerte. Tout est cohérent — bravo.</div>
       </div>
 
       <!-- DEALS -->

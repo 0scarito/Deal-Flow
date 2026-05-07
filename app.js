@@ -1059,9 +1059,49 @@ function sRow(d){return '<td class="mono">'+d.date+'</td><td><span class="av av-
 var selectedDealIds=new Set();
 var _dealsFiltered=[];
 function dealKey(d){return d._id||('idx_'+deals.indexOf(d));}
+
+function _isoDate(d){return d.toISOString().slice(0,10);}
+function dateRangeFromPreset(preset){
+  var now=new Date();now.setHours(0,0,0,0);
+  var from=null,to=null;
+  if(preset==='7d'){from=new Date(now);from.setDate(from.getDate()-7);to=now;}
+  else if(preset==='30d'){from=new Date(now);from.setDate(from.getDate()-30);to=now;}
+  else if(preset==='thisMonth'){from=new Date(now.getFullYear(),now.getMonth(),1);to=new Date(now.getFullYear(),now.getMonth()+1,0);}
+  else if(preset==='lastMonth'){from=new Date(now.getFullYear(),now.getMonth()-1,1);to=new Date(now.getFullYear(),now.getMonth(),0);}
+  else if(preset==='thisQuarter'){var qStart=Math.floor(now.getMonth()/3)*3;from=new Date(now.getFullYear(),qStart,1);to=new Date(now.getFullYear(),qStart+3,0);}
+  else if(preset==='lastQuarter'){var qStart2=Math.floor(now.getMonth()/3)*3-3;from=new Date(now.getFullYear(),qStart2,1);to=new Date(now.getFullYear(),qStart2+3,0);}
+  else if(preset==='thisYear'){from=new Date(now.getFullYear(),0,1);to=new Date(now.getFullYear(),11,31);}
+  else if(preset==='lastYear'){from=new Date(now.getFullYear()-1,0,1);to=new Date(now.getFullYear()-1,11,31);}
+  return from&&to?{from:_isoDate(from),to:_isoDate(to)}:null;
+}
+function onDatePresetChange(){
+  var preset=document.getElementById('flDatePreset').value;
+  var fromEl=document.getElementById('flDateFrom'),toEl=document.getElementById('flDateTo');
+  if(!preset){fromEl.value='';toEl.value='';renderDeals();return;}
+  if(preset==='custom'){fromEl.focus();return;}
+  var range=dateRangeFromPreset(preset);
+  if(range){fromEl.value=range.from;toEl.value=range.to;}
+  renderDeals();
+}
+function resetDealFilters(){
+  ['srch','flT','flF','flDev','flFourn','flDatePreset','flDateFrom','flDateTo'].forEach(function(id){var el=document.getElementById(id);if(el)el.value='';});
+  renderDeals();
+}
+
 function renderDeals(){
   var q=(document.getElementById('srch').value||'').toLowerCase(),ft=document.getElementById('flT').value,ff=document.getElementById('flF').value,fd=document.getElementById('flDev').value,ff2=document.getElementById('flFourn').value;
-  var data=filt().filter(d=>{if(ft&&d.ct!==ft)return false;if(ff&&d.fSt!==ff)return false;if(fd&&d.dev!==fd)return false;if(ff2&&d.fourn!==ff2)return false;if(q&&!(d.client.toLowerCase().includes(q)||d.fourn.toLowerCase().includes(q)||(d.produit||'').toLowerCase().includes(q)||(d.isin||'').toLowerCase().includes(q)))return false;return true;});
+  var dFrom=(document.getElementById('flDateFrom')||{}).value||'';
+  var dTo=(document.getElementById('flDateTo')||{}).value||'';
+  var data=filt().filter(d=>{
+    if(ft&&d.ct!==ft)return false;
+    if(ff&&d.fSt!==ff)return false;
+    if(fd&&d.dev!==fd)return false;
+    if(ff2&&d.fourn!==ff2)return false;
+    if(dFrom&&(!d.date||d.date<dFrom))return false;
+    if(dTo&&(!d.date||d.date>dTo))return false;
+    if(q&&!(d.client.toLowerCase().includes(q)||d.fourn.toLowerCase().includes(q)||(d.produit||'').toLowerCase().includes(q)||(d.isin||'').toLowerCase().includes(q)))return false;
+    return true;
+  });
   data.sort((a,b)=>{var av=a[sCol]||0,bv=b[sCol]||0;return typeof av==='string'?av.localeCompare(bv)*sDir:(av-bv)*sDir;});
   _dealsFiltered=data;
   var t=document.getElementById('dealsT');while(t.rows.length>1)t.deleteRow(1);
@@ -1074,7 +1114,14 @@ function renderDeals(){
     r.innerHTML='<td style="text-align:center;"><input type="checkbox" class="rowSel" data-key="'+k+'"'+checked+' onclick="event.stopPropagation();onDealRowSel(this)"/></td><td class="mono">'+d.date+'</td><td>'+av+'</td><td style="font-weight:500;white-space:nowrap;">'+d.client+'</td><td style="color:var(--text2);font-size:11px;">'+d.contrat+'</td><td>'+d.produit+'</td><td style="color:var(--text2);font-size:11px;">'+(d.produit_type||'—')+'</td><td>'+d.fourn+'</td><td style="color:var(--text2);">'+(d.broker||'—')+'</td><td style="text-align:right;" class="mono">'+f0(d.nom)+'</td><td>'+d.dev+'</td><td class="mono" style="font-size:10px;color:var(--text2);">'+(d.isin||'—')+'</td><td class="mono" style="font-size:11px;color:var(--text2);">'+(d.issue||'—')+'</td><td class="mono" style="font-size:11px;color:var(--text2);">'+(d.invS||'—')+'</td><td class="mono" style="font-size:11px;color:var(--text2);">'+(d.inv||'—')+'</td><td class="mono" style="font-size:11px;color:var(--text2);">'+(d.terme||'—')+'</td><td>'+tBadge(d.ct)+'</td><td style="text-align:right;color:var(--blue);font-weight:500;">'+(d.ufE>0?fE(d.ufE):'—')+'</td><td style="text-align:right;color:var(--green);font-weight:500;">'+(d.runE>0?fE(d.runE):'—')+'</td><td class="mono" style="font-size:11px;">'+(d.fRef||'—')+'</td><td>'+fBadge(d.fSt)+'</td><td style="font-size:11px;color:var(--text2);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+(d.notes||'—')+'</td><td style="display:flex;gap:5px;"><button class="btn btn-sm" onclick="event.stopPropagation();openDealModal('+deals.indexOf(d)+')">Modifier</button><button class="btn btn-sm" style="color:var(--red);border-color:var(--red-bg);" onclick="event.stopPropagation();deleteDeal('+deals.indexOf(d)+')">Supprimer</button></td>';
   });
   var fourns=[...new Set(filt().map(d=>d.fourn))].sort(),sel=document.getElementById('flFourn'),cv=sel.value;sel.innerHTML='<option value="">Tous fournisseurs</option>';fourns.forEach(f=>{sel.innerHTML+='<option'+(f===cv?' selected':'')+'>'+f+'</option>';});
-  // Prune selected ids that no longer exist in filter (so the bar count stays accurate)
+  // Constrain date inputs to the actual range of deal dates (real bounds, not hardcoded)
+  var allDates=deals.map(function(x){return x.date;}).filter(Boolean).sort();
+  if(allDates.length){
+    var minD=allDates[0],maxD=allDates[allDates.length-1];
+    var fromEl=document.getElementById('flDateFrom'),toEl=document.getElementById('flDateTo');
+    if(fromEl){fromEl.min=minD;fromEl.max=maxD;}
+    if(toEl){toEl.min=minD;toEl.max=maxD;}
+  }
   refreshBulkBar();
 }
 

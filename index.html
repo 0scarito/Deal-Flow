@@ -147,6 +147,22 @@
           <select id="flF" onchange="renderDeals()" style="width:auto;"><option value="">Tous statuts</option><option>À émettre</option><option>Facturé</option><option>Payé</option><option>Litige</option></select>
           <select id="flDev" onchange="renderDeals()" style="width:auto;"><option value="">EUR+USD</option><option>EUR</option><option>USD</option></select>
           <select id="flFourn" onchange="renderDeals()" style="width:auto;"><option value="">Tous fournisseurs</option></select>
+          <!-- Filtre date dynamique : période rapide + bornes manuelles -->
+          <select id="flDatePreset" onchange="onDatePresetChange()" style="width:auto;" title="Période rapide">
+            <option value="">Toutes dates</option>
+            <option value="7d">7 derniers jours</option>
+            <option value="30d">30 derniers jours</option>
+            <option value="thisMonth">Ce mois</option>
+            <option value="lastMonth">Mois précédent</option>
+            <option value="thisQuarter">Ce trimestre</option>
+            <option value="lastQuarter">Trimestre précédent</option>
+            <option value="thisYear">Cette année</option>
+            <option value="lastYear">Année précédente</option>
+            <option value="custom">Période personnalisée…</option>
+          </select>
+          <input type="date" id="flDateFrom" onchange="renderDeals()" title="Date de début (trade date)" style="width:auto;font-size:12px;"/>
+          <input type="date" id="flDateTo" onchange="renderDeals()" title="Date de fin (trade date)" style="width:auto;font-size:12px;"/>
+          <button class="btn btn-sm" onclick="resetDealFilters()" title="Réinitialiser tous les filtres" style="font-size:11px;">↺</button>
         </div>
         <!-- Bulk action bar (visible when selection > 0) -->
         <div id="dealsBulkBar" style="display:none;background:var(--blue-bg);border:1px solid rgba(29,95,212,.3);border-radius:var(--rs);padding:8px 14px;margin-bottom:10px;align-items:center;gap:10px;flex-wrap:wrap;">

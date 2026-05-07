@@ -1049,7 +1049,7 @@
   <div class="modal">
     <div class="modal-hd"><span class="modal-title" id="detTitle">Détail</span><button class="close-btn" onclick="closeDet()">×</button></div>
     <div class="modal-body"><div id="detBody"></div><div class="form-sep">Historique</div><div id="detHist"></div></div>
-    <div class="modal-ft"><button class="btn" onclick="closeDet()">Fermer</button><button class="btn" id="detDelete" style="color:var(--red);border-color:var(--red-bg);">Supprimer</button><button class="btn" id="detArbitre" style="display:none;background:var(--purple,#7c3aed);color:white;border-color:var(--purple,#7c3aed);" onclick="openArbitrage()">⇄ Arbitrer</button><button class="btn btn-primary" id="detEdit">Modifier</button></div>
+    <div class="modal-ft"><button class="btn" onclick="closeDet()">Fermer</button><button class="btn" id="detDelete" style="color:var(--red);border-color:var(--red-bg);">Supprimer</button><button class="btn" id="detRetrait" style="display:none;background:var(--amber,#b07a10);color:white;border-color:var(--amber,#b07a10);" onclick="openRetrait()">↓ Retirer</button><button class="btn" id="detArbitre" style="display:none;background:var(--purple,#7c3aed);color:white;border-color:var(--purple,#7c3aed);" onclick="openArbitrage()">⇄ Arbitrer</button><button class="btn btn-primary" id="detEdit">Modifier</button></div>
   </div>
 </div>
 
@@ -1109,6 +1109,67 @@
     <div class="modal-ft">
       <button class="btn" onclick="closeArbModal()">Annuler</button>
       <button class="btn btn-primary" onclick="confirmArbitrage()">✓ Enregistrer l'arbitrage</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL RETRAIT -->
+<div class="ov" id="retraitModal">
+  <div class="modal" style="max-width:640px;">
+    <div class="modal-hd"><span class="modal-title">↓ Enregistrer un retrait de cash</span><button class="close-btn" onclick="closeRetraitModal()">×</button></div>
+    <div class="modal-body">
+
+      <!-- Deal source -->
+      <div style="background:var(--surface2);border-radius:var(--rs);padding:12px 16px;margin-bottom:16px;">
+        <div style="font-size:11px;color:var(--text3);margin-bottom:6px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;">Position d'origine</div>
+        <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+          <div><span style="font-weight:600;" id="retrSrcFourn">—</span> · <span id="retrSrcClient" style="color:var(--text2);"></span></div>
+          <div><span style="color:var(--blue);font-weight:600;" id="retrSrcNom">—</span> · <span style="color:var(--text2);font-size:12px;" id="retrSrcRun">—</span></div>
+        </div>
+      </div>
+
+      <!-- Date + montant -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
+        <div class="fl" style="margin:0;">
+          <label>Date du retrait</label>
+          <input type="date" id="retrDate" style="width:100%;" oninput="updateRetraitPreview()"/>
+        </div>
+        <div class="fl" style="margin:0;">
+          <label>Montant retiré</label>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <input type="number" id="retrMontant" placeholder="Montant en devise" style="flex:1;" oninput="updateRetraitPreview()"/>
+            <button type="button" class="btn btn-sm" onclick="retraitFillTotal()" style="white-space:nowrap;font-size:11px;" title="Retirer la totalité (clôture la position)">Tout retirer</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Pro-rata info -->
+      <div id="retrProrataInfo" style="background:var(--amber-bg);border:1px solid rgba(176,122,16,.3);border-radius:var(--rs);padding:8px 12px;font-size:12px;color:var(--amber-t);display:none;margin-bottom:12px;">
+        <span id="retrProrataText"></span>
+      </div>
+
+      <!-- Note -->
+      <div class="fl" style="margin-bottom:12px;">
+        <label>Note (optionnel)</label>
+        <input type="text" id="retrNote" placeholder="ex: Demande client, besoin de liquidité…" style="width:100%;"/>
+      </div>
+
+      <!-- Résumé -->
+      <div style="padding:10px 14px;border-radius:var(--rs);border:1px solid var(--border);font-size:12px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
+        <div style="display:flex;justify-content:space-between;"><span style="color:var(--text2);">Nominal disponible</span><span style="font-weight:600;" id="retrNomDispo">—</span></div>
+        <div style="display:flex;justify-content:space-between;"><span style="color:var(--text2);">Retrait</span><span style="font-weight:600;" id="retrTotal">—</span></div>
+        <div style="display:flex;justify-content:space-between;"><span style="color:var(--text2);">Solde restant</span><span style="font-weight:600;" id="retrSolde">—</span></div>
+      </div>
+
+      <!-- Aperçu opération -->
+      <div id="retrPreview" style="margin-top:12px;padding:12px 14px;border-radius:var(--rs);background:var(--blue-bg);border:1px solid rgba(29,95,212,.25);font-size:12px;color:var(--blue-t);display:none;">
+        <div style="font-weight:600;margin-bottom:6px;text-transform:uppercase;letter-spacing:.4px;font-size:11px;">Aperçu de l'opération</div>
+        <div id="retrPreviewBody"></div>
+      </div>
+    </div>
+    <div class="modal-ft">
+      <button class="btn" onclick="closeRetraitModal()">Annuler</button>
+      <button class="btn btn-primary" onclick="confirmRetrait()">✓ Enregistrer le retrait</button>
     </div>
   </div>
 </div>

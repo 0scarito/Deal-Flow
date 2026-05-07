@@ -1290,9 +1290,12 @@ function openDet(d){
       }catch(e){console.error(e);alert('Erreur : '+(e.message||e));}
     });
   };
-  var showArb=(d.ct==='RUN'||d.ct==='BOTH')&&d.nom>0&&!d.arbClosed;
+  var hasNom=d.nom>0&&!d.arbClosed;
+  var showArb=(d.ct==='RUN'||d.ct==='BOTH')&&hasNom;
   document.getElementById('detArbitre').style.display=showArb?'':'none';
   document.getElementById('detArbitre').onclick=function(){closeDet();openArbitrage(idx);};
+  document.getElementById('detRetrait').style.display=hasNom?'':'none';
+  document.getElementById('detRetrait').onclick=function(){closeDet();openRetrait(idx);};
   document.getElementById('detModal').classList.add('on');
 }
 function closeDet(){document.getElementById('detModal').classList.remove('on');}
@@ -1548,6 +1551,150 @@ async function confirmArbitrage(){
  }catch(err){
   console.error('confirmArbitrage failed',err);
   alert('Erreur arbitrage : '+(err.message||err));
+ }
+}
+
+// \u2500\u2500 RETRAIT (sortie de cash par le client) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// Comme un arbitrage mais sans destination : le client retire son cash.
+// Le nominal du deal source diminue (ou tombe \u00e0 0 = position cl\u00f4tur\u00e9e),
+// le pro-rata Running sur la part retir\u00e9e est calcul\u00e9 et ajout\u00e9 au
+// rapprochement du trimestre, et le Suivi Contrats du client est mis \u00e0 jour.
+var retraitSrcDeal=null;
+
+function openRetrait(idx){
+  var d=deals[idx];if(!d)return;
+  retraitSrcDeal=idx;
+  document.getElementById('retrSrcFourn').textContent=d.fourn||'\u2014';
+  document.getElementById('retrSrcClient').textContent=d.client||'';
+  document.getElementById('retrSrcNom').textContent=fE(d.nom||0)+' '+(d.dev||'');
+  document.getElementById('retrSrcRun').textContent=d.runE>0?fE(d.runE)+'/an':'';
+  document.getElementById('retrNomDispo').textContent=fE(d.nom||0);
+  document.getElementById('retrDate').value=today();
+  document.getElementById('retrMontant').value='';
+  document.getElementById('retrNote').value='';
+  document.getElementById('retrTotal').textContent='\u2014';
+  document.getElementById('retrSolde').textContent='\u2014';
+  document.getElementById('retrProrataInfo').style.display='none';
+  document.getElementById('retrPreview').style.display='none';
+  document.getElementById('retraitModal').classList.add('on');
+  setTimeout(function(){var m=document.getElementById('retrMontant');if(m)m.focus();},50);
+}
+function closeRetraitModal(){document.getElementById('retraitModal').classList.remove('on');retraitSrcDeal=null;}
+function retraitFillTotal(){
+  if(retraitSrcDeal==null)return;
+  var d=deals[retraitSrcDeal];if(!d)return;
+  document.getElementById('retrMontant').value=d.nom||0;
+  updateRetraitPreview();
+}
+
+function updateRetraitPreview(){
+  if(retraitSrcDeal==null)return;
+  var d=deals[retraitSrcDeal];if(!d)return;
+  var montant=parseFloat(document.getElementById('retrMontant').value)||0;
+  var date=document.getElementById('retrDate').value;
+  var solde=Math.max(0,(d.nom||0)-montant);
+  document.getElementById('retrTotal').textContent=montant>0?fE(montant)+' '+(d.dev||''):'\u2014';
+  document.getElementById('retrSolde').textContent=fE(solde)+' '+(d.dev||'');
+  var soldeEl=document.getElementById('retrSolde');
+  soldeEl.style.color=montant>(d.nom||0)?'var(--red)':solde===0?'var(--green)':'var(--text)';
+
+  // Pro-rata Running
+  var tradeDate=d.issue||d.date;
+  var days=tradeDate&&date?Math.round((new Date(date)-new Date(tradeDate))/86400000):0;
+  var prorataRun=d.runE>0&&days>0&&montant>0&&d.nom>0?Math.round(d.runE*(montant/d.nom)*(days/365)):0;
+  var trim=trimFromDate(date);
+  var pr=document.getElementById('retrProrataInfo');
+  if(prorataRun>0){
+    document.getElementById('retrProrataText').textContent='Pro-rata Running '+(d.fourn||'')+' : '+days+' j ('+tradeDate+' \u2192 '+date+') = '+fE(prorataRun)+' \u00e0 facturer'+(trim?' sur '+trimLabelFR(trim):'');
+    pr.style.display='block';
+  } else pr.style.display='none';
+
+  // Aper\u00e7u
+  var preview=document.getElementById('retrPreview');
+  var body=document.getElementById('retrPreviewBody');
+  if(!date||montant<=0||montant>(d.nom||0)){preview.style.display='none';return;}
+  var willClose=solde===0;
+  var clientHasContract=contracts_db.some(function(c){return c.client===d.client;});
+  var lines=[];
+  lines.push('\u2022 <b>Position</b> '+escH(d.fourn||'')+' / '+escH(d.produit||'')+' : nominal '+fE(d.nom||0)+' \u2192 '+fE(solde)+(willClose?' <span class="badge bp">cl\u00f4tur\u00e9e</span>':' (r\u00e9duite)'));
+  lines.push('\u2022 <b>Cash retir\u00e9 par le client</b> : '+fE(montant)+' '+(d.dev||''));
+  if(prorataRun>0)lines.push('\u2022 <b>Pro-rata Running</b> \u00e0 facturer : '+fE(prorataRun)+' ('+days+' j)');
+  if(prorataRun>0&&trim)lines.push('\u2022 <b>Rapprochement '+trimLabelFR(trim)+' '+escH(d.fourn||'')+'</b> : auto-incr\u00e9ment\u00e9 de +'+fE(prorataRun));
+  if(clientHasContract)lines.push('\u2022 <b>Suivi Contrats</b> : invest. marqu\u00e9 retrait, trace conserv\u00e9e dans l\'historique');
+  body.innerHTML=lines.join('<br>');
+  preview.style.display='';
+}
+
+async function confirmRetrait(){
+ try{
+  if(retraitSrcDeal==null)return;
+  var d=deals[retraitSrcDeal];if(!d)return;
+  var montant=parseFloat(document.getElementById('retrMontant').value)||0;
+  var date=document.getElementById('retrDate').value;
+  var note=(document.getElementById('retrNote').value||'').trim();
+  if(!date){alert('Veuillez indiquer la date du retrait.');return;}
+  if(montant<=0){alert('Veuillez saisir un montant > 0.');return;}
+  if(montant>(d.nom||0)){alert('Le montant retir\u00e9 ('+fE(montant)+') d\u00e9passe le nominal disponible ('+fE(d.nom||0)+').');return;}
+
+  var retraitId='RTR-'+Date.now();
+  var tradeDate=d.issue||d.date;
+  var days=tradeDate?Math.round((new Date(date)-new Date(tradeDate))/86400000):0;
+  var prorataRun=d.runE>0&&days>0&&d.nom>0?Math.round(d.runE*(montant/d.nom)*(days/365)):0;
+
+  // Update source deal
+  var willClose=montant>=d.nom;
+  d.nom=Math.max(0,(d.nom||0)-montant);
+  d.runE=d.nom>0?Math.round((d.runR/100)*d.nom):0;
+  d.ufE=d.nom>0?Math.round((d.ufR/100)*d.nom):d.ufE; // UF reste tel quel si d\u00e9j\u00e0 per\u00e7u
+  if(willClose){d.arbClosed=true;d.end=date;}
+  if(!d.hist)d.hist=[];
+  d.hist.push({ts:nowS(),a:'Retrait '+retraitId+' \u2014 '+fE(montant)+' '+(d.dev||'')+' le '+date+(prorataRun>0?' \u00b7 Pro-rata Running \u00e0 facturer : '+fE(prorataRun):'')+(note?' \u00b7 '+note:''),by:'Syst\u00e8me'});
+  if(d._id){var{_id,...upd}=d;await sbUpdate('deals',_id,upd);}
+
+  // Auto-update rapprochement with pro-rata
+  var rapprNote='';
+  if(prorataRun>0){
+    var trimPeriod=trimFromDate(date);
+    if(trimPeriod){
+      try{
+        var existing=rapprFind(d.fourn,'run',trimPeriod);
+        var rLine='[Retrait '+retraitId+' \u00b7 '+date+'] +'+f0(prorataRun)+' \u20ac pro-rata Running ('+f0(montant)+' \u20ac retir\u00e9 \u00b7 '+days+' j)';
+        var newComment=existing&&existing.comment?(existing.comment+'\n'+rLine):rLine;
+        var newDeclared=(existing?(existing.declared||0):0)+prorataRun;
+        await rapprSave(d.fourn,'run',trimPeriod,{
+          declared:newDeclared,comment:newComment,
+          facture:existing?existing.facture:false,
+          factureDate:existing?existing.factureDate:'',
+          paid:existing?existing.paid:false,
+          paidDate:existing?existing.paidDate:'',
+          theoTrim:existing?existing.theoTrim:0
+        });
+        rapprNote=' \u00b7 Rapprochement '+trimLabelFR(trimPeriod)+' '+(d.fourn||'')+' mis \u00e0 jour';
+      }catch(e){console.warn('Rapprochement auto-update failed',e);rapprNote=' \u00b7 \u26a0 Mise \u00e0 jour rapprochement \u00e9chou\u00e9e';}
+    }
+  }
+
+  // Suivi Contrats: log the retrait on the linked invest
+  try{
+    var clientContract=contracts_db.find(function(c){return c.client===d.client;});
+    if(clientContract&&d._id&&Array.isArray(clientContract.produits)){
+      var srcProd=clientContract.produits.find(function(p){return p.deal_id===d._id;});
+      if(srcProd){
+        srcProd.retraits=srcProd.retraits||[];
+        srcProd.retraits.push({retraitId:retraitId,date:date,montant:montant,prorata_run:prorataRun,note:note,closed:willClose});
+        var formatMontant=function(n,dev){return new Intl.NumberFormat('fr-FR').format(n)+' '+(dev||'EUR');};
+        srcProd.montant=d.nom>0?formatMontant(d.nom,d.dev):'0 '+(d.dev||'EUR')+' (retrait total)';
+        srcProd.notes=(srcProd.notes||'')+(srcProd.notes?' \u00b7 ':'')+'Retrait '+fE(montant)+' le '+date;
+        await saveContract(clientContract);
+      }
+    }
+  }catch(e){console.error('Suivi Contrats sync after retrait failed',e);}
+
+  closeRetraitModal();renderAll();
+  toast('Retrait '+retraitId+' enregistr\u00e9 \u2014 '+fE(montant)+(prorataRun>0?' \u00b7 Pro-rata : '+fE(prorataRun):'')+rapprNote);
+ }catch(err){
+  console.error('confirmRetrait failed',err);
+  alert('Erreur retrait : '+(err.message||err));
  }
 }
 
@@ -4250,6 +4397,11 @@ function renderContrats(){
       var arbBadges='';
       if(p.arb_origin)arbBadges+='<span class="badge bp" title="Issu de l\'arbitrage '+escH(p.arb_origin.arbId||'')+' depuis '+escH(p.arb_origin.source_fourn||'')+' le '+escH(p.arb_origin.date||'')+'">← Arbitrage</span> ';
       if(Array.isArray(p.arbitrages)&&p.arbitrages.length)arbBadges+='<span class="badge ba" title="'+p.arbitrages.length+' arbitrage(s) sortant(s)">→ Arbitré ('+p.arbitrages.length+')</span> ';
+      if(Array.isArray(p.retraits)&&p.retraits.length){
+        var totalRetrait=p.retraits.reduce(function(s,r){return s+(r.montant||0);},0);
+        var hasClosure=p.retraits.some(function(r){return r.closed;});
+        arbBadges+='<span class="badge '+(hasClosure?'br':'ba')+'" title="'+p.retraits.length+' retrait(s) — total '+fE(totalRetrait)+(hasClosure?' (position clôturée)':'')+'">↓ Retrait'+(p.retraits.length>1?'s ('+p.retraits.length+')':'')+'</span> ';
+      }
       var stepsHTML=(p.steps||[]).map(function(s,idx){
         return '<div class="step-row">'+
           '<div class="chk'+(s.done?' on':'')+'" onclick="toggleProdStep(\''+c._id+'\',\''+p.id+'\','+idx+')"></div>'+

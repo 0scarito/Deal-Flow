@@ -3066,10 +3066,10 @@ function openAddClientModal(name){
             var depChip=d.depositaire?'<span style="font-size:10px;color:var(--text3);background:var(--surface2);padding:1px 6px;border-radius:3px;white-space:nowrap;">📍 '+escH(d.depositaire)+'</span>':'';
             var isLast=i===cDeals.length-1;
             var idx=deals.indexOf(d);
-            return '<div style="display:flex;border-bottom:'+(isLast?'none':'1px solid var(--border)')+';cursor:pointer;transition:background .12s;" onmouseover="this.style.background=\'var(--surface2)\'" onmouseout="this.style.background=\'\'" onclick="closeClientModal();openDet(deals['+idx+'])">'+
+            return '<div style="display:flex;border-bottom:'+(isLast?'none':'1px solid var(--border)')+';transition:background .12s;" onmouseover="this.style.background=\'var(--surface2)\'" onmouseout="this.style.background=\'\'">'+
               // Bandeau couleur statut
-              '<div style="width:3px;background:'+st.color+';flex-shrink:0;"></div>'+
-              '<div style="flex:1;padding:10px 12px;min-width:0;">'+
+              '<div style="width:3px;background:'+st.color+';flex-shrink:0;border-radius:0 0 0 0;"></div>'+
+              '<div style="flex:1;padding:10px 12px;min-width:0;cursor:pointer;" onclick="closeClientModal();openDet(deals['+idx+'])">'+
                 // Ligne 1 : fournisseur + produit + depositaire (gauche) | nominal + status (droite)
                 '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:5px;">'+
                   '<div style="display:flex;align-items:center;gap:8px;min-width:0;flex:1;">'+
@@ -3093,6 +3093,9 @@ function openAddClientModal(name){
                     (d.maturite||d.terme?'<span>échéance '+escH(d.maturite||d.terme)+'</span>':'')+
                   '</div>'+
                 '</div>'+
+              '</div>'+
+              '<div style="display:flex;align-items:center;padding:0 10px;flex-shrink:0;">'+
+                '<button class="btn btn-sm" onclick="event.stopPropagation();closeClientModal();openArbitrage('+idx+')" style="font-size:11px;padding:4px 10px;white-space:nowrap;" title="Arbitrer ce deal">⇄ Arbitrer</button>'+
               '</div>'+
             '</div>';
           }).join('')+

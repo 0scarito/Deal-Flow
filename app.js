@@ -1794,22 +1794,56 @@ function renderCharts(){
   document.getElementById('legDev').innerHTML='<span style="display:flex;align-items:center;gap:3px;"><span style="width:9px;height:9px;border-radius:2px;background:#6b4fc4;display:inline-block;"></span>EUR '+f0(eur)+'</span><span style="display:flex;align-items:center;gap:3px;"><span style="width:9px;height:9px;border-radius:2px;background:#b07a10;display:inline-block;"></span>USD '+f0(usd)+'</span>';
 }
 
+function fournOptHtml(selected){
+  var list=loadFourn().slice().sort((a,b)=>a.name.localeCompare(b.name,undefined,{sensitivity:'base'}));
+  var families=['SDG','Banque','Assureur'],labels={SDG:'Sociétés de gestion',Banque:'Banques',Assureur:'Assureurs'};
+  var html='<option value="">— Choisir —</option>';
+  families.forEach(function(fam){var items=list.filter(f=>f.famille===fam);if(!items.length)return;html+='<optgroup label="'+labels[fam]+'">'+items.map(f=>'<option'+(f.name===(selected||'')?' selected':'')+'>'+f.name+'</option>').join('')+'</optgroup>';});
+  return html;
+}
+function brokerOptHtml(selected){
+  var list=brokers_db.slice().sort((a,b)=>a.name.localeCompare(b.name,undefined,{sensitivity:'base'})).map(b=>b.name);
+  return '<option value="">— Aucun —</option>'+list.map(b=>'<option'+(b===(selected||'')?' selected':'')+'>'+b+'</option>').join('');
+}
+function addCodifLine(codif){
+  codif=codif||{fourn:'',produit:'',isin:'',broker:''};
+  var container=document.getElementById('codifLines');
+  var row=document.createElement('div');
+  row.className='codif-line';
+  row.style.cssText='display:grid;grid-template-columns:1fr 1fr 110px 1fr 28px;gap:6px;margin-bottom:6px;align-items:center;';
+  row.innerHTML='<select class="codifFourn">'+fournOptHtml(codif.fourn)+'</select>'
+    +'<input type="text" class="codifProduit" value="'+(codif.produit||'')+'" placeholder="Produit / Support"/>'
+    +'<input type="text" class="codifISIN" value="'+(codif.isin||'')+'" placeholder="ISIN" style="font-family:monospace;font-size:11px;"/>'
+    +'<select class="codifBroker">'+brokerOptHtml(codif.broker)+'</select>'
+    +'<button type="button" onclick="removeCodifLine(this)" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:18px;padding:0;line-height:1;">×</button>';
+  container.appendChild(row);
+}
+function removeCodifLine(btn){
+  var row=btn.closest('.codif-line');
+  if(document.querySelectorAll('#codifLines .codif-line').length>1)row.remove();
+}
+function renderCodifLines(codifs){
+  var c=document.getElementById('codifLines');c.innerHTML='';
+  if(!codifs||!codifs.length)codifs=[{fourn:'',produit:'',isin:'',broker:''}];
+  codifs.forEach(function(x){addCodifLine(x);});
+}
+function getCodifLines(){
+  var result=[];
+  document.querySelectorAll('#codifLines .codif-line').forEach(function(row){
+    result.push({fourn:row.querySelector('.codifFourn').value,produit:row.querySelector('.codifProduit').value,isin:row.querySelector('.codifISIN').value,broker:row.querySelector('.codifBroker').value});
+  });
+  return result;
+}
 function openDealModal(idx){
   editIdx=idx!=null?idx:-1;
   rebuildFournSelect();rebuildBrokerSelect();
   document.getElementById('dmTitle').textContent=editIdx>=0?'Modifier le deal':'Nouveau deal';
-  if(editIdx>=0){var d=deals[editIdx];document.getElementById('mV').value=d.v;document.getElementById('mDate').value=d.date;document.getElementById('mStat').value=d.stat;renderClientLines([d.client],[d.contrat],[d.nom],[d.depositaire||'']);document.getElementById('mContrat').value=d.contrat;document.getElementById('mBroker').value=d.broker||'';document.getElementById('mFourn').value=d.fourn;document.getElementById('mProduit').value=d.produit;document.getElementById('mISIN').value=d.isin||'';document.getElementById('mNom').value=d.nom;document.getElementById('mDev').value=d.dev;document.getElementById('mIssue').value=d.issue||'';document.getElementById('mInvS').value=d.invS||'';document.getElementById('mInv').value=d.inv||'';document.getElementById('mUFR').value=d.ufR;document.getElementById('mRunR').value=d.runR;document.getElementById('mNotes').value=d.notes||'';
-    var ptEl=document.getElementById('mProduitType');if(ptEl)ptEl.value=d.produit_type||'';
-    var ttEl=document.getElementById('mTerme');if(ttEl)ttEl.value=d.terme||'';
-    setCT(d.ct);
+  if(editIdx>=0){var d=deals[editIdx];document.getElementById('mV').value=d.v;document.getElementById('mDate').value=d.date;document.getElementById('mStat').value=d.stat;renderClientLines([d.client],[d.contrat],[d.nom],[d.depositaire||'']);document.getElementById('mContrat').value=d.contrat;document.getElementById('mNom').value=d.nom;document.getElementById('mDev').value=d.dev;document.getElementById('mIssue').value=d.issue||'';document.getElementById('mInvS').value=d.invS||'';document.getElementById('mInv').value=d.inv||'';document.getElementById('mUFR').value=d.ufR;document.getElementById('mRunR').value=d.runR;document.getElementById('mNotes').value=d.notes||'';renderCodifLines(d.codifications&&d.codifications.length?d.codifications:[{fourn:d.fourn||'',produit:d.produit||'',isin:d.isin||'',broker:d.broker||''}]);setCT(d.ct);
     var pf=d.pf||{mode:'none'};pfMode=pf.mode||'none';
     var pfBtn=document.getElementById('ctPF');pfBtn.classList.toggle('on',pfMode!=='none');
     document.getElementById('pfRow').style.display=pfMode!=='none'?'block':'none';
     if(pfMode!=='none'){document.getElementById('mPFType').value=pf.type||'pct';document.getElementById('mPFRate').value=pf.rate||'';document.getElementById('mPFHurdle').value=pf.hurdle||'';document.getElementById('mPFFixed').value=pf.amount||'';document.getElementById('mPFFreq').value=pf.freq||'annuel';onPFTypeChange();}
-  } else {document.getElementById('mDate').value=today();renderClientLines(['']);document.getElementById('mFourn').value='';document.getElementById('mNom').value='';document.getElementById('mUFR').value='';document.getElementById('mRunR').value='';document.getElementById('mISIN').value='';document.getElementById('mBroker').value='';document.getElementById('mProduit').value='';document.getElementById('mNotes').value='';document.getElementById('mPFRate').value='';document.getElementById('mPFHurdle').value='';document.getElementById('mPFFixed').value='';document.getElementById('mInvS').value='';
-    var ptEl2=document.getElementById('mProduitType');if(ptEl2)ptEl2.value='';
-    var ttEl2=document.getElementById('mTerme');if(ttEl2)ttEl2.value='';
-    document.getElementById('ctPF').classList.remove('on');document.getElementById('pfRow').style.display='none';pfMode='none';cancelAddClient();setCT('UF');}
+  } else {document.getElementById('mDate').value=today();renderClientLines(['']);renderCodifLines([]);document.getElementById('mNom').value='';document.getElementById('mUFR').value='';document.getElementById('mRunR').value='';document.getElementById('mNotes').value='';document.getElementById('mPFRate').value='';document.getElementById('mPFHurdle').value='';document.getElementById('mPFFixed').value='';document.getElementById('mInvS').value='';document.getElementById('ctPF').classList.remove('on');document.getElementById('pfRow').style.display='none';pfMode='none';cancelAddClient();setCT('UF');}
   rebuildFournSelect();rebuildBrokerSelect();
   document.getElementById('dealModal').classList.add('on');calcM();
 }
@@ -1875,6 +1909,8 @@ async function saveDeal(){
   var ufP=(parseFloat(document.getElementById('mUFR').value)||0)/100,runP=(parseFloat(document.getElementById('mRunR').value)||0)/100;
   var pf={mode:pfMode};
   if(pfMode!=='none'){var pfType=document.getElementById('mPFType').value;pf.type=pfType;pf.freq=document.getElementById('mPFFreq').value;if(pfType==='pct'){pf.rate=parseFloat(document.getElementById('mPFRate').value)||0;pf.hurdle=parseFloat(document.getElementById('mPFHurdle').value)||0;}else{pf.amount=parseFloat(document.getElementById('mPFFixed').value)||0;}}
+  var codifs=getCodifLines();
+  var base={v:document.getElementById('mV').value,date:document.getElementById('mDate').value,stat:document.getElementById('mStat').value,contrat:document.getElementById('mContrat').value,fourn:codifs[0]?codifs[0].fourn:'',produit:codifs[0]?codifs[0].produit:'',isin:codifs[0]?codifs[0].isin:'',broker:codifs[0]?codifs[0].broker:'',codifications:codifs,nom,dev,fx,issue:document.getElementById('mIssue').value,invS:document.getElementById('mInvS').value,inv:document.getElementById('mInv').value,ct,ufR:parseFloat(document.getElementById('mUFR').value)||0,runR:parseFloat(document.getElementById('mRunR').value)||0,tva:0,ufE:Math.round(dev==='USD'?(nom*ufP/fx):nom*ufP),runE:Math.round(nomE*runP),pf,fSt:'À émettre',fRef:'',notes:document.getElementById('mNotes').value};
   var produitType=(document.getElementById('mProduitType')||{}).value||null;
   var termeRaw=(document.getElementById('mTerme')||{}).value||'';
   var terme=termeRaw||null;
@@ -2207,18 +2243,9 @@ function renderFourn(){
   rebuildFournSelect();
 }
 function rebuildFournSelect(){
-  var list=loadFourn().slice().sort((a,b)=>a.name.localeCompare(b.name,undefined,{sensitivity:'base'}));
   var sel=document.getElementById('mFourn');
-  if(!sel)return;
-  var cur=sel.value;
-  sel.innerHTML='<option value="">— Choisir —</option>';
-  var families=['SDG','Banque','Assureur'];
-  var labels={'SDG':'Sociétés de gestion','Banque':'Banques','Assureur':'Assureurs'};
-  families.forEach(fam=>{
-    var items=list.filter(f=>f.famille===fam);
-    if(!items.length)return;
-    sel.innerHTML+='<optgroup label="'+labels[fam]+'">'+items.map(f=>'<option'+(f.name===cur?' selected':'')+'>'+f.name+'</option>').join('')+'</optgroup>';
-  });
+  if(sel){var cur=sel.value;sel.innerHTML=fournOptHtml(cur);}
+  document.querySelectorAll('#codifLines .codifFourn').forEach(function(s){var cur=s.value;s.innerHTML=fournOptHtml(cur);});
 }
 function openFournModal(name){
   document.getElementById('fournModalTitle').textContent=name?'Modifier le fournisseur':'Nouveau fournisseur';
@@ -2461,11 +2488,9 @@ function renderBrokers(){
   rebuildBrokerSelect();
 }
 function rebuildBrokerSelect(){
-  var list=brokers_db.slice().sort((a,b)=>a.name.localeCompare(b.name,undefined,{sensitivity:'base'})).map(b=>b.name);
   var sel=document.getElementById('mBroker');
-  if(!sel)return;
-  var cur=sel.value;
-  sel.innerHTML='<option value="">— Aucun —</option>'+list.map(b=>'<option'+(b===cur?' selected':'')+'>'+b+'</option>').join('');
+  if(sel){var cur=sel.value;sel.innerHTML=brokerOptHtml(cur);}
+  document.querySelectorAll('#codifLines .codifBroker').forEach(function(s){var cur=s.value;s.innerHTML=brokerOptHtml(cur);});
 }
 function openBrokerModal(name){
   document.getElementById('brokerModalTitle').textContent=name?'Modifier le broker':'Nouveau broker';

@@ -439,6 +439,133 @@ async function autoLinkDealToContract(deal){
   prodExp[contract._id+'|'+prod.id]=true;
 }
 
+// ── TEAM MEMBERS (gestion équipe + rôles) ───────────────────────────────────
+var team_members_db=[];
+var currentUserEmail=null;
+var currentUserRole='admin'; // default permissive — tightening will happen later if asked
+
+function rowToMember(r){return{_id:r.id,email:r.email,name:r.name,role:r.role||'admin',created_at:r.created_at};}
+
+async function loadTeamMembers(){
+  var res=await sb.from('team_members').select('*').order('name');
+  if(res.error)throw res.error;
+  team_members_db=(res.data||[]).map(rowToMember);
+}
+async function ensureCurrentUserMember(){
+  // After successful login, make sure the connected user has a row in team_members.
+  // Default new users to 'admin' (per spec: everyone can do everything for now).
+  var s=await sb.auth.getSession();
+  var email=s&&s.data&&s.data.session&&s.data.session.user?s.data.session.user.email:null;
+  if(!email)return;
+  currentUserEmail=email;
+  var existing=team_members_db.find(function(m){return m.email===email;});
+  if(existing){currentUserRole=existing.role||'admin';return;}
+  // Auto-create
+  var defaultName=email.split('@')[0].split(/[._-]+/).map(function(p){return p.charAt(0).toUpperCase()+p.slice(1);}).join(' ');
+  try{
+    var res=await sb.from('team_members').insert({email:email,name:defaultName,role:'admin'}).select();
+    if(res.error)throw res.error;
+    if(res.data&&res.data[0]){team_members_db.push(rowToMember(res.data[0]));currentUserRole='admin';}
+  }catch(e){console.warn('ensureCurrentUserMember failed (table may not exist yet)',e);}
+}
+async function inviteMember(email,name,role){
+  email=(email||'').trim().toLowerCase();
+  name=(name||'').trim();
+  role=role==='viewer'?'viewer':'admin';
+  if(!email||!name)throw new Error('Email et nom requis.');
+  if(!email.endsWith(ALLOWED_DOMAIN))throw new Error('L\'email doit être en '+ALLOWED_DOMAIN);
+  var res=await sb.from('team_members').insert({email:email,name:name,role:role}).select();
+  if(res.error)throw res.error;
+  if(res.data&&res.data[0])team_members_db.push(rowToMember(res.data[0]));
+  return res.data&&res.data[0]?rowToMember(res.data[0]):null;
+}
+async function updateMemberDB(id,patch){
+  var res=await sb.from('team_members').update(patch).eq('id',id).select();
+  if(res.error)throw res.error;
+  var m=team_members_db.find(function(x){return x._id===id;});
+  if(m&&res.data&&res.data[0])Object.assign(m,rowToMember(res.data[0]));
+  return m;
+}
+async function deleteMemberDB(id){
+  var res=await sb.from('team_members').delete().eq('id',id);
+  if(res.error)throw res.error;
+  team_members_db=team_members_db.filter(function(m){return m._id!==id;});
+}
+
+// ── MEMBRES PAGE + MODAL ────────────────────────────────────────────────────
+function renderMembres(){
+  var el=document.getElementById('membresList');if(!el)return;
+  var list=team_members_db.slice().sort(function(a,b){return a.name.localeCompare(b.name);});
+  document.getElementById('membresEmpty').style.display=list.length?'none':'block';
+  if(!list.length){el.innerHTML='';return;}
+  el.innerHTML='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;">'+
+    list.map(function(m){
+      var isMe=m.email===currentUserEmail;
+      var roleCls=m.role==='admin'?'bg':'bgr';
+      var roleLbl=m.role==='admin'?'Admin':'Lecture seule';
+      return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--rs);padding:14px 16px;display:flex;flex-direction:column;gap:6px;'+(isMe?'border-left:3px solid var(--blue);':'')+'">'+
+        '<div style="display:flex;align-items:center;gap:8px;">'+
+          '<div class="av av-a" style="width:32px;height:32px;font-size:13px;">'+escH((m.name||'?').slice(0,2).toUpperCase())+'</div>'+
+          '<div style="flex:1;min-width:0;">'+
+            '<div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+escH(m.name)+(isMe?' <span style="font-size:10px;color:var(--blue);font-weight:500;">(vous)</span>':'')+'</div>'+
+            '<div style="font-size:11px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+escH(m.email)+'</div>'+
+          '</div>'+
+          '<span class="badge '+roleCls+'">'+roleLbl+'</span>'+
+        '</div>'+
+        '<div style="display:flex;gap:6px;margin-top:4px;">'+
+          '<button class="btn btn-sm" onclick="openMemberModal(\''+m._id+'\')" style="font-size:11px;">Modifier</button>'+
+          (isMe?'':'<button class="btn btn-sm" style="font-size:11px;color:var(--red);border-color:var(--red-bg);" onclick="confirmDeleteMember(\''+m._id+'\')">Supprimer</button>')+
+        '</div>'+
+      '</div>';
+    }).join('')+'</div>';
+}
+
+function openMemberModal(memberId){
+  var m=memberId?team_members_db.find(function(x){return x._id===memberId;}):null;
+  document.getElementById('memberModalTitle').textContent=m?'Modifier le membre':'Inviter un membre';
+  document.getElementById('memId').value=m?m._id:'';
+  document.getElementById('memEmail').value=m?m.email:'';
+  document.getElementById('memEmail').disabled=!!m; // can't change email after invite (it's the auth identity)
+  document.getElementById('memName').value=m?m.name:'';
+  document.getElementById('memRole').value=m?m.role:'admin';
+  document.getElementById('memberModal').classList.add('on');
+  setTimeout(function(){var f=m?document.getElementById('memName'):document.getElementById('memEmail');if(f)f.focus();},50);
+}
+function closeMemberModal(){document.getElementById('memberModal').classList.remove('on');}
+
+async function saveMemberFromModal(){
+  var id=document.getElementById('memId').value;
+  var email=document.getElementById('memEmail').value.trim().toLowerCase();
+  var name=document.getElementById('memName').value.trim();
+  var role=document.getElementById('memRole').value;
+  if(!name){alert('Nom requis.');return;}
+  try{
+    if(id){
+      await updateMemberDB(id,{name:name,role:role});
+      toast('Membre mis à jour.');
+    } else {
+      if(!email){alert('Email requis.');return;}
+      if(!email.endsWith(ALLOWED_DOMAIN)){alert('L\'email doit être en '+ALLOWED_DOMAIN);return;}
+      if(team_members_db.some(function(m){return m.email===email;})){alert('Ce membre existe déjà.');return;}
+      await inviteMember(email,name,role);
+      toast('Membre invité. Ils peuvent maintenant se connecter avec '+email+' et le mot de passe d\'équipe.');
+    }
+    closeMemberModal();
+    renderMembres();
+  }catch(e){console.error(e);alert('Erreur: '+(e.message||e));}
+}
+
+async function confirmDeleteMember(id){
+  var m=team_members_db.find(function(x){return x._id===id;});if(!m)return;
+  if(m.email===currentUserEmail){alert('Vous ne pouvez pas vous supprimer vous-même.');return;}
+  if(!confirm('Retirer '+m.name+' ('+m.email+') de l\'équipe ?\n\nNote: leur compte Supabase Auth restera actif. Pour le révoquer complètement, supprimez-le aussi dans Supabase Dashboard → Authentication → Users.'))return;
+  try{
+    await deleteMemberDB(id);
+    renderMembres();
+    toast('Membre retiré.');
+  }catch(e){console.error(e);alert('Erreur: '+(e.message||e));}
+}
+
 // ── AUTH ──────────────────────────────────────────────────────────────────────
 async function checkAuth(){
   var res=await sb.auth.getSession();
@@ -612,10 +739,10 @@ async function confirmAddClient(){var name=document.getElementById('newClientInp
 cancelAddClient();}
 
 function goTo(id,btn){
-  ['synthese','deals','facturation','graphiques','clients','fournisseurs','brokers','contrats','commissions'].forEach(p=>document.getElementById('p-'+p).classList.toggle('on',p===id));
+  ['synthese','deals','facturation','graphiques','clients','fournisseurs','brokers','contrats','commissions','membres'].forEach(p=>document.getElementById('p-'+p)&&document.getElementById('p-'+p).classList.toggle('on',p===id));
   document.querySelectorAll('.nbtn').forEach(b=>b.classList.remove('on'));
   if(btn)btn.classList.add('on');
-  document.getElementById('pageTitle').textContent={synthese:'Synthèse',deals:'Tous les deals',facturation:'Facturation',graphiques:'Graphiques',clients:'Clients',fournisseurs:'Fournisseurs',brokers:'Brokers',contrats:'Suivi Contrats',commissions:'Commissions'}[id]||'';
+  document.getElementById('pageTitle').textContent={synthese:'Synthèse',deals:'Tous les deals',facturation:'Facturation',graphiques:'Graphiques',clients:'Clients',fournisseurs:'Fournisseurs',brokers:'Brokers',contrats:'Suivi Contrats',commissions:'Commissions',membres:'Équipe & accès'}[id]||'';
   if(id==='synthese')setTimeout(function(){renderCAChart();},200);
   else if(id==='graphiques')setTimeout(renderCharts,80);
     else if(id==='facturation'){setTimeout(()=>{renderFact();renderUFRappr();renderUFInvTable();},50);}
@@ -624,6 +751,7 @@ function goTo(id,btn){
   else if(id==='fournisseurs')renderFourn();
   else if(id==='brokers')renderBrokers();
   else if(id==='contrats')renderContrats();
+  else if(id==='membres')renderMembres();
   else if(id==='commissions'){initCommPeriod();renderCommissions();}
   else renderAll();
 }
@@ -3804,7 +3932,8 @@ async function initApp(){
       sbGetAll('brokers'),
       sb.from('rapprochement').select('*'),
       sb.from('contracts').select('*'),
-      sb.from('contract_templates').select('*').order('name')
+      sb.from('contract_templates').select('*').order('name'),
+      sb.from('team_members').select('*').order('name')
     ]),20000,'chargement initial');
     deals=results[0]||[];
     clients_db=results[1]||[];
@@ -3822,6 +3951,16 @@ async function initApp(){
       contracts_db=[];
     } else {
       contracts_db=((results[5].data)||[]).map(rowToContract);
+    }
+    if(results[7]&&results[7].error){
+      var mmsg=String(results[7].error.message||'').toLowerCase();
+      if(mmsg.indexOf('does not exist')!==-1||mmsg.indexOf('relation')!==-1){
+        console.warn('team_members table missing — run the team_members SQL.');
+      } else console.error('Team members fetch failed',results[7].error);
+      team_members_db=[];
+    } else if(results[7]){
+      team_members_db=((results[7].data)||[]).map(rowToMember);
+      await ensureCurrentUserMember();
     }
     if(results[6].error){
       var tmsg=String(results[6].error.message||'').toLowerCase();
@@ -3969,6 +4108,20 @@ function setupRealtime(){
         if(document.getElementById('p-contrats')&&document.getElementById('p-contrats').classList.contains('on'))renderContrats();
         setLiveStatus('live');
       }catch(e){console.error('Realtime templates error',e);}
+    })
+    .on('postgres_changes',{event:'*',schema:'public',table:'team_members'},function(p){
+      try{
+        if(p.eventType==='DELETE'){team_members_db=team_members_db.filter(function(m){return m._id!==p.old.id;});}
+        else{
+          var m=rowToMember(p.new);
+          var idx=team_members_db.findIndex(function(x){return x._id===m._id;});
+          if(idx>=0)team_members_db[idx]=m;else team_members_db.push(m);
+          // If this row is for the current user, refresh their cached role
+          if(m.email===currentUserEmail)currentUserRole=m.role||'admin';
+        }
+        if(document.getElementById('p-membres')&&document.getElementById('p-membres').classList.contains('on'))renderMembres();
+        setLiveStatus('live');
+      }catch(e){console.error('Realtime team_members error',e);}
     })
     .subscribe(function(status){
       if(status==='SUBSCRIBED')setLiveStatus('live');

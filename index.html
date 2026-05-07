@@ -45,6 +45,7 @@
       <button class="nbtn" onclick="goTo('fournisseurs',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M5 3V2a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1"/><path d="M1 7h14"/></svg>Fournisseurs</button>
       <button class="nbtn" onclick="goTo('brokers',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 12V5l6-3 6 3v7"/><path d="M6 12V9h4v3"/><rect x="1" y="12" width="14" height="2" rx="1"/></svg>Brokers</button>
       <button class="nbtn" onclick="goTo('contrats',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 1h7l3 3v11H3z"/><path d="M10 1v3h3"/><path d="M5.5 8.5l1.5 1.5 3-3"/><path d="M5.5 12h5"/></svg>Suivi Contrats <span id="contratsBadge" class="alert-dot-badge" style="display:none;"></span></button>
+      <button class="nbtn" onclick="goTo('membres',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="5" r="2.5"/><path d="M1.5 13c0-2.5 2-4.5 4.5-4.5s4.5 2 4.5 4.5"/><circle cx="11.5" cy="5.5" r="1.8"/><path d="M11.5 8.5c1.5 0 2.7 1.2 2.7 2.7"/></svg>Équipe</button>
     </div>
     <div class="sb-bottom">
       <button class="btn" style="width:100%;margin-bottom:6px;" onclick="document.getElementById('importFile').click()">↑ Importer CSV</button>
@@ -458,6 +459,23 @@
         <div id="contratsEmpty" class="empty" style="display:none;">Aucun contrat. Cliquez sur "Nouveau contrat" pour commencer le suivi d'un client.</div>
       </div>
 
+      <!-- ÉQUIPE / MEMBRES -->
+      <div class="page" id="p-membres">
+        <div class="card" style="padding:14px 18px;margin-bottom:14px;background:var(--blue-bg);border:1px solid rgba(29,95,212,.2);">
+          <div style="font-size:12px;color:var(--blue-t);line-height:1.5;">
+            <b>Gestion des accès — par défaut tout le monde peut tout faire.</b><br>
+            Le rôle <span class="badge bg" style="margin:0 2px;">Admin</span> donne accès complet (lecture + modification). Le rôle <span class="badge bgr" style="margin:0 2px;">Lecture seule</span> est tracé mais pas encore appliqué côté permissions — dis-le-moi quand tu veux que les viewers ne puissent plus modifier.
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+          <span style="font-size:12px;color:var(--text2);" id="membresCount"></span>
+          <div style="flex:1;"></div>
+          <button class="btn btn-primary" onclick="openMemberModal()">+ Inviter un membre</button>
+        </div>
+        <div id="membresList"></div>
+        <div id="membresEmpty" class="empty" style="display:none;">Aucun membre dans l'équipe.</div>
+      </div>
+
       <!-- COMMISSIONS -->
       <div class="page" id="p-commissions">
 
@@ -722,6 +740,24 @@
       <div style="font-size:11px;color:var(--text3);margin-top:8px;">Les packs sont copiés (pas liés) sur les investissements créés ensuite. Modifier le template après coup ne change pas les investissements existants.</div>
     </div>
     <div class="modal-ft"><button class="btn" onclick="closeTemplateModal()">Annuler</button><button class="btn" id="tplDeleteBtn" style="color:var(--red);border-color:var(--red-bg);display:none;" onclick="deleteTemplateFromModal()">Supprimer</button><button class="btn btn-primary" onclick="saveTemplateFromModal()">Enregistrer</button></div>
+  </div>
+</div>
+<div class="ov" id="memberModal">
+  <div class="modal" style="max-width:440px;">
+    <div class="modal-hd"><span class="modal-title" id="memberModalTitle">Inviter un membre</span><button class="close-btn" onclick="closeMemberModal()">×</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="memId"/>
+      <div class="fl"><label>Email <span style="color:var(--text3);font-weight:400;">(@chamfeuilcapital.com)</span></label><input type="email" id="memEmail" placeholder="prenom.nom@chamfeuilcapital.com"/></div>
+      <div class="fl" style="margin-top:8px;"><label>Nom affiché</label><input type="text" id="memName" placeholder="ex: Marie Dupont"/></div>
+      <div class="fl" style="margin-top:8px;"><label>Rôle</label>
+        <select id="memRole">
+          <option value="admin">Admin (lecture + modification)</option>
+          <option value="viewer">Lecture seule</option>
+        </select>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-top:10px;line-height:1.5;">Une fois invité, le membre se connecte avec son email et le mot de passe d'équipe (Chamfeuil2026). Son compte est créé automatiquement à la première connexion.</div>
+    </div>
+    <div class="modal-ft"><button class="btn" onclick="closeMemberModal()">Annuler</button><button class="btn btn-primary" onclick="saveMemberFromModal()">Enregistrer</button></div>
   </div>
 </div>
 <div class="ov" id="prodModal">

@@ -51,7 +51,7 @@ async function sbGet(table){
   if(res.error)throw res.error;
   return (res.data||[]).map(function(r){return{id:r.id,data:table==='deals'?rowToDeal(r):rowToRef(r)};});
 }
-function _warnedMissingCols={};
+var _warnedMissingCols={};
 function _warnAboutMissingCol(col){
   if(_warnedMissingCols[col])return;
   _warnedMissingCols[col]=true;

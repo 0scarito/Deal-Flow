@@ -694,14 +694,97 @@ function tBadge(c){return c==='BOTH'?'<span class="badge bb">UF</span> <span cla
 function fBadge(s){var m={Payé:'bg',Facturé:'bb','À émettre':'ba',Litige:'br'};return '<span class="badge '+(m[s]||'bgr')+'">'+s+'</span>';}
 function sRow(d){return '<td class="mono">'+d.date+'</td><td><span class="av av-'+avC(d.v)+'">'+avL(d.v)+'</span></td><td style="font-weight:500;">'+d.client+'</td><td>'+d.fourn+'</td><td style="color:var(--text2);">'+d.produit+'</td><td style="text-align:right;" class="mono">'+f0(d.nom)+' '+d.dev+'</td><td>'+tBadge(d.ct)+'</td><td style="text-align:right;color:var(--blue);font-weight:500;">'+(d.ufE>0?fE(d.ufE):'—')+'</td><td style="text-align:right;color:var(--green);font-weight:500;">'+(d.runE>0?fE(d.runE):'—')+'</td><td>'+fBadge(d.fSt)+'</td>';}
 
+var selectedDealIds=new Set();
+var _dealsFiltered=[];
+function dealKey(d){return d._id||('idx_'+deals.indexOf(d));}
 function renderDeals(){
   var q=(document.getElementById('srch').value||'').toLowerCase(),ft=document.getElementById('flT').value,ff=document.getElementById('flF').value,fd=document.getElementById('flDev').value,ff2=document.getElementById('flFourn').value;
   var data=filt().filter(d=>{if(ft&&d.ct!==ft)return false;if(ff&&d.fSt!==ff)return false;if(fd&&d.dev!==fd)return false;if(ff2&&d.fourn!==ff2)return false;if(q&&!(d.client.toLowerCase().includes(q)||d.fourn.toLowerCase().includes(q)||(d.produit||'').toLowerCase().includes(q)||(d.isin||'').toLowerCase().includes(q)))return false;return true;});
   data.sort((a,b)=>{var av=a[sCol]||0,bv=b[sCol]||0;return typeof av==='string'?av.localeCompare(bv)*sDir:(av-bv)*sDir;});
+  _dealsFiltered=data;
   var t=document.getElementById('dealsT');while(t.rows.length>1)t.deleteRow(1);
   document.getElementById('dealsEmpty').style.display=data.length?'none':'block';
-  data.forEach(d=>{var r=t.insertRow();r.className='cl';r.onclick=()=>openDet(d);var av='<span class="av av-'+avC(d.v)+'">'+avL(d.v)+'</span>';r.innerHTML='<td class="mono">'+d.date+'</td><td>'+av+'</td><td style="font-weight:500;white-space:nowrap;">'+d.client+'</td><td style="color:var(--text2);font-size:11px;">'+d.contrat+'</td><td>'+d.produit+'</td><td>'+d.fourn+'</td><td style="color:var(--text2);">'+(d.broker||'—')+'</td><td style="text-align:right;" class="mono">'+f0(d.nom)+'</td><td>'+d.dev+'</td><td class="mono" style="font-size:10px;color:var(--text2);">'+(d.isin||'—')+'</td><td class="mono" style="font-size:11px;color:var(--text2);">'+(d.issue||'—')+'</td><td class="mono" style="font-size:11px;color:var(--text2);">'+(d.invS||'—')+'</td><td class="mono" style="font-size:11px;color:var(--text2);">'+(d.inv||'—')+'</td><td>'+tBadge(d.ct)+'</td><td style="text-align:right;color:var(--blue);font-weight:500;">'+(d.ufE>0?fE(d.ufE):'—')+'</td><td style="text-align:right;color:var(--green);font-weight:500;">'+(d.runE>0?fE(d.runE):'—')+'</td><td style="color:var(--text2);">'+(d.tva===0?'Exo':(d.tva*100).toFixed(0)+'%')+'</td><td class="mono" style="font-size:11px;">'+(d.fRef||'—')+'</td><td>'+fBadge(d.fSt)+'</td><td style="font-size:11px;color:var(--text2);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+(d.notes||'—')+'</td><td style="display:flex;gap:5px;"><button class="btn btn-sm" onclick="event.stopPropagation();openDealModal('+deals.indexOf(d)+')">Modifier</button><button class="btn btn-sm" style="color:var(--red);border-color:var(--red-bg);" onclick="event.stopPropagation();deleteDeal('+deals.indexOf(d)+')">Supprimer</button></td>';});
+  data.forEach(d=>{
+    var r=t.insertRow();r.className='cl';r.onclick=function(ev){if(ev.target.tagName==='INPUT'||ev.target.tagName==='BUTTON')return;openDet(d);};
+    var av='<span class="av av-'+avC(d.v)+'">'+avL(d.v)+'</span>';
+    var k=dealKey(d);
+    var checked=selectedDealIds.has(k)?' checked':'';
+    r.innerHTML='<td style="text-align:center;"><input type="checkbox" class="rowSel" data-key="'+k+'"'+checked+' onclick="event.stopPropagation();onDealRowSel(this)"/></td><td class="mono">'+d.date+'</td><td>'+av+'</td><td style="font-weight:500;white-space:nowrap;">'+d.client+'</td><td style="color:var(--text2);font-size:11px;">'+d.contrat+'</td><td>'+d.produit+'</td><td style="color:var(--text2);font-size:11px;">'+(d.produit_type||'—')+'</td><td>'+d.fourn+'</td><td style="color:var(--text2);">'+(d.broker||'—')+'</td><td style="text-align:right;" class="mono">'+f0(d.nom)+'</td><td>'+d.dev+'</td><td class="mono" style="font-size:10px;color:var(--text2);">'+(d.isin||'—')+'</td><td class="mono" style="font-size:11px;color:var(--text2);">'+(d.issue||'—')+'</td><td class="mono" style="font-size:11px;color:var(--text2);">'+(d.invS||'—')+'</td><td class="mono" style="font-size:11px;color:var(--text2);">'+(d.inv||'—')+'</td><td class="mono" style="font-size:11px;color:var(--text2);">'+(d.terme||'—')+'</td><td>'+tBadge(d.ct)+'</td><td style="text-align:right;color:var(--blue);font-weight:500;">'+(d.ufE>0?fE(d.ufE):'—')+'</td><td style="text-align:right;color:var(--green);font-weight:500;">'+(d.runE>0?fE(d.runE):'—')+'</td><td class="mono" style="font-size:11px;">'+(d.fRef||'—')+'</td><td>'+fBadge(d.fSt)+'</td><td style="font-size:11px;color:var(--text2);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+(d.notes||'—')+'</td><td style="display:flex;gap:5px;"><button class="btn btn-sm" onclick="event.stopPropagation();openDealModal('+deals.indexOf(d)+')">Modifier</button><button class="btn btn-sm" style="color:var(--red);border-color:var(--red-bg);" onclick="event.stopPropagation();deleteDeal('+deals.indexOf(d)+')">Supprimer</button></td>';
+  });
   var fourns=[...new Set(filt().map(d=>d.fourn))].sort(),sel=document.getElementById('flFourn'),cv=sel.value;sel.innerHTML='<option value="">Tous fournisseurs</option>';fourns.forEach(f=>{sel.innerHTML+='<option'+(f===cv?' selected':'')+'>'+f+'</option>';});
+  // Prune selected ids that no longer exist in filter (so the bar count stays accurate)
+  refreshBulkBar();
+}
+
+function onDealRowSel(cb){
+  var k=cb.dataset.key;
+  if(cb.checked)selectedDealIds.add(k);else selectedDealIds.delete(k);
+  refreshBulkBar();
+  syncSelectAllCheckbox();
+}
+function toggleSelectAllDeals(cb){
+  if(cb.checked){_dealsFiltered.forEach(function(d){selectedDealIds.add(dealKey(d));});}
+  else{_dealsFiltered.forEach(function(d){selectedDealIds.delete(dealKey(d));});}
+  document.querySelectorAll('#dealsT .rowSel').forEach(function(el){el.checked=cb.checked;});
+  refreshBulkBar();
+}
+function syncSelectAllCheckbox(){
+  var sa=document.getElementById('bulkSelectAll');if(!sa)return;
+  var allChecked=_dealsFiltered.length>0&&_dealsFiltered.every(function(d){return selectedDealIds.has(dealKey(d));});
+  sa.checked=allChecked;
+  sa.indeterminate=!allChecked&&_dealsFiltered.some(function(d){return selectedDealIds.has(dealKey(d));});
+}
+function refreshBulkBar(){
+  // Count only deals currently visible (filtered) for bar
+  var visibleSelected=_dealsFiltered.filter(function(d){return selectedDealIds.has(dealKey(d));});
+  var bar=document.getElementById('dealsBulkBar');
+  if(!bar)return;
+  if(visibleSelected.length>0){bar.style.display='flex';document.getElementById('bulkSelCount').textContent=visibleSelected.length;}
+  else bar.style.display='none';
+  syncSelectAllCheckbox();
+}
+function bulkClear(){selectedDealIds.clear();renderDeals();}
+function getSelectedDealsList(){return deals.filter(function(d){return selectedDealIds.has(dealKey(d));});}
+async function bulkApplyStatus(){
+  var newStatus=document.getElementById('bulkStatus').value;
+  if(!newStatus){alert('Choisissez un statut.');return;}
+  var sel=getSelectedDealsList();
+  if(!sel.length){alert('Aucun deal sélectionné.');return;}
+  if(!confirm('Appliquer le statut "'+newStatus+'" à '+sel.length+' deal(s) ?'))return;
+  var failed=0;
+  for(var i=0;i<sel.length;i++){
+    var d=sel[i];
+    d.fSt=newStatus;
+    if(!d.hist)d.hist=[];
+    d.hist.push({ts:nowS(),a:'Statut → '+newStatus+' (action groupée)',by:'Système'});
+    if(d._id){try{await sbUpdate('deals',d._id,d);}catch(e){console.error('Bulk status update failed for',d._id,e);failed++;}}
+  }
+  selectedDealIds.clear();
+  renderAll();
+  toast(sel.length+' deal(s) mis à jour'+(failed?' ('+failed+' erreur(s))':'.'));
+}
+async function bulkDelete(){
+  var sel=getSelectedDealsList();
+  if(!sel.length){alert('Aucun deal sélectionné.');return;}
+  if(!confirm('Supprimer définitivement '+sel.length+' deal(s) ? Cette action est irréversible.'))return;
+  var failed=0;
+  for(var i=0;i<sel.length;i++){
+    var d=sel[i];
+    if(d._id){try{await sbDelete('deals',d._id);}catch(e){console.error('Bulk delete failed for',d._id,e);failed++;continue;}}
+    var idx=deals.indexOf(d);if(idx>=0)deals.splice(idx,1);
+  }
+  selectedDealIds.clear();
+  renderAll();
+  toast(sel.length+' deal(s) supprimé(s)'+(failed?' ('+failed+' erreur(s))':'.'));
+}
+function bulkExportCSV(){
+  var sel=getSelectedDealsList();
+  if(!sel.length){alert('Aucun deal sélectionné.');return;}
+  var h=['Vendeur','Date','Client','Contrat','Fournisseur','Broker','Produit','TypeProduit','ISIN','Nominal','Devise','FX','Issue','Terme','Type','UF%','Run%','UF EUR','Run EUR','Statut','Ref','Invoice','Notes'];
+  var rows=sel.map(function(d){return[d.v,d.date,d.client,d.contrat,d.fourn,d.broker,d.produit,d.produit_type||'',d.isin,d.nom,d.dev,d.fx,d.issue,d.terme||'',d.ct,d.ufR,d.runR,d.ufE,d.runE,d.fSt,d.fRef,d.inv,d.notes].map(function(v){return (v||'').toString().replace(/,/g,';');});});
+  var csv=[h.join(','),...rows.map(function(r){return r.join(',');})].join('\n');
+  var a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8;'}));a.download='deals_selection_'+today()+'.csv';a.click();
+  toast(sel.length+' deal(s) exporté(s).');
 }
 function sBy(c){if(sCol===c)sDir*=-1;else{sCol=c;sDir=-1;}renderDeals();}
 

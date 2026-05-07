@@ -66,6 +66,15 @@
       <!-- SYNTHESE -->
       <div class="page on" id="p-synthese">
 
+        <!-- ALERTES (produits arrivant à terme) -->
+        <div class="card" style="border-top:3px solid var(--amber);padding:16px 18px;margin-bottom:14px;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="var(--amber)" stroke-width="1.5"><path d="M8 1l7 13H1z"/><path d="M8 6v4M8 12.5v.5"/></svg>
+            <span style="font-size:12px;font-weight:600;color:var(--amber-t);text-transform:uppercase;letter-spacing:.5px;">Alertes produits — termes à 6 mois</span>
+          </div>
+          <div id="alertesPanel"></div>
+        </div>
+
         <!-- KPIs top -->
         <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:20px;" id="kpiGrid"></div>
 
@@ -777,6 +786,28 @@
   <div class="modal" style="max-width:900px;">
     <div class="modal-hd"><span class="modal-title" id="dmTitle">Nouveau deal</span><button class="close-btn" onclick="closeDM()">×</button></div>
     <div class="modal-body">
+
+      <!-- Ligne 0 : Codification produit / Date de terme -->
+      <div style="background:var(--blue-bg);border-radius:var(--rs);padding:12px 14px;margin-bottom:14px;border:1px solid rgba(29,95,212,.15);">
+        <div style="font-size:11px;font-weight:600;color:var(--blue-t);margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px;">Codification &amp; Échéance</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px 16px;">
+          <div class="fl"><label>Type de produit</label>
+            <select id="mProduitType">
+              <option value="">— Choisir —</option>
+              <option>Action</option>
+              <option>Obligation</option>
+              <option>Produit Structuré</option>
+              <option>Private Equity</option>
+              <option>UCITS / OPCVM</option>
+              <option>Fonds Alternatif</option>
+              <option>ETF</option>
+              <option>Immobilier</option>
+              <option>Autre</option>
+            </select>
+          </div>
+          <div class="fl"><label>Date de terme <span style="color:var(--text3);font-weight:400;">(alerte à T-6 mois)</span></label><input type="date" id="mTerme"/></div>
+        </div>
+      </div>
 
       <!-- Ligne 1 : Vendeur / Trade date / Statut / Devise -->
       <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 16px;margin-bottom:12px;">

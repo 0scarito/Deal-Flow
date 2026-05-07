@@ -11,6 +11,7 @@ function dealToRow(d){
   r.inv_s=r.invS; r.f_st=r.fSt; r.f_ref=r.fRef;
   r.arb_id=r.arbId; r.arb_src=r.arbSrc; r.arb_closed=r.arbClosed;
   r.end_date=r.end;
+  // produit_type and terme already use snake_case names matching DB columns; keep as-is.
   delete r.ufR; delete r.runR; delete r.ufE; delete r.runE;
   delete r.invS; delete r.fSt; delete r.fRef;
   delete r.arbId; delete r.arbSrc; delete r.arbClosed; delete r.end;
@@ -370,6 +371,16 @@ function addClientLine(){
   container.appendChild(div);
 }
 
+function removeClientLine(btn){
+  var row=btn.closest('div');
+  if(!row)return;
+  var container=document.getElementById('clientLines');
+  // Don't allow removing the last line
+  if(container.children.length<=1){alert('Au moins une ligne client requise.');return;}
+  row.remove();
+  calcM();
+}
+
 function getSelectedClients(){
   var sels=document.querySelectorAll('.mClientSel');
   var contSels=document.querySelectorAll('.mContratSel');
@@ -425,7 +436,7 @@ function goTo(id,btn){
 }
 function setV(v,btn){curV=v;document.querySelectorAll('.vbtn').forEach(b=>b.classList.remove('on'));btn.classList.add('on');renderAll();}
 function onSearch(){var q=document.getElementById('gSearch').value;if(q)goTo('deals',document.querySelectorAll('.nbtn')[1]);document.getElementById('srch').value=q;renderDeals();}
-function renderAll(){renderKpis();renderRecent();updateAlertBadge();updateContratsBadge();if(document.getElementById('p-facturation').classList.contains('on'))renderFact();}
+function renderAll(){renderKpis();renderRecent();renderAlertes();updateAlertBadge();updateContratsBadge();if(document.getElementById('p-facturation').classList.contains('on'))renderFact();}
 
 function renderKpis(){
   var d=filt();
@@ -1612,7 +1623,63 @@ function setFT(t,btn){ftab=t;document.querySelectorAll('#factTabs .stab').forEac
 
 // ── RUNNING TRIMESTRIEL ───────────────────────────────────────────────────────
 function renderAlertes(){}
-function updateAlertBadge(){}
+// ── ALERTES TERME ────────────────────────────────────────────────────────────
+function getAlertes(){
+  // Returns deals approaching maturity (within 6 months) sorted by date asc.
+  var now=new Date();now.setHours(0,0,0,0);
+  var horizon=new Date(now);horizon.setMonth(horizon.getMonth()+6);
+  var out=[];
+  deals.forEach(function(d){
+    if(!d.terme)return;
+    var t=new Date(d.terme);if(isNaN(t))return;
+    if(t<now)return; // already past
+    if(t>horizon)return; // beyond 6 months
+    var days=Math.round((t-now)/(1000*60*60*24));
+    out.push({deal:d,days:days,date:d.terme});
+  });
+  out.sort(function(a,b){return a.days-b.days;});
+  return out;
+}
+function alerteSeverity(days){
+  if(days<=30)return{cls:'br',color:'var(--red)',bg:'var(--red-bg)',tx:'var(--red-t)',lbl:'urgent'};
+  if(days<=90)return{cls:'ba',color:'var(--amber)',bg:'var(--amber-bg)',tx:'var(--amber-t)',lbl:'proche'};
+  return{cls:'bb',color:'var(--blue)',bg:'var(--blue-bg)',tx:'var(--blue-t)',lbl:'à surveiller'};
+}
+function fmtDateFR(s){if(!s)return'';var d=new Date(s);if(isNaN(d))return s;return d.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'numeric'});}
+function fmtDelay(days){if(days===0)return"aujourd'hui";if(days===1)return'demain';if(days<30)return'dans '+days+' j';if(days<60)return'dans '+Math.round(days/7)+' sem';return'dans '+Math.round(days/30)+' mois';}
+
+function updateAlertBadge(){
+  var alertes=getAlertes();
+  // Badge sidebar Synthèse — first nav button
+  var syntheseBtn=document.querySelectorAll('.nbtn')[0];
+  if(syntheseBtn){
+    var existing=syntheseBtn.querySelector('.alert-dot-badge');
+    if(alertes.length>0){
+      if(!existing){var b=document.createElement('span');b.className='alert-dot-badge';b.textContent=alertes.length;syntheseBtn.appendChild(b);}
+      else existing.textContent=alertes.length;
+    } else if(existing){existing.remove();}
+  }
+}
+
+function renderAlertes(){
+  var el=document.getElementById('alertesPanel');if(!el)return;
+  var alertes=getAlertes();
+  if(!alertes.length){
+    el.innerHTML='<div style="font-size:12px;color:var(--text3);padding:10px 0;">Aucune alerte en cours. Tous les produits avec une date de terme sont au-delà de 6 mois.</div>';
+    return;
+  }
+  el.innerHTML=alertes.slice(0,10).map(function(a){
+    var d=a.deal,sv=alerteSeverity(a.days);
+    return '<div class="alert-item" onclick="openDet(deals['+deals.indexOf(d)+'])" style="cursor:pointer;">'+
+      '<span class="adot" style="background:'+sv.color+';"></span>'+
+      '<div style="flex:1;min-width:0;">'+
+        '<div style="font-size:13px;font-weight:500;color:var(--text);">'+(d.produit||'(sans nom)')+' — '+(d.client||'')+'</div>'+
+        '<div style="font-size:11px;color:var(--text2);margin-top:1px;">'+(d.produit_type?d.produit_type+' · ':'')+'Terme '+fmtDateFR(d.terme)+' · '+fmtDelay(a.days)+'</div>'+
+      '</div>'+
+      '<span class="badge '+sv.cls+'">'+sv.lbl+'</span>'+
+    '</div>';
+  }).join('')+(alertes.length>10?'<div style="font-size:11px;color:var(--text3);padding:6px 0;text-align:center;">+ '+(alertes.length-10)+' autres alertes</div>':'');
+}
 
 function renderCharts(){
   var data=filt();
@@ -1644,12 +1711,18 @@ function openDealModal(idx){
   editIdx=idx!=null?idx:-1;
   rebuildFournSelect();rebuildBrokerSelect();
   document.getElementById('dmTitle').textContent=editIdx>=0?'Modifier le deal':'Nouveau deal';
-  if(editIdx>=0){var d=deals[editIdx];document.getElementById('mV').value=d.v;document.getElementById('mDate').value=d.date;document.getElementById('mStat').value=d.stat;renderClientLines([d.client],[d.contrat],[d.nom],[d.depositaire||'']);document.getElementById('mContrat').value=d.contrat;document.getElementById('mBroker').value=d.broker||'';document.getElementById('mFourn').value=d.fourn;document.getElementById('mProduit').value=d.produit;document.getElementById('mISIN').value=d.isin||'';document.getElementById('mNom').value=d.nom;document.getElementById('mDev').value=d.dev;document.getElementById('mIssue').value=d.issue||'';document.getElementById('mInvS').value=d.invS||'';document.getElementById('mInv').value=d.inv||'';document.getElementById('mUFR').value=d.ufR;document.getElementById('mRunR').value=d.runR;document.getElementById('mNotes').value=d.notes||'';setCT(d.ct);
+  if(editIdx>=0){var d=deals[editIdx];document.getElementById('mV').value=d.v;document.getElementById('mDate').value=d.date;document.getElementById('mStat').value=d.stat;renderClientLines([d.client],[d.contrat],[d.nom],[d.depositaire||'']);document.getElementById('mContrat').value=d.contrat;document.getElementById('mBroker').value=d.broker||'';document.getElementById('mFourn').value=d.fourn;document.getElementById('mProduit').value=d.produit;document.getElementById('mISIN').value=d.isin||'';document.getElementById('mNom').value=d.nom;document.getElementById('mDev').value=d.dev;document.getElementById('mIssue').value=d.issue||'';document.getElementById('mInvS').value=d.invS||'';document.getElementById('mInv').value=d.inv||'';document.getElementById('mUFR').value=d.ufR;document.getElementById('mRunR').value=d.runR;document.getElementById('mNotes').value=d.notes||'';
+    var ptEl=document.getElementById('mProduitType');if(ptEl)ptEl.value=d.produit_type||'';
+    var ttEl=document.getElementById('mTerme');if(ttEl)ttEl.value=d.terme||'';
+    setCT(d.ct);
     var pf=d.pf||{mode:'none'};pfMode=pf.mode||'none';
     var pfBtn=document.getElementById('ctPF');pfBtn.classList.toggle('on',pfMode!=='none');
     document.getElementById('pfRow').style.display=pfMode!=='none'?'block':'none';
     if(pfMode!=='none'){document.getElementById('mPFType').value=pf.type||'pct';document.getElementById('mPFRate').value=pf.rate||'';document.getElementById('mPFHurdle').value=pf.hurdle||'';document.getElementById('mPFFixed').value=pf.amount||'';document.getElementById('mPFFreq').value=pf.freq||'annuel';onPFTypeChange();}
-  } else {document.getElementById('mDate').value=today();renderClientLines(['']);document.getElementById('mFourn').value='';document.getElementById('mNom').value='';document.getElementById('mUFR').value='';document.getElementById('mRunR').value='';document.getElementById('mISIN').value='';document.getElementById('mBroker').value='';document.getElementById('mProduit').value='';document.getElementById('mNotes').value='';document.getElementById('mPFRate').value='';document.getElementById('mPFHurdle').value='';document.getElementById('mPFFixed').value='';document.getElementById('mInvS').value='';document.getElementById('ctPF').classList.remove('on');document.getElementById('pfRow').style.display='none';pfMode='none';cancelAddClient();setCT('UF');}
+  } else {document.getElementById('mDate').value=today();renderClientLines(['']);document.getElementById('mFourn').value='';document.getElementById('mNom').value='';document.getElementById('mUFR').value='';document.getElementById('mRunR').value='';document.getElementById('mISIN').value='';document.getElementById('mBroker').value='';document.getElementById('mProduit').value='';document.getElementById('mNotes').value='';document.getElementById('mPFRate').value='';document.getElementById('mPFHurdle').value='';document.getElementById('mPFFixed').value='';document.getElementById('mInvS').value='';
+    var ptEl2=document.getElementById('mProduitType');if(ptEl2)ptEl2.value='';
+    var ttEl2=document.getElementById('mTerme');if(ttEl2)ttEl2.value='';
+    document.getElementById('ctPF').classList.remove('on');document.getElementById('pfRow').style.display='none';pfMode='none';cancelAddClient();setCT('UF');}
   rebuildFournSelect();rebuildBrokerSelect();
   document.getElementById('dealModal').classList.add('on');calcM();
 }
@@ -1706,6 +1779,7 @@ function calcM(){
 }
 
 async function saveDeal(){
+ try{
   var nom=parseFloat(document.getElementById('mNom').value)||0;
   var items=getSelectedClients();
   if(!items.length){alert('Au moins un client requis.');return;}
@@ -1714,7 +1788,10 @@ async function saveDeal(){
   var ufP=(parseFloat(document.getElementById('mUFR').value)||0)/100,runP=(parseFloat(document.getElementById('mRunR').value)||0)/100;
   var pf={mode:pfMode};
   if(pfMode!=='none'){var pfType=document.getElementById('mPFType').value;pf.type=pfType;pf.freq=document.getElementById('mPFFreq').value;if(pfType==='pct'){pf.rate=parseFloat(document.getElementById('mPFRate').value)||0;pf.hurdle=parseFloat(document.getElementById('mPFHurdle').value)||0;}else{pf.amount=parseFloat(document.getElementById('mPFFixed').value)||0;}}
-  var base={v:document.getElementById('mV').value,date:document.getElementById('mDate').value,stat:document.getElementById('mStat').value,contrat:document.getElementById('mContrat').value,broker:document.getElementById('mBroker').value,fourn:document.getElementById('mFourn').value,produit:document.getElementById('mProduit').value,isin:document.getElementById('mISIN').value,nom,dev,fx,issue:document.getElementById('mIssue').value,invS:document.getElementById('mInvS').value,inv:document.getElementById('mInv').value,ct,ufR:parseFloat(document.getElementById('mUFR').value)||0,runR:parseFloat(document.getElementById('mRunR').value)||0,tva:0,ufE:Math.round(dev==='USD'?(nom*ufP/fx):nom*ufP),runE:Math.round(nomE*runP),pf,fSt:'À émettre',fRef:'',notes:document.getElementById('mNotes').value};
+  var produitType=(document.getElementById('mProduitType')||{}).value||null;
+  var termeRaw=(document.getElementById('mTerme')||{}).value||'';
+  var terme=termeRaw||null;
+  var base={v:document.getElementById('mV').value,date:document.getElementById('mDate').value,stat:document.getElementById('mStat').value,contrat:document.getElementById('mContrat').value,broker:document.getElementById('mBroker').value,fourn:document.getElementById('mFourn').value,produit:document.getElementById('mProduit').value,produit_type:produitType,terme:terme,isin:document.getElementById('mISIN').value,nom,dev,fx,issue:document.getElementById('mIssue').value,invS:document.getElementById('mInvS').value,inv:document.getElementById('mInv').value,ct,ufR:parseFloat(document.getElementById('mUFR').value)||0,runR:parseFloat(document.getElementById('mRunR').value)||0,tva:0,ufE:Math.round(dev==='USD'?(nom*ufP/fx):nom*ufP),runE:Math.round(nomE*runP),pf,fSt:'À émettre',fRef:'',notes:document.getElementById('mNotes').value};
   if(editIdx>=0){
     var cc=getSelectedClients();
     var lineNom=cc.length&&cc[0].nom?cc[0].nom:nom;
@@ -1738,6 +1815,10 @@ async function saveDeal(){
     }
     closeDM();renderAll();toast(items.length>1?items.length+' deals enregistrés.':'Nouveau deal enregistré.');
   }
+ }catch(err){
+  console.error('saveDeal failed',err);
+  alert('Erreur enregistrement deal :\n\n'+(err.message||err)+'\n\n(Voir la console pour le détail.)');
+ }
 }
 
 function exportCSV(){

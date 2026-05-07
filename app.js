@@ -4206,7 +4206,8 @@ function genInvoicePDF(fournName,type,period,amount,deals_list){
   .header-bar .header-divider{width:1.5px;height:54px;background:#234c3e;flex-shrink:0;}
   .header-bar .company-name{font-family:'Cinzel',Georgia,serif;font-size:30px;font-weight:600;letter-spacing:.10em;line-height:1;color:#234c3e;}
   .header-bar .company-suffix{font-family:'Cinzel',Georgia,serif;font-size:13px;font-weight:500;letter-spacing:.55em;margin-top:5px;text-indent:.55em;color:#234c3e;}
-  .header-bar .invoice-num{margin-left:auto;font-family:'Cinzel',Georgia,serif;font-size:14px;font-weight:500;letter-spacing:.05em;color:#234c3e;text-align:right;}
+  /* Numéro de facture épinglé en haut à droite, vraiment dans le coin de la page */
+  .invoice-num-corner{position:absolute;top:0;right:0;font-family:'Cinzel',Georgia,serif;font-size:14px;font-weight:500;letter-spacing:.04em;color:#234c3e;line-height:1;}
   .section{margin-bottom:16px;}
   .label{font-weight:bold;font-size:11px;color:#234c3e;text-transform:uppercase;margin-bottom:4px;}
   .from-to{display:grid;grid-template-columns:1fr 1fr;gap:30px;margin-bottom:20px;}
@@ -4225,6 +4226,7 @@ function genInvoicePDF(fournName,type,period,amount,deals_list){
   .exo{font-style:italic;color:#555;font-size:10px;margin-top:6px;}
 </style></head><body>
 
+<div class="invoice-num-corner">Facture ${invoiceNum}</div>
 <div class="header-bar">
   <img src="${logoUrl}" class="header-logo" alt="">
   <div class="header-divider"></div>
@@ -4232,7 +4234,6 @@ function genInvoicePDF(fournName,type,period,amount,deals_list){
     <div class="company-name">CHAMFEUIL</div>
     <div class="company-suffix">CAPITAL</div>
   </div>
-  <div class="invoice-num">INVOICE #${invoiceNum}</div>
 </div>
 
 <div class="section">

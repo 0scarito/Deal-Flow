@@ -2755,14 +2755,19 @@ function brokerOptHtml(selected){
   var list=brokers_db.slice().sort((a,b)=>a.name.localeCompare(b.name,undefined,{sensitivity:'base'})).map(b=>b.name);
   return '<option value="">— Aucun —</option>'+list.map(b=>'<option'+(b===(selected||'')?' selected':'')+'>'+b+'</option>').join('');
 }
+var PRODUIT_TYPES=['Action','Obligation','Produit Structuré','Private Equity','UCITS / OPCVM','Fonds Alternatif','ETF','Immobilier','Autre'];
+function produitTypeOptHtml(selected){
+  return '<option value="">— Choisir —</option>'+PRODUIT_TYPES.map(function(t){return '<option'+(t===(selected||'')?' selected':'')+'>'+t+'</option>';}).join('');
+}
 function addCodifLine(codif){
-  codif=codif||{fourn:'',produit:'',isin:'',broker:'',maturite:''};
+  codif=codif||{fourn:'',produit:'',type:'',isin:'',broker:'',maturite:''};
   var container=document.getElementById('codifLines');
   var row=document.createElement('div');
   row.className='codif-line';
-  row.style.cssText='display:grid;grid-template-columns:1fr 1fr 100px 1fr 120px 28px;gap:6px;margin-bottom:6px;align-items:center;';
+  row.style.cssText='display:grid;grid-template-columns:1.3fr 1.3fr 130px 100px 1fr 120px 28px;gap:6px;margin-bottom:6px;align-items:center;';
   row.innerHTML='<select class="codifFourn">'+fournOptHtml(codif.fourn)+'</select>'
     +'<input type="text" class="codifProduit" value="'+(codif.produit||'')+'" placeholder="Produit / Support"/>'
+    +'<select class="codifType">'+produitTypeOptHtml(codif.type)+'</select>'
     +'<input type="text" class="codifISIN" value="'+(codif.isin||'')+'" placeholder="ISIN" style="font-family:monospace;font-size:11px;"/>'
     +'<select class="codifBroker">'+brokerOptHtml(codif.broker)+'</select>'
     +'<input type="date" class="codifMaturite" value="'+(codif.maturite||'')+'"/>'
@@ -2781,7 +2786,14 @@ function renderCodifLines(codifs){
 function getCodifLines(){
   var result=[];
   document.querySelectorAll('#codifLines .codif-line').forEach(function(row){
-    result.push({fourn:row.querySelector('.codifFourn').value,produit:row.querySelector('.codifProduit').value,isin:row.querySelector('.codifISIN').value,broker:row.querySelector('.codifBroker').value,maturite:row.querySelector('.codifMaturite').value});
+    result.push({
+      fourn:row.querySelector('.codifFourn').value,
+      produit:row.querySelector('.codifProduit').value,
+      type:row.querySelector('.codifType')?row.querySelector('.codifType').value:'',
+      isin:row.querySelector('.codifISIN').value,
+      broker:row.querySelector('.codifBroker').value,
+      maturite:row.querySelector('.codifMaturite').value
+    });
   });
   return result;
 }
@@ -2789,7 +2801,7 @@ function openDealModal(idx){
   editIdx=idx!=null?idx:-1;
   rebuildFournSelect();rebuildBrokerSelect();
   document.getElementById('dmTitle').textContent=editIdx>=0?'Modifier le deal':'Nouveau deal';
-  if(editIdx>=0){var d=deals[editIdx];document.getElementById('mV').value=d.v;document.getElementById('mDate').value=d.date;document.getElementById('mStat').value=d.stat;renderClientLines([d.client],[d.contrat],[d.nom],[d.depositaire||'']);document.getElementById('mContrat').value=d.contrat;document.getElementById('mNom').value=d.nom;document.getElementById('mDev').value=d.dev;document.getElementById('mIssue').value=d.issue||'';document.getElementById('mInvS').value=d.invS||'';document.getElementById('mInv').value=d.inv||'';document.getElementById('mUFR').value=d.ufR;document.getElementById('mRunR').value=d.runR;document.getElementById('mNotes').value=d.notes||'';renderCodifLines(d.codifications&&d.codifications.length?d.codifications:[{fourn:d.fourn||'',produit:d.produit||'',isin:d.isin||'',broker:d.broker||'',maturite:d.maturite||''}]);setCT(d.ct);
+  if(editIdx>=0){var d=deals[editIdx];document.getElementById('mV').value=d.v;document.getElementById('mDate').value=d.date;document.getElementById('mStat').value=d.stat;renderClientLines([d.client],[d.contrat],[d.nom],[d.depositaire||'']);document.getElementById('mContrat').value=d.contrat;document.getElementById('mNom').value=d.nom;document.getElementById('mDev').value=d.dev;document.getElementById('mIssue').value=d.issue||'';document.getElementById('mInvS').value=d.invS||'';document.getElementById('mInv').value=d.inv||'';document.getElementById('mUFR').value=d.ufR;document.getElementById('mRunR').value=d.runR;document.getElementById('mNotes').value=d.notes||'';renderCodifLines(d.codifications&&d.codifications.length?d.codifications:[{fourn:d.fourn||'',produit:d.produit||'',type:d.produit_type||'',isin:d.isin||'',broker:d.broker||'',maturite:d.maturite||d.terme||''}]);setCT(d.ct);
     var pf=d.pf||{mode:'none'};pfMode=pf.mode||'none';
     var pfBtn=document.getElementById('ctPF');pfBtn.classList.toggle('on',pfMode!=='none');
     document.getElementById('pfRow').style.display=pfMode!=='none'?'block':'none';
@@ -2861,7 +2873,7 @@ async function saveDeal(){
   var pf={mode:pfMode};
   if(pfMode!=='none'){var pfType=document.getElementById('mPFType').value;pf.type=pfType;pf.freq=document.getElementById('mPFFreq').value;if(pfType==='pct'){pf.rate=parseFloat(document.getElementById('mPFRate').value)||0;pf.hurdle=parseFloat(document.getElementById('mPFHurdle').value)||0;}else{pf.amount=parseFloat(document.getElementById('mPFFixed').value)||0;}}
   var codifs=getCodifLines();
-  var base={v:document.getElementById('mV').value,date:document.getElementById('mDate').value,stat:document.getElementById('mStat').value,contrat:document.getElementById('mContrat').value,fourn:codifs[0]?codifs[0].fourn:'',produit:codifs[0]?codifs[0].produit:'',produit_type:codifs[0]?codifs[0].produit_type||null:null,isin:codifs[0]?codifs[0].isin:'',broker:codifs[0]?codifs[0].broker:'',maturite:codifs[0]?codifs[0].maturite||'':'',terme:codifs[0]?codifs[0].maturite||null:null,codifications:codifs,nom,dev,fx,issue:document.getElementById('mIssue').value,invS:document.getElementById('mInvS').value,inv:document.getElementById('mInv').value,ct,ufR:parseFloat(document.getElementById('mUFR').value)||0,runR:parseFloat(document.getElementById('mRunR').value)||0,tva:0,ufE:Math.round(dev==='USD'?(nom*ufP/fx):nom*ufP),runE:Math.round(nomE*runP),pf,fSt:'À émettre',fRef:'',notes:document.getElementById('mNotes').value};
+  var base={v:document.getElementById('mV').value,date:document.getElementById('mDate').value,stat:document.getElementById('mStat').value,contrat:document.getElementById('mContrat').value,fourn:codifs[0]?codifs[0].fourn:'',produit:codifs[0]?codifs[0].produit:'',produit_type:codifs[0]&&codifs[0].type?codifs[0].type:null,isin:codifs[0]?codifs[0].isin:'',broker:codifs[0]?codifs[0].broker:'',maturite:codifs[0]?codifs[0].maturite||null:null,terme:codifs[0]?codifs[0].maturite||null:null,codifications:codifs,nom,dev,fx,issue:document.getElementById('mIssue').value,invS:document.getElementById('mInvS').value,inv:document.getElementById('mInv').value,ct,ufR:parseFloat(document.getElementById('mUFR').value)||0,runR:parseFloat(document.getElementById('mRunR').value)||0,tva:0,ufE:Math.round(dev==='USD'?(nom*ufP/fx):nom*ufP),runE:Math.round(nomE*runP),pf,fSt:'À émettre',fRef:'',notes:document.getElementById('mNotes').value};
   if(editIdx>=0){
     var cc=getSelectedClients();
     var lineNom=cc.length&&cc[0].nom?cc[0].nom:nom;

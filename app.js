@@ -4854,6 +4854,8 @@ async function initApp(){
   await migrateDealStatuses();
   document.getElementById('loadingOverlay').style.display='none';
   renderAll();rebuildFournSelect();rebuildBrokerSelect();
+  // Clear any browser-autofilled values in search fields
+  setTimeout(function(){['srch','gSearch','ctSearch'].forEach(function(id){var el=document.getElementById(id);if(el)el.value='';});},100);
   setupRealtime();
   startCodeWatcher();
 }

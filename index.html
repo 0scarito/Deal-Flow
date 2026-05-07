@@ -705,20 +705,21 @@
   </div>
 </div>
 <div class="ov" id="templateModal">
-  <div class="modal" style="max-width:680px;">
+  <div class="modal" style="max-width:780px;">
     <div class="modal-hd"><span class="modal-title" id="tplModalTitle">Nouveau template de contrat</span><button class="close-btn" onclick="closeTemplateModal()">×</button></div>
     <div class="modal-body">
       <input type="hidden" id="tplId"/>
       <div class="fl"><label>Nom du template</label><input type="text" id="tplName" placeholder="ex: Wealins, PER, CTO Indosuez…"/></div>
-      <div class="form-sep" style="display:flex;align-items:center;gap:8px;">Étapes préliminaires (par défaut sur chaque contrat)<div style="flex:1;"></div>
-        <button type="button" class="btn btn-sm" onclick="tplAddPrelim()" style="font-size:11px;">+ Ajouter</button>
+      <div class="form-sep" style="display:flex;align-items:center;gap:8px;">Étapes préliminaires (communes à tout le contrat)<div style="flex:1;"></div>
+        <button type="button" class="btn btn-sm" onclick="tplAddPrelim()" style="font-size:11px;">+ Ajouter une étape</button>
       </div>
       <div id="tplPrelim"></div>
-      <div class="form-sep" style="display:flex;align-items:center;gap:8px;">Étapes par défaut pour chaque investissement<div style="flex:1;"></div>
-        <button type="button" class="btn btn-sm" onclick="tplAddStep()" style="font-size:11px;">+ Ajouter</button>
+      <div class="form-sep" style="display:flex;align-items:center;gap:8px;">Packs d'étapes par type d'investissement<div style="flex:1;"></div>
+        <button type="button" class="btn btn-sm" onclick="tplAddPack()" style="font-size:11px;">+ Nouveau pack</button>
       </div>
-      <div id="tplSteps"></div>
-      <div style="font-size:11px;color:var(--text3);margin-top:8px;">Ces étapes seront copiées (pas liées) sur les contrats utilisant ce template. Modifier le template après coup ne change pas les contrats déjà créés.</div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:10px;">Ex: pour Wealins, créez 3 packs — "Produit Structuré" (8 étapes), "UCITS" (3), "Alternatif" (5). Au moment d'ajouter un investissement à un contrat, vous choisirez quel pack appliquer comme point de départ. Tous les libellés sont entièrement personnalisables.</div>
+      <div id="tplPacks"></div>
+      <div style="font-size:11px;color:var(--text3);margin-top:8px;">Les packs sont copiés (pas liés) sur les investissements créés ensuite. Modifier le template après coup ne change pas les investissements existants.</div>
     </div>
     <div class="modal-ft"><button class="btn" onclick="closeTemplateModal()">Annuler</button><button class="btn" id="tplDeleteBtn" style="color:var(--red);border-color:var(--red-bg);display:none;" onclick="deleteTemplateFromModal()">Supprimer</button><button class="btn btn-primary" onclick="saveTemplateFromModal()">Enregistrer</button></div>
   </div>
@@ -740,6 +741,7 @@
         </div>
       </div>
       <div class="fl" style="margin-top:8px;"><label>Montant</label><input type="text" id="prodPMontant" placeholder="ex: 250 000 €"/></div>
+      <div class="fl" style="margin-top:8px;"><label>Pack d'étapes <span style="color:var(--text3);font-weight:400;">(depuis le template du contrat — modifiable ensuite)</span></label><select id="prodPPack" onchange="prodPackChanged()"></select></div>
       <div class="fl" style="margin-top:8px;"><label>Notes (optionnel)</label><textarea id="prodPNotes" rows="2" placeholder="Échéance, conditions particulières…"></textarea></div>
       <div class="form-sep" style="display:flex;align-items:center;gap:8px;">Étapes de la checklist<div style="flex:1;"></div>
         <button type="button" class="btn btn-sm" onclick="prodAddStep()" style="font-size:11px;">+ Ajouter une étape</button>

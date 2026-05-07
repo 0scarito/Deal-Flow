@@ -251,14 +251,20 @@ function contractsForClient(clientName){
   return contracts_db.filter(function(c){return c.client===clientName;});
 }
 
-// ── CONTRACT TEMPLATES (procédures réutilisables) ───────────────────────────
+// ── CONTRACT TEMPLATES (procédures réutilisables, multi-packs) ──────────────
 var templates_db=[];
 function rowToTemplate(r){
+  // step_packs is the canonical field. Legacy templates may have only `steps`
+  // (a flat array) — wrap them into a single "Standard" pack so the UI keeps working.
+  var packs=Array.isArray(r.step_packs)?r.step_packs:[];
+  if(!packs.length&&Array.isArray(r.steps)&&r.steps.length){
+    packs=[{id:'pack_legacy',name:'Standard',steps:r.steps}];
+  }
   return{
     _id:r.id,
     name:r.name,
     prelim:Array.isArray(r.prelim)?r.prelim:[],
-    steps:Array.isArray(r.steps)?r.steps:[],
+    step_packs:packs,
     created_at:r.created_at
   };
 }
@@ -268,7 +274,13 @@ async function loadTemplates(){
   templates_db=(res.data||[]).map(rowToTemplate);
 }
 async function saveTemplate(t){
-  var row={name:t.name,prelim:Array.isArray(t.prelim)?t.prelim:[],steps:Array.isArray(t.steps)?t.steps:[]};
+  var row={
+    name:t.name,
+    prelim:Array.isArray(t.prelim)?t.prelim:[],
+    step_packs:Array.isArray(t.step_packs)?t.step_packs:[],
+    // Keep `steps` empty going forward — packs is the canonical field.
+    steps:[]
+  };
   if(t._id){
     var res=await sb.from('contract_templates').update(row).eq('id',t._id).select();
     if(res.error)throw res.error;
@@ -291,7 +303,11 @@ async function seedDefaultTemplates(){
   var wealins={
     name:'Wealins',
     prelim:PRELIM_DEFAULTS.map(function(s){return{id:newStepId(),label:s.label};}),
-    steps:STEPS_DEFAULTS['structuré'].map(function(s){var o={id:newStepId(),label:s.label};if(s.note)o.note=s.note;return o;})
+    step_packs:[
+      {id:newStepId(),name:'Produit Structuré',steps:STEPS_DEFAULTS['structuré'].map(function(s){var o={id:newStepId(),label:s.label};if(s.note)o.note=s.note;return o;})},
+      {id:newStepId(),name:'UCITS',steps:STEPS_DEFAULTS['ucits'].map(function(s){var o={id:newStepId(),label:s.label};if(s.note)o.note=s.note;return o;})},
+      {id:newStepId(),name:'Alternatif',steps:STEPS_DEFAULTS['alternatif'].map(function(s){var o={id:newStepId(),label:s.label};if(s.note)o.note=s.note;return o;})}
+    ]
   };
   try{await saveTemplate(wealins);}catch(e){console.warn('Seed Wealins template failed',e);}
 }
@@ -300,9 +316,25 @@ function templatePrelimCopy(name){
   var t=templateByName(name);if(!t)return[];
   return t.prelim.map(function(s){return{id:newStepId(),label:s.label,done:false};});
 }
-function templateStepsCopy(name){
-  var t=templateByName(name);if(!t)return[];
-  return t.steps.map(function(s){var o={id:newStepId(),label:s.label,done:false};if(s.note)o.note=s.note;return o;});
+function templatePackCopy(templateName,packId){
+  // Returns a fresh deep copy of the steps array of the given pack
+  var t=templateByName(templateName);if(!t)return[];
+  var pack=(t.step_packs||[]).find(function(p){return p.id===packId;});
+  if(!pack&&(t.step_packs||[]).length)pack=t.step_packs[0]; // fallback: first pack
+  if(!pack)return[];
+  return pack.steps.map(function(s){var o={id:newStepId(),label:s.label,done:false};if(s.note)o.note=s.note;return o;});
+}
+function templatePackForType(templateName,produitType){
+  // Try to match a deal's produit_type to one of the template's packs by name fuzzy match
+  var t=templateByName(templateName);if(!t||!t.step_packs)return null;
+  if(!produitType)return t.step_packs[0];
+  var pt=produitType.toLowerCase();
+  for(var i=0;i<t.step_packs.length;i++){
+    var nm=(t.step_packs[i].name||'').toLowerCase();
+    if(nm&&pt.indexOf(nm.split(/\s+/)[0])!==-1)return t.step_packs[i];
+    if(nm&&nm.indexOf(pt.split(/\s+/)[0])!==-1)return t.step_packs[i];
+  }
+  return t.step_packs[0];
 }
 
 // Map deal.produit_type → investissement type used for badges
@@ -342,15 +374,22 @@ async function autoLinkDealToContract(deal){
   if(deal.depositaire)notesParts.push('Dépositaire: '+deal.depositaire);
   if(deal.fourn)notesParts.push('Fournisseur: '+deal.fourn);
   if(deal.contrat)notesParts.push('Contrat: '+deal.contrat);
+  // Pick the best-matching pack from the contract's template
+  var pickedPack=null,steps=[];
+  if(contract.template_name){
+    pickedPack=templatePackForType(contract.template_name,deal.produit_type);
+    if(pickedPack)steps=templatePackCopy(contract.template_name,pickedPack.id);
+  }
   var prod={
     id:newStepId(),
     name:deal.produit||'(produit non nommé)',
     isin:deal.isin||'',
     type:dealTypeToProdType(deal.produit_type),
+    pack_name:pickedPack?pickedPack.name:'',
     montant:montantStr,
     notes:notesParts.join(' · '),
-    steps:contract.template_name?templateStepsCopy(contract.template_name):[],
-    deal_id:deal._id||null  // backref so we don't duplicate on re-save
+    steps:steps,
+    deal_id:deal._id||null
   };
   // Skip if already linked (defensive — re-running the same deal save)
   if(deal._id&&(contract.produits||[]).some(function(p){return p.deal_id===deal._id;}))return;
@@ -3134,7 +3173,8 @@ function renderTemplatesPanel(){
           '<button class="btn btn-sm" style="padding:3px 8px;font-size:11px;" onclick="openTemplateModal(\''+t._id+'\')">✎</button>'+
           '<button class="btn btn-sm" style="padding:3px 8px;font-size:11px;color:var(--red);border-color:var(--red-bg);" onclick="confirmDeleteTemplate(\''+t._id+'\')">×</button>'+
         '</div>'+
-        '<div style="font-size:11px;color:var(--text2);">'+(t.prelim||[]).length+' étape'+((t.prelim||[]).length>1?'s':'')+' préliminaire'+((t.prelim||[]).length>1?'s':'')+' · '+(t.steps||[]).length+' étape'+((t.steps||[]).length>1?'s':'')+' d\'investissement</div>'+
+        '<div style="font-size:11px;color:var(--text2);">'+(t.prelim||[]).length+' étape'+((t.prelim||[]).length>1?'s':'')+' préliminaire'+((t.prelim||[]).length>1?'s':'')+' · '+(t.step_packs||[]).length+' pack'+((t.step_packs||[]).length>1?'s':'')+' d\'investissement</div>'+
+        ((t.step_packs||[]).length?'<div style="font-size:11px;color:var(--text3);margin-top:2px;">'+(t.step_packs||[]).map(function(p){return escH(p.name)+' ('+(p.steps||[]).length+')';}).join(' · ')+'</div>':'')+
       '</div>';
     }).join('')+
     '</div>';
@@ -3191,8 +3231,9 @@ function renderContrats(){
       var pr=prodProgress(p);
       var pKey=c._id+'|'+p.id;
       var pOpen=prodExp[pKey];
-      var typeLbl=WTYPE_LBL[p.type]||p.type||'?';
-      var typeBadge='<span class="badge '+(WTYPE_BADGE[p.type]||'bgr')+'">'+escH(typeLbl)+'</span>';
+      // Prefer the user-defined pack_name as the pill label; fall back to old type label
+      var pillText=p.pack_name||WTYPE_LBL[p.type]||p.type||'?';
+      var typeBadge='<span class="badge '+(WTYPE_BADGE[p.type]||'bgr')+'">'+escH(pillText)+'</span>';
       var stepsHTML=(p.steps||[]).map(function(s,idx){
         return '<div class="step-row">'+
           '<div class="chk'+(s.done?' on':'')+'" onclick="toggleProdStep(\''+c._id+'\',\''+p.id+'\','+idx+')"></div>'+
@@ -3478,34 +3519,79 @@ async function deleteContractFromModal(){
   }catch(e){console.error(e);alert('Erreur: '+(e.message||e));}
 }
 
-// ── TEMPLATE MODAL ──────────────────────────────────────────────────────────
+// ── TEMPLATE MODAL (multi-pack) ─────────────────────────────────────────────
+function renderPackEditorRows(packs){
+  // Renders one collapsible block per pack
+  return packs.map(function(p,idx){
+    var packId=p.id||newStepId();
+    return '<div class="tpl-pack" data-pack-id="'+escH(packId)+'" style="border:1px solid var(--border);border-radius:var(--rs);padding:10px 12px;margin-bottom:10px;background:var(--surface2);">'+
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">'+
+        '<input type="text" class="tpl-pack-name" placeholder="Nom du pack (ex: Produit Structuré)" value="'+escH(p.name||'')+'" style="flex:1;font-size:13px;font-weight:500;padding:5px 8px;"/>'+
+        '<button type="button" class="btn btn-sm" onclick="tplPackAddStep(this)" style="font-size:11px;">+ Étape</button>'+
+        '<button type="button" class="btn btn-sm" style="font-size:11px;color:var(--red);border-color:var(--red-bg);" onclick="if(confirm(\'Supprimer ce pack ?\'))this.closest(\'.tpl-pack\').remove();">Supprimer pack</button>'+
+      '</div>'+
+      '<div class="tpl-pack-steps">'+renderStepEditorRows((p.steps||[]).map(function(s){var o={id:s.id,label:s.label,done:false};if(s.note)o.note=s.note;return o;}),{note:true})+'</div>'+
+    '</div>';
+  }).join('');
+}
+function readPackEditorRows(containerEl){
+  var packBlocks=containerEl.querySelectorAll('.tpl-pack');
+  var out=[];
+  packBlocks.forEach(function(blk){
+    var nameEl=blk.querySelector('.tpl-pack-name');
+    var name=nameEl?nameEl.value.trim():'';
+    if(!name)return; // skip unnamed packs
+    var stepsEl=blk.querySelector('.tpl-pack-steps');
+    var steps=stepsEl?readStepEditorRows(stepsEl,{note:true}).map(function(s){var o={id:s.id,label:s.label};if(s.note)o.note=s.note;return o;}):[];
+    out.push({id:blk.dataset.packId||newStepId(),name:name,steps:steps});
+  });
+  return out;
+}
+function tplPackAddStep(btn){
+  var stepsEl=btn.closest('.tpl-pack').querySelector('.tpl-pack-steps');
+  if(!stepsEl)return;
+  // append a new empty row inline
+  var html=
+    '<div class="step-edit-row" data-id="'+newStepId()+'" style="display:flex;gap:6px;align-items:center;margin-bottom:4px;">'+
+      '<div class="chk" onclick="this.classList.toggle(\'on\')" style="flex-shrink:0;"></div>'+
+      '<input type="text" class="step-edit-label" placeholder="Libellé de l\'étape" style="flex:1;min-width:0;font-size:12px;padding:5px 8px;"/>'+
+      '<input type="text" class="step-edit-note" placeholder="Annotation (optionnel)" style="width:140px;font-size:11px;padding:5px 8px;"/>'+
+      '<button type="button" class="btn btn-sm" style="padding:3px 8px;font-size:11px;color:var(--red);border-color:var(--red-bg);flex-shrink:0;" onclick="this.closest(\'.step-edit-row\').remove();">×</button>'+
+    '</div>';
+  stepsEl.insertAdjacentHTML('beforeend',html);
+  var inputs=stepsEl.querySelectorAll('.step-edit-label');
+  if(inputs.length)inputs[inputs.length-1].focus();
+}
+function tplAddPack(){
+  var c=document.getElementById('tplPacks');
+  c.insertAdjacentHTML('beforeend',renderPackEditorRows([{id:newStepId(),name:'',steps:[]}]));
+  var newPackName=c.querySelectorAll('.tpl-pack-name');
+  if(newPackName.length)newPackName[newPackName.length-1].focus();
+}
+
 function openTemplateModal(templateId){
   var t=templateId?templates_db.find(function(x){return x._id===templateId;}):null;
   document.getElementById('tplModalTitle').textContent=t?'Modifier le template':'Nouveau template de contrat';
   document.getElementById('tplId').value=t?t._id:'';
   document.getElementById('tplName').value=t?t.name:'';
   document.getElementById('tplPrelim').innerHTML=renderStepEditorRows((t?t.prelim:[]).map(function(s){return{id:s.id,label:s.label,done:false};}),{note:false});
-  document.getElementById('tplSteps').innerHTML=renderStepEditorRows((t?t.steps:[]).map(function(s){var o={id:s.id,label:s.label,done:false};if(s.note)o.note=s.note;return o;}),{note:true});
+  document.getElementById('tplPacks').innerHTML=renderPackEditorRows(t?t.step_packs:[]);
   document.getElementById('tplDeleteBtn').style.display=t?'':'none';
   document.getElementById('templateModal').classList.add('on');
   setTimeout(function(){document.getElementById('tplName').focus();},50);
 }
 function closeTemplateModal(){document.getElementById('templateModal').classList.remove('on');}
 function tplAddPrelim(){addEditorStep('tplPrelim',{note:false});}
-function tplAddStep(){addEditorStep('tplSteps',{note:true});}
 async function saveTemplateFromModal(){
   var id=document.getElementById('tplId').value;
   var name=document.getElementById('tplName').value.trim();
   if(!name){alert('Nom du template requis.');return;}
-  // Names are unique — block duplicates on create
   if(!id&&templates_db.some(function(t){return t.name.toLowerCase()===name.toLowerCase();})){alert('Un template "'+name+'" existe déjà.');return;}
   var prelimRows=readStepEditorRows(document.getElementById('tplPrelim'),{note:false});
-  var stepRows=readStepEditorRows(document.getElementById('tplSteps'),{note:true});
-  // Strip "done" — templates don't carry state
   var prelim=prelimRows.map(function(s){return{id:s.id,label:s.label};});
-  var steps=stepRows.map(function(s){var o={id:s.id,label:s.label};if(s.note)o.note=s.note;return o;});
+  var step_packs=readPackEditorRows(document.getElementById('tplPacks'));
   try{
-    await saveTemplate({_id:id||null,name:name,prelim:prelim,steps:steps});
+    await saveTemplate({_id:id||null,name:name,prelim:prelim,step_packs:step_packs});
     closeTemplateModal();
     renderContrats();
     toast(id?'Template mis à jour.':'Template créé.');
@@ -3541,22 +3627,53 @@ function openProdModal(contractId,prodId){
   document.getElementById('prodPMontant').value=p?p.montant:'';
   document.getElementById('prodPNotes').value=p?(p.notes||''):'';
   document.getElementById('prodPClientLbl').textContent=c.client;
-  // Steps: edit → existing; create → seed from contract's template if any
+  // Build pack picker from contract's template
+  var packSel=document.getElementById('prodPPack');
+  var tpl=c.template_name?templateByName(c.template_name):null;
+  var packs=tpl?(tpl.step_packs||[]):[];
+  var packOpts='<option value="">— Vide / sur mesure —</option>';
+  packs.forEach(function(pk){
+    var sel=p&&p.pack_name===pk.name?' selected':'';
+    packOpts+='<option value="'+escH(pk.id)+'"'+sel+'>'+escH(pk.name)+' ('+(pk.steps||[]).length+' étape'+((pk.steps||[]).length>1?'s':'')+')</option>';
+  });
+  if(packSel)packSel.innerHTML=packOpts;
+  // Steps: edit → existing; create → seed from first pack of contract's template if any
   var steps;
   if(p)steps=p.steps||[];
-  else if(c.template_name)steps=templateStepsCopy(c.template_name);
+  else if(packs.length)steps=templatePackCopy(c.template_name,packs[0].id);
   else steps=[];
   document.getElementById('prodPSteps').innerHTML=renderStepEditorRows(steps,{note:true});
   // Hint label
   var hint=document.getElementById('prodTplHint');
   if(hint){
-    if(!p&&c.template_name)hint.textContent='Étapes pré-remplies depuis le template "'+c.template_name+'". Vous pouvez les modifier librement.';
-    else if(!p)hint.textContent='Aucun template appliqué — ajoutez vos étapes manuellement ou utilisez "Charger défauts du type".';
+    if(!p&&packs.length)hint.textContent='Étapes pré-remplies depuis le pack "'+packs[0].name+'" du template "'+c.template_name+'". Changez de pack ou modifiez librement.';
+    else if(!p&&c.template_name)hint.textContent='Le template "'+c.template_name+'" n\'a pas de pack défini — ajoutez vos étapes manuellement.';
+    else if(!p)hint.textContent='Aucun template appliqué au contrat — ajoutez vos étapes manuellement.';
     else hint.textContent='';
   }
   document.getElementById('prodDeleteBtn').style.display=p?'':'none';
   document.getElementById('prodModal').classList.add('on');
   setTimeout(function(){document.getElementById('prodPName').focus();},50);
+}
+function prodPackChanged(){
+  if(!_prodEditCtxId)return;
+  var c=contracts_db.find(function(x){return x._id===_prodEditCtxId;});if(!c)return;
+  var packId=document.getElementById('prodPPack').value;
+  var existingRows=document.querySelectorAll('#prodPSteps .step-edit-row').length;
+  if(!packId){
+    // "Vide / sur mesure"
+    if(existingRows>0&&!confirm('Effacer les étapes actuelles ?')){
+      // Revert select
+      var packSel=document.getElementById('prodPPack');
+      // No straightforward revert — leave as is
+      return;
+    }
+    document.getElementById('prodPSteps').innerHTML='';
+    return;
+  }
+  if(existingRows>0&&!confirm('Remplacer les étapes actuelles par celles du pack sélectionné ?'))return;
+  var steps=templatePackCopy(c.template_name,packId);
+  document.getElementById('prodPSteps').innerHTML=renderStepEditorRows(steps,{note:true});
 }
 function closeProdModal(){document.getElementById('prodModal').classList.remove('on');_prodEditCtxId=null;_prodEditCtxProdId=null;}
 function prodAddStep(){addEditorStep('prodPSteps',{note:true});}
@@ -3580,13 +3697,20 @@ async function saveProdFromModal(){
   var notes=document.getElementById('prodPNotes').value.trim();
   if(!name){alert('Nom du produit requis.');return;}
   var steps=readStepEditorRows(document.getElementById('prodPSteps'),{note:true});
+  // Capture the pack name (just the label of the picked pack, not its id, for portability)
+  var packId=document.getElementById('prodPPack')?document.getElementById('prodPPack').value:'';
+  var packName='';
+  if(packId&&c.template_name){
+    var tpl=templateByName(c.template_name);
+    if(tpl){var pk=(tpl.step_packs||[]).find(function(p){return p.id===packId;});if(pk)packName=pk.name;}
+  }
   c.produits=c.produits||[];
   if(_prodEditCtxProdId){
     var p=c.produits.find(function(x){return x.id===_prodEditCtxProdId;});
     if(!p)return;
-    p.name=name;p.isin=isin;p.type=type;p.montant=montant;p.notes=notes;p.steps=steps;
+    p.name=name;p.isin=isin;p.type=type;p.montant=montant;p.notes=notes;p.steps=steps;p.pack_name=packName;
   } else {
-    var newP={id:newStepId(),name:name,isin:isin,type:type,montant:montant,notes:notes,steps:steps};
+    var newP={id:newStepId(),name:name,isin:isin,type:type,pack_name:packName,montant:montant,notes:notes,steps:steps};
     c.produits.push(newP);
     prodExp[c._id+'|'+newP.id]=true;
     ctrExp[c._id]=true;

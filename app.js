@@ -920,7 +920,7 @@ function renderCAChart(){
 
 function renderSynthPaye(){
   var d=filt();
-  var paye=d.filter(x=>x.fSt==='Payé');
+  var paye=d.filter(x=>x.stat==='Deal payé');
   var nbUF=paye.filter(x=>x.ct==='UF'||x.ct==='BOTH').length;
   var nbRun=paye.filter(x=>x.ct==='RUN'||x.ct==='BOTH').length;
   var totalUF=paye.reduce((s,x)=>s+(x.ufE||0),0);
@@ -1579,8 +1579,8 @@ async function markRunInvPaid(fourn,trim,year){
     var toUpdate=deals.filter(function(d){return(d.ct==='RUN'||d.ct==='BOTH')&&d.fourn===fourn&&d.fSt==='Facturé'&&d.invS===trimDates.endStr;});
     for(var i=0;i<toUpdate.length;i++){
       var d=toUpdate[i];
-      d.fSt='Payé';d.inv=paidDate;
-      d.hist.push({ts:nowS(),a:'Facture Running payée — '+trim+' '+year,by:'Système'});
+      d.fSt='Payé';d.stat='Deal payé';d.inv=paidDate;
+      d.hist.push({ts:nowS(),a:'Facture Running payée — '+trim+' '+year+' (deal passé en payé)',by:'Système'});
       if(d._id)await sbUpdate('deals',d._id,d);
     }
     renderRunInvTable();renderFact();renderKpis();updateAlertBadge();
@@ -1744,8 +1744,8 @@ function renderPFInvTable(){
 
 async function markPFInvPaid(idx){
   var d=deals[idx];if(!d)return;
-  d.fSt='Payé';d.inv=new Date().toISOString().split('T')[0];
-  d.hist.push({ts:nowS(),a:'Facture Perf fees payée',by:'Système'});
+  d.fSt='Payé';d.stat='Deal payé';d.inv=new Date().toISOString().split('T')[0];
+  d.hist.push({ts:nowS(),a:'Facture Perf fees payée (deal passé en payé)',by:'Système'});
   if(d._id)await sbUpdate('deals',d._id,d);
   renderPFInvTable();renderPFRappr();renderFact();renderKpis();updateAlertBadge();
   toast('Facture Perf fees de '+d.client+' marquée payée.');
@@ -1924,8 +1924,10 @@ function renderUFInvTable(){
 async function deleteUFInv(idx){
   var d=deals[idx];if(!d)return;
   if(!confirm('Réinitialiser la facture UF de "'+d.client+'" chez '+d.fourn+' ?'))return;
+  var wasPaid=d.stat==='Deal payé';
   d.fSt='À émettre';d.invS='';d.inv='';
-  d.hist.push({ts:nowS(),a:'Facture UF réinitialisée',by:'Système'});
+  if(wasPaid)d.stat='Deal réalisé';
+  d.hist.push({ts:nowS(),a:'Facture UF réinitialisée'+(wasPaid?' (deal repassé en réalisé)':''),by:'Système'});
   if(d._id)await sbUpdate('deals',d._id,d);
   renderUFInvTable();renderFact();renderKpis();updateAlertBadge();
   toast('Facture UF réinitialisée.');
@@ -1944,9 +1946,9 @@ async function markUFInvFact(idx){
 async function markUFInvPaid(idx){
   var d=deals[idx];if(!d)return;
   var paidDate=new Date().toISOString().split('T')[0];
-  d.fSt='Payé';
+  d.fSt='Payé';d.stat='Deal payé';
   d.inv=paidDate;
-  d.hist.push({ts:nowS(),a:'Facture UF payée',by:'Système'});
+  d.hist.push({ts:nowS(),a:'Facture UF payée (deal passé en payé)',by:'Système'});
   if(d._id)await sbUpdate('deals',d._id,d);
   renderUFInvTable();renderFact();renderKpis();updateAlertBadge();
   toast('Facture UF de '+d.client+' marquée comme payée. Commissions mises à jour.');
@@ -4203,10 +4205,27 @@ async function initApp(){
     return;
   }
   clearTimeout(stuckTimer);
+  await migrateDealStatuses();
   document.getElementById('loadingOverlay').style.display='none';
   renderAll();rebuildFournSelect();rebuildBrokerSelect();
   setupRealtime();
   startCodeWatcher();
+}
+async function migrateDealStatuses(){
+  // Backfill: any deal with fSt='Payé' but stat!='Deal payé' is migrated.
+  // Idempotent — safe to run on every boot.
+  var migrated=0;
+  for(var i=0;i<deals.length;i++){
+    var d=deals[i];
+    if(d.fSt==='Payé'&&d.stat!=='Deal payé'){
+      d.stat='Deal payé';
+      d.hist=Array.isArray(d.hist)?d.hist:[];
+      d.hist.push({ts:nowS(),a:'Migration : stat aligné sur "Deal payé" (facture déjà payée)',by:'Système'});
+      if(d._id){try{var{_id,...upd}=d;await sbUpdate('deals',_id,upd);}catch(e){console.error('Migration update failed for',_id,e);}}
+      migrated++;
+    }
+  }
+  if(migrated>0)console.log('migrateDealStatuses: '+migrated+' deal(s) re-classés en Deal payé');
 }
 
 // Auth state listener — handle session expiry mid-use

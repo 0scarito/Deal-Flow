@@ -742,7 +742,7 @@ function goTo(id,btn){
   ['synthese','alertes','deals','facturation','graphiques','clients','fournisseurs','brokers','contrats','commissions','membres'].forEach(p=>document.getElementById('p-'+p)&&document.getElementById('p-'+p).classList.toggle('on',p===id));
   document.querySelectorAll('.nbtn').forEach(b=>b.classList.remove('on'));
   if(btn)btn.classList.add('on');
-  document.getElementById('pageTitle').textContent={synthese:'Synthèse',alertes:'Alertes & vérifications',deals:'Tous les deals',facturation:'Facturation',graphiques:'Graphiques',clients:'Clients',fournisseurs:'Fournisseurs',brokers:'Brokers',contrats:'Suivi Contrats',commissions:'Commissions',membres:'Équipe & accès'}[id]||'';
+  document.getElementById('pageTitle').textContent={synthese:'Synthèse',alertes:'Alertes & vérifications',deals:'Tous les deals',facturation:'Facturation',graphiques:'Pilotage',clients:'Clients',fournisseurs:'Fournisseurs',brokers:'Brokers',contrats:'Suivi Contrats',commissions:'Commissions',membres:'Équipe & accès'}[id]||'';
   if(id==='synthese')setTimeout(function(){renderCAChart();},200);
   else if(id==='alertes')renderAlertesPage();
   else if(id==='graphiques')setTimeout(renderCharts,80);

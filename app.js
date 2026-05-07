@@ -3459,7 +3459,12 @@ function setFournTab(t,btn){
   fournTab=t;
   document.querySelectorAll('#fournTabs .btn').forEach(b=>{b.style.background='';b.style.color='';b.style.borderColor='';});
   btn.style.background='var(--text)';btn.style.color='var(--surface)';btn.style.borderColor='var(--text)';
-  renderFourn();
+  var isBroker=t==='BROKER';
+  document.getElementById('fournTableSection').style.display=isBroker?'none':'block';
+  document.getElementById('fournBrokersSection').style.display=isBroker?'block':'none';
+  document.getElementById('fournAddBtn').textContent=isBroker?'+ Nouveau broker':'+ Nouveau fournisseur';
+  document.getElementById('fournAddBtn').onclick=isBroker?function(){openBrokerModal();}:function(){openFournModal();};
+  if(isBroker)renderBrokers();else renderFourn();
 }
 function renderFourn(){
   var all=loadFourn().slice().sort((a,b)=>a.name.localeCompare(b.name,undefined,{sensitivity:'base'}));
@@ -3562,9 +3567,7 @@ function setFournSub(sub,btn){
   btn.classList.add('on');
   document.getElementById('fournRefSection').style.display=sub==='ref'?'block':'none';
   document.getElementById('fournRapprSection').style.display=sub==='rappr'?'block':'none';
-  document.getElementById('fournBrokersSection').style.display=sub==='brokers'?'block':'none';
   if(sub==='rappr'){initRapprTrim();renderRapprochement();}
-  if(sub==='brokers')renderBrokers();
 }
 
 // ── RAPPROCHEMENT ENCOURS ────────────────────────────────────────────────────

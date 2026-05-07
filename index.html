@@ -437,7 +437,6 @@
         <div class="subtabs" id="fournSubTabs" style="margin-bottom:14px;">
           <button class="stab on" id="fstRef" onclick="setFournSub('ref',this)">Référentiel</button>
           <button class="stab" id="fstRappr" onclick="setFournSub('rappr',this)">Rapprochement encours</button>
-          <button class="stab" id="fstBrokers" onclick="setFournSub('brokers',this)">Brokers</button>
         </div>
 
         <!-- RÉFÉRENTIEL -->
@@ -448,19 +447,34 @@
               <button class="btn" id="ftSDG" onclick="setFournTab('SDG',this)">Société de gestion</button>
               <button class="btn" id="ftBanque" onclick="setFournTab('Banque',this)">Banque</button>
               <button class="btn" id="ftAssureur" onclick="setFournTab('Assureur',this)">Assureurs</button>
+              <button class="btn" id="ftBroker" onclick="setFournTab('BROKER',this)">Brokers</button>
             </div>
             <div style="display:flex;align-items:center;gap:8px;">
               <span style="font-size:12px;color:var(--text2);" id="fournCount"></span>
-              <button class="btn btn-primary" onclick="openFournModal()">+ Nouveau fournisseur</button>
+              <button class="btn btn-primary" id="fournAddBtn" onclick="openFournModal()">+ Nouveau fournisseur</button>
             </div>
           </div>
-          <div class="card" style="padding:0;overflow:hidden;">
-            <table id="fournT">
-              <tr>
-                <th>Nom</th><th>Famille</th><th>Nb deals</th><th>UF total</th><th>Running /an</th><th>Dernier deal</th>
-              </tr>
-            </table>
-            <div id="fournEmpty" class="empty">Aucun fournisseur.</div>
+          <!-- Table fournisseurs (cachée quand Brokers actif) -->
+          <div id="fournTableSection">
+            <div class="card" style="padding:0;overflow:hidden;">
+              <table id="fournT">
+                <tr>
+                  <th>Nom</th><th>Famille</th><th>Nb deals</th><th>UF total</th><th>Running /an</th><th>Dernier deal</th>
+                </tr>
+              </table>
+              <div id="fournEmpty" class="empty">Aucun fournisseur.</div>
+            </div>
+          </div>
+          <!-- Table brokers (visible quand Brokers actif) -->
+          <div id="fournBrokersSection" style="display:none;">
+            <div class="card" style="padding:0;overflow:hidden;">
+              <table id="brokerT">
+                <tr>
+                  <th>Nom</th><th>Nb deals</th><th>UF total</th><th>Running /an</th><th>Dernier deal</th><th></th>
+                </tr>
+              </table>
+              <div id="brokerEmpty" class="empty">Aucun broker.</div>
+            </div>
           </div>
         </div>
 

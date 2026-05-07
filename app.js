@@ -4548,7 +4548,7 @@ function renderClientArbitragesPanel(contract){
         var dests=(a.destinations||[]).map(function(dst){return escH(dst.fourn||'?')+' ('+fE(dst.montant)+')';}).join(', ');
         return '<div style="padding:6px 0;border-top:1px dashed rgba(107,79,196,.2);">'+
           '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'+
-            '<span style="font-family:\'DM Mono\',monospace;font-size:10px;color:var(--text3);">'+escH(a.arbId||'')+'</span>'+
+            '<span class="mono" style="font-size:10px;color:var(--text3);">'+escH(a.arbId||'')+'</span>'+
             '<span style="font-weight:600;">'+escH(a.date||'')+'</span>'+
             '<span style="color:var(--text2);">·</span>'+
             '<span>'+escH(a.sourceProduit||'')+' → '+dests+'</span>'+

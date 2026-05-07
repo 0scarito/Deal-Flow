@@ -110,7 +110,10 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--blue);bo
 .subtabs{display:flex;gap:4px;margin-bottom:14px;border-bottom:1px solid var(--border);}
 .stab{padding:6px 14px;border:none;background:transparent;font-size:12px;color:var(--text2);cursor:pointer;font-family:inherit;border-bottom:2px solid transparent;margin-bottom:-1px;}
 .stab.on{color:var(--text);font-weight:500;border-bottom-color:var(--blue);}
-.mono{font-family:ui-monospace,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace;font-size:11px;font-variant-numeric:tabular-nums;}
+/* mono pour les chiffres : police mono système (toutes ont des 0 normaux), zéro barré désactivé via feature settings */
+.mono{font-family:ui-monospace,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace;font-size:11px;font-variant-numeric:tabular-nums;font-feature-settings:"zero" 0;-moz-font-feature-settings:"zero=0";}
+/* Filet de sécurité : si une règle inline force "DM Mono", on désactive quand même le slashed zero */
+[style*="DM Mono"]{font-feature-settings:"zero" 0;}
 .alert-item{display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);}
 .alert-item:last-child{border-bottom:none;}
 .adot{width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:4px;}

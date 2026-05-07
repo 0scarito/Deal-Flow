@@ -4,6 +4,7 @@ var SUPABASE_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsI
 var sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
 
 // JS camelCase <-> DB snake_case mapping for deals
+var DATE_FIELDS=['date','issue','inv_s','inv','end_date','terme','runStart','run_start'];
 function dealToRow(d){
   var r=Object.assign({},d);
   delete r._id; delete r.created_at; delete r.updated_at;
@@ -15,6 +16,8 @@ function dealToRow(d){
   delete r.ufR; delete r.runR; delete r.ufE; delete r.runE;
   delete r.invS; delete r.fSt; delete r.fRef;
   delete r.arbId; delete r.arbSrc; delete r.arbClosed; delete r.end;
+  // Normalize empty strings to null for date-typed columns (Postgres rejects "")
+  DATE_FIELDS.forEach(function(f){if(r[f]==='')r[f]=null;});
   return r;
 }
 function rowToDeal(r){

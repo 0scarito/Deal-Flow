@@ -81,13 +81,20 @@
         <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:20px;" id="kpiGrid"></div>
 
         <!-- Cards row -->
-        <div class="g2" style="margin-top:0;">
+        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-top:0;">
           <div class="card" style="border-top:3px solid var(--green);padding:18px 20px;">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="var(--green)" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 4v4l3 2"/></svg>
               <span style="font-size:12px;font-weight:600;color:var(--green);text-transform:uppercase;letter-spacing:.5px;">Deal pipe</span>
             </div>
             <div id="synthPipe"></div>
+          </div>
+          <div class="card" style="border-top:3px solid var(--purple,#7c3aed);padding:18px 20px;">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="var(--purple,#7c3aed)" stroke-width="1.5"><path d="M13 5l-5 5-3-3-3 3"/><path d="M10 5h3v3"/></svg>
+              <span style="font-size:12px;font-weight:600;color:var(--purple,#7c3aed);text-transform:uppercase;letter-spacing:.5px;">Deal réalisé</span>
+            </div>
+            <div id="synthRealise"></div>
           </div>
           <div class="card" style="border-top:3px solid var(--blue);padding:18px 20px;">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">

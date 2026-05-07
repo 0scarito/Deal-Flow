@@ -828,6 +828,7 @@ function kH(l,c,v,s){return '<div class="kpi'+(c?' '+c:'')+'"><div class="kpi-l"
 function renderRecent(){
   renderSynthPaye();
   renderSynthPipe();
+  renderSynthRealise();
   // Délai pour s'assurer que le canvas est dans le DOM visible
   setTimeout(function(){renderCAChart();},200);
 }
@@ -937,7 +938,7 @@ function renderSynthPaye(){
 
 function renderSynthPipe(){
   var d=filt();
-  var pipe=d.filter(x=>x.fSt==='À émettre'||x.fSt==='Facturé');
+  var pipe=d.filter(x=>x.stat==='Deal pipe');
   var recent=pipe.slice().sort(function(a,b){return (b.date||'').localeCompare(a.date||'');}).slice(0,5);
   var totalNom=pipe.reduce((s,x)=>s+(x.dev==='USD'?x.nom/(x.fx||1):x.nom),0);
   var totalUF=pipe.filter(x=>x.ct==='UF'||x.ct==='BOTH').reduce((s,x)=>s+(x.ufE||0),0);
@@ -945,7 +946,7 @@ function renderSynthPipe(){
   var html=
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;">'+
       '<div style="background:var(--surface2);border-radius:var(--rs);padding:12px 14px;">'+
-        '<div style="font-size:11px;color:var(--text3);margin-bottom:4px;">Deals en cours</div>'+
+        '<div style="font-size:11px;color:var(--text3);margin-bottom:4px;">Deals en pipe</div>'+
         '<div style="font-size:28px;font-weight:600;color:var(--text);">'+pipe.length+'</div>'+
         '<div style="font-size:11px;color:var(--text2);">'+pipe.filter(x=>x.fSt==='À émettre').length+' à émettre · '+pipe.filter(x=>x.fSt==='Facturé').length+' facturés</div>'+
       '</div>'+
@@ -957,7 +958,7 @@ function renderSynthPipe(){
     '</div>';
   if(recent.length){
     html+='<div style="border-top:1px solid var(--border);padding-top:10px;">';
-    html+=recent.map(d=>'<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);" onclick="openDet(deals['+deals.indexOf(d)+'])" style="cursor:pointer;">'+
+    html+=recent.map(d=>'<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);cursor:pointer;" onclick="openDet(deals['+deals.indexOf(d)+'])">'+
       '<div>'+
         '<span style="font-size:13px;font-weight:500;color:var(--text);">'+d.client+'</span>'+
         '<span style="font-size:11px;color:var(--text2);margin-left:6px;">'+d.fourn+'</span>'+
@@ -968,8 +969,44 @@ function renderSynthPipe(){
       '</div>'+
     '</div>').join('');
     html+='</div>';
-  } else { html+='<div class="empty">Aucun deal en cours.</div>'; }
+  } else { html+='<div class="empty">Aucun deal en pipe.</div>'; }
   document.getElementById('synthPipe').innerHTML=html;
+}
+function renderSynthRealise(){
+  var d=filt();
+  var realise=d.filter(x=>x.stat==='Deal réalisé');
+  var recent=realise.slice().sort(function(a,b){return (b.date||'').localeCompare(a.date||'');}).slice(0,5);
+  var totalNom=realise.reduce((s,x)=>s+(x.dev==='USD'?x.nom/(x.fx||1):x.nom),0);
+  var totalUF=realise.filter(x=>x.ct==='UF'||x.ct==='BOTH').reduce((s,x)=>s+(x.ufE||0),0);
+  var totalRun=realise.filter(x=>x.ct==='RUN'||x.ct==='BOTH').reduce((s,x)=>s+(x.runE||0),0);
+  var html=
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;">'+
+      '<div style="background:var(--surface2);border-radius:var(--rs);padding:12px 14px;">'+
+        '<div style="font-size:11px;color:var(--text3);margin-bottom:4px;">Deals réalisés</div>'+
+        '<div style="font-size:28px;font-weight:600;color:var(--text);">'+realise.length+'</div>'+
+        '<div style="font-size:11px;color:var(--text2);">'+realise.filter(x=>x.fSt==='À émettre').length+' à facturer · '+realise.filter(x=>x.fSt==='Facturé').length+' facturés</div>'+
+      '</div>'+
+      '<div style="background:var(--surface2);border-radius:var(--rs);padding:12px 14px;">'+
+        '<div style="font-size:11px;color:var(--text3);margin-bottom:4px;">Nominaux réalisés</div>'+
+        '<div style="font-size:22px;font-weight:600;color:var(--purple,#7c3aed);">'+fE(totalNom)+'</div>'+
+        '<div style="font-size:11px;color:var(--text2);">UF: '+fE(totalUF)+' · Run/an: '+fE(totalRun)+'</div>'+
+      '</div>'+
+    '</div>';
+  if(recent.length){
+    html+='<div style="border-top:1px solid var(--border);padding-top:10px;">';
+    html+=recent.map(d=>'<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);cursor:pointer;" onclick="openDet(deals['+deals.indexOf(d)+'])">'+
+      '<div>'+
+        '<span style="font-size:13px;font-weight:500;color:var(--text);">'+d.client+'</span>'+
+        '<span style="font-size:11px;color:var(--text2);margin-left:6px;">'+d.fourn+'</span>'+
+      '</div>'+
+      '<div style="display:flex;gap:8px;align-items:center;">'+
+        fBadge(d.fSt)+
+        '<span style="font-size:12px;color:var(--purple,#7c3aed);font-weight:500;">'+(d.ufE>0?fE(d.ufE):'')+(d.runE>0?' '+fE(d.runE)+'/an':'')+'</span>'+
+      '</div>'+
+    '</div>').join('');
+    html+='</div>';
+  } else { html+='<div class="empty">Aucun deal réalisé.</div>'; }
+  document.getElementById('synthRealise').innerHTML=html;
 }
 
 function renderSynthFactPaye(){
@@ -2251,11 +2288,7 @@ async function saveDeal(){
       var res=await sbInsert('deals',d);
       if(res&&res[0])d._id=res[0].id;
       deals.push(d);
-      // Auto-create line in Suivi Contrats only for pipeline deals — realized deals
-      // are already done, no procedures to track.
-      if(d.stat==='Deal pipe'){
-        try{await autoLinkDealToContract(d);autoLinked++;}catch(e){console.error('autoLinkDealToContract failed',e);}
-      }
+      if(d.stat==='Deal pipe'){try{await autoLinkDealToContract(d);autoLinked++;}catch(e){console.error('autoLinkDealToContract failed',e);}}
     }
     closeDM();renderAll();toast((items.length>1?items.length+' deals enregistrés':'Nouveau deal enregistré')+(autoLinked?' · '+autoLinked+' investissement'+(autoLinked>1?'s':'')+' ajouté'+(autoLinked>1?'s':'')+' au suivi.':'.'));
   }
@@ -3466,10 +3499,28 @@ function toggleProdExp(key){prodExp[key]=!prodExp[key];renderContrats();}
 
 async function persistContract(c){try{await saveContract(c);}catch(e){console.error(e);toast('Erreur de sauvegarde.');}}
 
+async function checkAndTransitionDeals(c){
+  if(contratStatus(c)!=='done')return;
+  var dealIds=(c.produits||[]).map(function(p){return p.deal_id;}).filter(Boolean);
+  if(!dealIds.length)return;
+  var transitioned=0;
+  for(var i=0;i<deals.length;i++){
+    var d=deals[i];
+    if(dealIds.indexOf(d._id)>=0&&d.stat==='Deal pipe'){
+      d.stat='Deal réalisé';
+      d.hist=Array.isArray(d.hist)?d.hist:[];
+      d.hist.push({ts:nowS(),a:'Deal passé en réalisé — toutes les étapes Suivi Contrats complétées',by:'Système'});
+      if(d._id){var{_id,...upd}=d;await sbUpdate('deals',_id,upd);}
+      transitioned++;
+    }
+  }
+  if(transitioned>0){renderAll();toast(transitioned+' deal'+(transitioned>1?'s passés':'  passé')+' en réalisé — toutes les étapes sont complétées ✓');}
+}
 async function togglePrelim(contractId,idx){
   var c=contracts_db.find(function(x){return x._id===contractId;});if(!c||!c.prelim||!c.prelim[idx])return;
   c.prelim[idx].done=!c.prelim[idx].done;
   await persistContract(c);renderContrats();updateContratsBadge();
+  await checkAndTransitionDeals(c);
 }
 async function addPrelimStep(contractId){
   var c=contracts_db.find(function(x){return x._id===contractId;});if(!c)return;
@@ -3499,6 +3550,7 @@ async function toggleProdStep(contractId,prodId,idx){
   var p=(c.produits||[]).find(function(x){return x.id===prodId;});if(!p||!p.steps[idx])return;
   p.steps[idx].done=!p.steps[idx].done;
   await persistContract(c);renderContrats();updateContratsBadge();
+  await checkAndTransitionDeals(c);
 }
 async function addProdStep(contractId,prodId){
   var c=contracts_db.find(function(x){return x._id===contractId;});if(!c)return;

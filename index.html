@@ -149,7 +149,7 @@
       <!-- DEALS -->
       <div class="page" id="p-deals">
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center;">
-          <input type="text" id="srch" placeholder="Client, fournisseur, ISIN…" style="width:200px;" oninput="renderDeals()"/>
+          <input type="text" id="srch" placeholder="Client, fournisseur, ISIN…" style="width:200px;" oninput="renderDeals()" autocomplete="off"/>
           <select id="flT" onchange="renderDeals()" style="width:auto;"><option value="">Tous types</option><option value="UF">UF</option><option value="RUN">Running</option><option value="BOTH">UF+Running</option></select>
           <select id="flF" onchange="renderDeals()" style="width:auto;"><option value="">Tous statuts</option><option>À émettre</option><option>Facturé</option><option>Payé</option><option>Litige</option></select>
           <select id="flDev" onchange="renderDeals()" style="width:auto;"><option value="">EUR+USD</option><option>EUR</option><option>USD</option></select>

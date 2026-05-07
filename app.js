@@ -2680,10 +2680,10 @@ function renderCharts(){
     options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{boxWidth:12,boxHeight:12,padding:14,font:CHART_DEFAULTS.font,color:'#374151'}},tooltip:Object.assign({},CHART_DEFAULTS.tooltip,{callbacks:{label:function(c){return c.dataset.label+' : '+fE(c.raw);}}})},scales:{x:{stacked:true,grid:{display:false,drawBorder:false},ticks:{color:'#374151',font:Object.assign({},CHART_DEFAULTS.font,{size:13,weight:'600'})}},y:{stacked:true,ticks:{color:'#9aa0a6',font:CHART_DEFAULTS.font,callback:function(v){return v>=1000?Math.round(v/1000)+'k':v;}},grid:{color:CHART_DEFAULTS.gridSoft,drawBorder:false},beginAtZero:true}}}
   });
 
-  // ── 7. Pipeline en cours (par statut de facture) ─────────────────────────
-  var pipeData=data.filter(function(d){return d.fSt==='À émettre'||d.fSt==='Facturé';});
-  var pipeBySt={'À émettre':{uf:0,run:0,nom:0,nb:0},'Facturé':{uf:0,run:0,nom:0,nb:0}};
-  pipeData.forEach(function(d){
+  // ── 7. Pipeline & facturation par statut (À émettre / Facturé / Payé) ──
+  var statuses=['À émettre','Facturé','Payé'];
+  var pipeBySt={};statuses.forEach(function(s){pipeBySt[s]={uf:0,run:0,nom:0,nb:0};});
+  data.forEach(function(d){
     var s=pipeBySt[d.fSt];if(!s)return;
     s.uf+=(d.ufE||0);s.run+=(d.runE||0);s.nb++;
     s.nom+=(d.dev==='USD'?d.nom/(d.fx||1):d.nom);
@@ -2692,28 +2692,19 @@ function renderCharts(){
   charts.pipe=new Chart(document.getElementById('cPipe'),{
     type:'bar',
     data:{
-      labels:['À émettre','Facturé'],
+      labels:statuses,
       datasets:[
-        {label:'UF',data:[Math.round(pipeBySt['À émettre'].uf),Math.round(pipeBySt['Facturé'].uf)],backgroundColor:'#1d5fd4',borderRadius:6,maxBarThickness:60},
-        {label:'Running annuel',data:[Math.round(pipeBySt['À émettre'].run),Math.round(pipeBySt['Facturé'].run)],backgroundColor:'#1a8a4a',borderRadius:6,maxBarThickness:60}
+        {label:'UF',data:statuses.map(function(s){return Math.round(pipeBySt[s].uf);}),backgroundColor:'#1d5fd4',borderRadius:6,maxBarThickness:60},
+        {label:'Running annuel',data:statuses.map(function(s){return Math.round(pipeBySt[s].run);}),backgroundColor:'#1a8a4a',borderRadius:6,maxBarThickness:60}
       ]
     },
     options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{boxWidth:12,boxHeight:12,padding:14,font:CHART_DEFAULTS.font,color:'#374151'}},tooltip:Object.assign({},CHART_DEFAULTS.tooltip,{callbacks:{label:function(c){return c.dataset.label+' : '+fE(c.raw);}}})},scales:{x:{stacked:true,grid:{display:false,drawBorder:false},ticks:{color:'#374151',font:Object.assign({},CHART_DEFAULTS.font,{size:13,weight:'600'})}},y:{stacked:true,ticks:{color:'#9aa0a6',font:CHART_DEFAULTS.font,callback:function(v){return v>=1000?Math.round(v/1000)+'k':v;}},grid:{color:CHART_DEFAULTS.gridSoft,drawBorder:false},beginAtZero:true}}}
   });
-  document.getElementById('legPipe').innerHTML=
-    '<span style="color:var(--text2);">À émettre : <b>'+pipeBySt['À émettre'].nb+'</b> deal(s) · nominal '+fE(pipeBySt['À émettre'].nom)+'</span>'+
-    '<span style="color:var(--text2);">Facturé : <b>'+pipeBySt['Facturé'].nb+'</b> deal(s) · nominal '+fE(pipeBySt['Facturé'].nom)+'</span>';
+  document.getElementById('legPipe').innerHTML=statuses.map(function(s){
+    return '<span style="color:var(--text2);">'+s+' : <b>'+pipeBySt[s].nb+'</b> deal'+(pipeBySt[s].nb>1?'s':'')+' · nominal '+fE(pipeBySt[s].nom)+'</span>';
+  }).join('');
 
-  // ── 8. Statut facturation (donut nb deals) ──────────────────────────────
-  var bySt={};data.forEach(function(d){bySt[d.fSt]=(bySt[d.fSt]||0)+1;});
-  var stOrder=['Payé','Facturé','À émettre','Litige'];
-  var stL=stOrder.filter(function(k){return bySt[k];}),stV=stL.map(function(k){return bySt[k];});
-  var stC={'Payé':'#1a8a4a','Facturé':'#1d5fd4','À émettre':'#b07a10','Litige':'#c23b3b'};
-  if(charts.fa)charts.fa.destroy();
-  if(stL.length)charts.fa=new Chart(document.getElementById('cFact'),{type:'doughnut',data:{labels:stL,datasets:[{data:stV,backgroundColor:stL.map(function(l){return stC[l]||'#9aa0a6';}),borderWidth:2,borderColor:'#fff',hoverOffset:8}]},options:{responsive:true,maintainAspectRatio:false,cutout:'62%',plugins:{legend:{display:false},tooltip:Object.assign({},CHART_DEFAULTS.tooltip,{callbacks:{label:function(c){return c.label+' : '+c.raw+' deal'+(c.raw>1?'s':'');}}})}}});
-  document.getElementById('legFact').innerHTML=stL.map(function(l,i){return legendChip(stC[l]||'#9aa0a6',l,stV[i]);}).join('');
-
-  // ── 9. Devise (donut nominal) ───────────────────────────────────────────
+  // ── 8. Devise (donut nominal) ───────────────────────────────────────────
   var eur=data.filter(function(d){return d.dev==='EUR';}).reduce(function(s,d){return s+d.nom;},0);
   var usd=data.filter(function(d){return d.dev==='USD';}).reduce(function(s,d){return s+d.nom;},0);
   if(charts.dv)charts.dv.destroy();

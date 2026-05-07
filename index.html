@@ -386,13 +386,14 @@
         <!-- Vendeurs + Pipeline -->
         <div class="g2" style="margin-bottom:14px;">
           <div class="card"><div class="card-hd">Audrey vs David <span style="font-weight:400;color:var(--text2);font-size:11px;">— commissions cumulées année</span></div><div style="position:relative;height:200px;"><canvas id="cVendeurs"></canvas></div></div>
-          <div class="card"><div class="card-hd">Pipeline en cours — par statut facture</div><div style="position:relative;height:200px;"><canvas id="cPipe"></canvas></div><div id="legPipe" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;font-size:11px;color:var(--text2);"></div></div>
+          <div class="card"><div class="card-hd">Pipeline &amp; facturation — par statut</div><div style="position:relative;height:220px;"><canvas id="cPipe"></canvas></div><div id="legPipe" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;font-size:11px;color:var(--text2);"></div></div>
         </div>
 
-        <!-- Statut facturation + devise -->
-        <div class="g2">
-          <div class="card"><div class="card-hd">Statut facturation (nb deals)</div><div style="position:relative;height:160px;"><canvas id="cFact"></canvas></div><div id="legFact" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;font-size:11px;color:var(--text2);"></div></div>
-          <div class="card"><div class="card-hd">Répartition par devise (nominal)</div><div style="position:relative;height:160px;"><canvas id="cDev"></canvas></div><div id="legDev" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;font-size:11px;color:var(--text2);"></div></div>
+        <!-- Devise -->
+        <div class="card" style="max-width:50%;">
+          <div class="card-hd">Répartition par devise (nominal)</div>
+          <div style="position:relative;height:160px;"><canvas id="cDev"></canvas></div>
+          <div id="legDev" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;font-size:11px;color:var(--text2);"></div>
         </div>
       </div>
 

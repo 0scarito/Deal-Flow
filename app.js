@@ -119,6 +119,12 @@ async function rapprSave(fourn,type,period,data){
   } else {
     throw new Error('Type rapprochement inconnu: '+type);
   }
+  // Validate declared amount: refuse negative or absurd values
+  var declared=Number(data&&data.declared);
+  if(!isFinite(declared))throw new Error('Montant déclaré invalide (NaN/Infinity).');
+  if(declared<0)throw new Error('Montant déclaré négatif refusé : '+declared+' € (entrez 0 ou un montant positif).');
+  if(declared>1e10)throw new Error('Montant déclaré anormalement élevé : '+declared+' € — vérifiez la saisie.');
+  if(!fourn||typeof fourn!=='string')throw new Error('Fournisseur invalide.');
   var existing=rapprFind(fourn,type,period);
   var row={fourn:fourn,type:type,period:period||null,declared:data.declared,comment:data.comment||'',facture:data.facture||false,facture_date:data.factureDate||null,paid:data.paid||false,paid_date:data.paidDate||null,theo_trim:data.theoTrim||null};
   if(existing){
@@ -625,6 +631,14 @@ function f0(n){return new Intl.NumberFormat('fr-FR',{maximumFractionDigits:0}).f
 function fE(n){return '€\u202f'+f0(n);}
 function today(){return new Date().toISOString().split('T')[0];}
 function nowS(){return new Date().toLocaleString('fr-FR');}
+// XSS-safe escape helpers
+// escH: HTML text/attribute context.
+// escJS: JS string literal context.
+// escAttr: combine both (for embedding a string inside a JS literal inside an HTML attribute,
+// e.g. onclick="foo('"+escAttr(name)+"')").
+function escH(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function escJS(s){return String(s==null?'':s).replace(/[\\'"<>&\n\r]/g,function(c){return{'\\':'\\\\',"'":"\\'",'"':'\\"','<':'\\x3c','>':'\\x3e','&':'\\x26','\n':'\\n','\r':'\\r'}[c];});}
+function escAttr(s){return escH(escJS(s));}
 // `filt()` keeps archived deals in scope — the commission they generated
 // was real and must keep counting in stats (CA, Pilotage, Commissions).
 // Archived deals are visually excluded only from:
@@ -655,7 +669,7 @@ function buildClientSelect(selected){
 
 function clientSelectHTML(selected){
   var clients=loadClients().slice().sort((a,b)=>a.localeCompare(b,undefined,{sensitivity:'base'}));
-  return '<option value="">— Choisir —</option>'+clients.map(c=>'<option value="'+c+'"'+(c===selected?' selected':'')+'>'+c+'</option>').join('');
+  return '<option value="">— Choisir —</option>'+clients.map(function(c){return '<option value="'+escH(c)+'"'+(c===selected?' selected':'')+'>'+escH(c)+'</option>';}).join('');
 }
 
 var CONTRATS=['Assurance Vie Lux','Contrat Assurance Vie','Contrat de Capitalisation','CTO','PER'];
@@ -666,7 +680,7 @@ function contratSelectHTML(selected){
 
 function depositaireSelectHTML(selected){
   var items=fourn_db.filter(function(f){return f.famille==='Banque'||f.famille==='Assureur';}).sort(function(a,b){return a.name.localeCompare(b.name);});
-  return '<option value="">— Dépositaire —</option>'+items.map(function(f){return '<option'+(f.name===selected?' selected':'')+'>'+f.name+'</option>';}).join('');
+  return '<option value="">— Dépositaire —</option>'+items.map(function(f){return '<option value="'+escH(f.name)+'"'+(f.name===selected?' selected':'')+'>'+escH(f.name)+'</option>';}).join('');
 }
 
 function renderClientLines(selectedArr, contratsArr, nominalsArr, depositairesArr){
@@ -1105,9 +1119,9 @@ function renderDeals(){
     var av='<span class="av av-'+avC(d.v)+'">'+avL(d.v)+'</span>';
     var k=dealKey(d);
     var checked=selectedDealIds.has(k)?' checked':'';
-    r.innerHTML='<td style="text-align:center;"><input type="checkbox" class="rowSel" data-key="'+k+'"'+checked+' onclick="event.stopPropagation();onDealRowSel(this)"/></td><td class="mono">'+d.date+'</td><td>'+av+'</td><td style="font-weight:500;white-space:nowrap;">'+d.client+'</td><td style="color:var(--text2);font-size:11px;">'+d.contrat+'</td><td>'+d.produit+'</td><td style="color:var(--text2);font-size:11px;">'+(d.produit_type||'—')+'</td><td>'+d.fourn+'</td><td style="color:var(--text2);">'+(d.broker||'—')+'</td><td style="text-align:right;" class="mono">'+f0(d.nom)+'</td><td>'+d.dev+'</td><td class="mono" style="font-size:10px;color:var(--text2);">'+(d.isin||'—')+'</td><td class="mono" style="font-size:11px;color:var(--text2);">'+(d.issue||'—')+'</td><td class="mono" style="font-size:11px;color:var(--text2);">'+(d.invS||'—')+'</td><td class="mono" style="font-size:11px;color:var(--text2);">'+(d.inv||'—')+'</td><td class="mono" style="font-size:11px;color:var(--text2);">'+(d.terme||'—')+'</td><td>'+tBadge(d.ct)+'</td><td style="text-align:right;color:var(--blue);font-weight:500;">'+(d.ufE>0?fE(d.ufE):'—')+'</td><td style="text-align:right;color:var(--green);font-weight:500;">'+(d.runE>0?fE(d.runE):'—')+'</td><td class="mono" style="font-size:11px;">'+(d.fRef||'—')+'</td><td>'+fBadge(d.fSt)+'</td><td style="font-size:11px;color:var(--text2);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+(d.notes||'—')+'</td><td style="display:flex;gap:5px;"><button class="btn btn-sm" onclick="event.stopPropagation();openDealModal('+deals.indexOf(d)+')">Modifier</button><button class="btn btn-sm" style="color:var(--red);border-color:var(--red-bg);" onclick="event.stopPropagation();deleteDeal('+deals.indexOf(d)+')">Supprimer</button></td>';
+    r.innerHTML='<td style="text-align:center;"><input type="checkbox" class="rowSel" data-key="'+escH(k)+'"'+checked+' onclick="event.stopPropagation();onDealRowSel(this)"/></td><td class="mono">'+escH(d.date)+'</td><td>'+av+'</td><td style="font-weight:500;white-space:nowrap;">'+escH(d.client)+'</td><td style="color:var(--text2);font-size:11px;">'+escH(d.contrat)+'</td><td>'+escH(d.produit)+'</td><td style="color:var(--text2);font-size:11px;">'+(d.produit_type?escH(d.produit_type):'—')+'</td><td>'+escH(d.fourn)+'</td><td style="color:var(--text2);">'+(d.broker?escH(d.broker):'—')+'</td><td style="text-align:right;" class="mono">'+f0(d.nom)+'</td><td>'+escH(d.dev)+'</td><td class="mono" style="font-size:10px;color:var(--text2);">'+(d.isin?escH(d.isin):'—')+'</td><td class="mono" style="font-size:11px;color:var(--text2);">'+(d.issue?escH(d.issue):'—')+'</td><td class="mono" style="font-size:11px;color:var(--text2);">'+(d.invS?escH(d.invS):'—')+'</td><td class="mono" style="font-size:11px;color:var(--text2);">'+(d.inv?escH(d.inv):'—')+'</td><td class="mono" style="font-size:11px;color:var(--text2);">'+(d.terme?escH(d.terme):'—')+'</td><td>'+tBadge(d.ct)+'</td><td style="text-align:right;color:var(--blue);font-weight:500;">'+(d.ufE>0?fE(d.ufE):'—')+'</td><td style="text-align:right;color:var(--green);font-weight:500;">'+(d.runE>0?fE(d.runE):'—')+'</td><td class="mono" style="font-size:11px;">'+(d.fRef?escH(d.fRef):'—')+'</td><td>'+fBadge(d.fSt)+'</td><td style="font-size:11px;color:var(--text2);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+(d.notes?escH(d.notes):'—')+'</td><td style="display:flex;gap:5px;"><button class="btn btn-sm" onclick="event.stopPropagation();openDealModal('+deals.indexOf(d)+')">Modifier</button><button class="btn btn-sm" style="color:var(--red);border-color:var(--red-bg);" onclick="event.stopPropagation();deleteDeal('+deals.indexOf(d)+')">Supprimer</button></td>';
   });
-  var fourns=[...new Set(filt().map(d=>d.fourn))].sort(),sel=document.getElementById('flFourn'),cv=sel.value;sel.innerHTML='<option value="">Tous fournisseurs</option>';fourns.forEach(f=>{sel.innerHTML+='<option'+(f===cv?' selected':'')+'>'+f+'</option>';});
+  var fourns=[...new Set(filt().map(function(d){return d.fourn;}))].sort(),sel=document.getElementById('flFourn'),cv=sel.value;sel.innerHTML='<option value="">Tous fournisseurs</option>';fourns.forEach(function(f){if(f)sel.innerHTML+='<option value="'+escH(f)+'"'+(f===cv?' selected':'')+'>'+escH(f)+'</option>';});
   // Constrain date inputs to the actual range of deal dates (real bounds, not hardcoded)
   var allDates=deals.map(function(x){return x.date;}).filter(Boolean).sort();
   if(allDates.length){
@@ -1315,7 +1329,7 @@ function openArbitrage(idx){
 function closeArbModal(){document.getElementById('arbModal').classList.remove('on');arbSrcDeal=null;}
 
 function arbFournSelectHTML(selected){
-  return '<option value="">— Fournisseur —</option>'+fourn_db.map(function(f){return '<option'+(f.name===selected?' selected':'')+'>'+f.name+'</option>';}).join('');
+  return '<option value="">— Fournisseur —</option>'+fourn_db.map(function(f){return '<option value="'+escH(f.name)+'"'+(f.name===selected?' selected':'')+'>'+escH(f.name)+'</option>';}).join('');
 }
 
 function addArbDestLine(){
@@ -1952,14 +1966,14 @@ function renderRunInvTable(){
   document.getElementById('runInvEmpty').style.display=filtered.length?'none':'block';
   filtered.forEach(function(inv){
     var statut=inv.paid?'<span class="badge bg">Payée</span>':inv.facture?'<span class="badge bb">Facturée</span>':'<span class="badge ba">À émettre</span>';
-    var btn=inv.paid?'<span style="font-size:11px;color:var(--green);">✓ Payé le '+inv.paidDate+'</span>':inv.facture?'<button class="btn btn-sm" style="background:var(--green);color:white;border-color:var(--green);" onclick="markRunInvPaid(\''+inv.fourn.replace(/'/g,"\\'")+'\',\''+inv.trim+'\',\''+inv.year+'\')">Marquer payé</button>':'—';
-    var delBtn='<button class="btn btn-sm" style="color:var(--red);border-color:var(--red-bg);margin-left:4px;" onclick="deleteRunInv(\''+inv.fourn.replace(/'/g,"\\'")+'\',\''+inv.trim+'\',\''+inv.year+'\')">✕</button>';
+    var btn=inv.paid?'<span style="font-size:11px;color:var(--green);">✓ Payé le '+escH(inv.paidDate||'')+'</span>':inv.facture?'<button class="btn btn-sm" style="background:var(--green);color:white;border-color:var(--green);" onclick="markRunInvPaid(\''+escAttr(inv.fourn)+'\',\''+escAttr(inv.trim)+'\',\''+escAttr(inv.year)+'\')">Marquer payé</button>':'—';
+    var delBtn='<button class="btn btn-sm" style="color:var(--red);border-color:var(--red-bg);margin-left:4px;" onclick="deleteRunInv(\''+escAttr(inv.fourn)+'\',\''+escAttr(inv.trim)+'\',\''+escAttr(inv.year)+'\')">✕</button>';
     var r=t.insertRow();
-    r.innerHTML='<td style="font-weight:500;">'+inv.fourn+'</td>'+
-      '<td class="mono">'+inv.trim+' '+inv.year+'</td>'+
+    r.innerHTML='<td style="font-weight:500;">'+escH(inv.fourn)+'</td>'+
+      '<td class="mono">'+escH(inv.trim)+' '+escH(inv.year)+'</td>'+
       '<td style="text-align:right;">'+fE(inv.theoTrim||0)+'</td>'+
       '<td style="text-align:right;font-weight:500;">'+fE(inv.declared)+'</td>'+
-      '<td class="mono" style="color:var(--text2);">'+(inv.factureDate||'—')+'</td>'+
+      '<td class="mono" style="color:var(--text2);">'+(inv.factureDate?escH(inv.factureDate):'—')+'</td>'+
       '<td>'+statut+'</td>'+
       '<td style="white-space:nowrap;">'+btn+delBtn+'</td>';
   });
@@ -2906,12 +2920,12 @@ function fournOptHtml(selected){
   var list=loadFourn().slice().sort((a,b)=>a.name.localeCompare(b.name,undefined,{sensitivity:'base'}));
   var families=['SDG','Banque','Assureur'],labels={SDG:'Sociétés de gestion',Banque:'Banques',Assureur:'Assureurs'};
   var html='<option value="">— Choisir —</option>';
-  families.forEach(function(fam){var items=list.filter(f=>f.famille===fam);if(!items.length)return;html+='<optgroup label="'+labels[fam]+'">'+items.map(f=>'<option'+(f.name===(selected||'')?' selected':'')+'>'+f.name+'</option>').join('')+'</optgroup>';});
+  families.forEach(function(fam){var items=list.filter(function(f){return f.famille===fam;});if(!items.length)return;html+='<optgroup label="'+escH(labels[fam])+'">'+items.map(function(f){return '<option value="'+escH(f.name)+'"'+(f.name===(selected||'')?' selected':'')+'>'+escH(f.name)+'</option>';}).join('')+'</optgroup>';});
   return html;
 }
 function brokerOptHtml(selected){
-  var list=brokers_db.slice().sort((a,b)=>a.name.localeCompare(b.name,undefined,{sensitivity:'base'})).map(b=>b.name);
-  return '<option value="">— Aucun —</option>'+list.map(b=>'<option'+(b===(selected||'')?' selected':'')+'>'+b+'</option>').join('');
+  var list=brokers_db.slice().sort(function(a,b){return a.name.localeCompare(b.name,undefined,{sensitivity:'base'});}).map(function(b){return b.name;});
+  return '<option value="">— Aucun —</option>'+list.map(function(b){return '<option value="'+escH(b)+'"'+(b===(selected||'')?' selected':'')+'>'+escH(b)+'</option>';}).join('');
 }
 var PRODUIT_TYPES=['Action','Obligation','Produit Structuré','Private Equity','UCITS / OPCVM','Fonds Alternatif','ETF','Immobilier','Autre'];
 function produitTypeOptHtml(selected){
@@ -3134,7 +3148,7 @@ function renderClients(){
     var typeBadge=c.type==='PP'?'<span class="badge bb">Pers. physique</span>':'<span class="badge bp">Pers. morale</span>';
     var r=t.insertRow();
     var encours=encoursForClient(c.name);
-    r.innerHTML='<td style="font-weight:500;cursor:pointer;" title="Double-cliquer pour modifier" ondblclick="openAddClientModal(\''+c.name.replace(/'/g,"\\'")+'\')">'+c.name+'</td><td>'+typeBadge+'</td><td style="color:var(--text2);">'+(c.vendeur||'—')+'</td><td style="text-align:right;font-weight:600;color:var(--blue);" class="mono">'+(encours>0?fE(encours):'—')+'</td><td style="text-align:center;">'+nbD+'</td><td style="text-align:right;" class="mono">'+(totalNom>0?fE(totalNom):'—')+'</td><td style="text-align:right;color:var(--blue);font-weight:500;">'+(totalUF>0?fE(totalUF):'—')+'</td><td style="text-align:right;color:var(--green);font-weight:500;">'+(totalRun>0?fE(totalRun):'—')+'</td><td class="mono" style="color:var(--text2);">'+lastDate+'</td>';
+    r.innerHTML='<td style="font-weight:500;cursor:pointer;" title="Double-cliquer pour modifier" ondblclick="openAddClientModal(\''+escAttr(c.name)+'\')">'+escH(c.name)+'</td><td>'+typeBadge+'</td><td style="color:var(--text2);">'+(c.vendeur?escH(c.vendeur):'—')+'</td><td style="text-align:right;font-weight:600;color:var(--blue);" class="mono">'+(encours>0?fE(encours):'—')+'</td><td style="text-align:center;">'+nbD+'</td><td style="text-align:right;" class="mono">'+(totalNom>0?fE(totalNom):'—')+'</td><td style="text-align:right;color:var(--blue);font-weight:500;">'+(totalUF>0?fE(totalUF):'—')+'</td><td style="text-align:right;color:var(--green);font-weight:500;">'+(totalRun>0?fE(totalRun):'—')+'</td><td class="mono" style="color:var(--text2);">'+escH(lastDate)+'</td>';
   });
 }
 function openAddClientModal(name){
@@ -3520,7 +3534,7 @@ function renderFourn(){
     var bc=FAMILLE_BADGE[f.famille]||'bgr';
     var bl=FAMILLE_LABELS[f.famille]||f.famille;
     var r=t.insertRow();
-    r.innerHTML='<td style="font-weight:500;cursor:pointer;" title="Double-cliquer pour modifier" ondblclick="openFournModal(\''+f.name.replace(/'/g,"\\'")+'\')">'+f.name+'</td><td><span class="badge '+bc+'">'+bl+'</span></td><td style="text-align:center;">'+nb+'</td><td style="text-align:right;color:var(--blue);font-weight:500;">'+(tUF>0?fE(tUF):'—')+'</td><td style="text-align:right;color:var(--green);font-weight:500;">'+(tRun>0?fE(tRun):'—')+'</td><td class="mono" style="color:var(--text2);">'+last+'</td>';
+    r.innerHTML='<td style="font-weight:500;cursor:pointer;" title="Double-cliquer pour modifier" ondblclick="openFournModal(\''+escAttr(f.name)+'\')">'+escH(f.name)+'</td><td><span class="badge '+bc+'">'+bl+'</span></td><td style="text-align:center;">'+nb+'</td><td style="text-align:right;color:var(--blue);font-weight:500;">'+(tUF>0?fE(tUF):'—')+'</td><td style="text-align:right;color:var(--green);font-weight:500;">'+(tRun>0?fE(tRun):'—')+'</td><td class="mono" style="color:var(--text2);">'+escH(last)+'</td>';
   });
   rebuildFournSelect();
 }
@@ -3765,7 +3779,7 @@ function renderBrokers(){
     var tRun=dDeals.reduce((s,d)=>s+d.runE,0);
     var last=dDeals.length?dDeals.slice().sort((a,b)=>b.date.localeCompare(a.date))[0].date:'—';
     var r=t.insertRow();
-    r.innerHTML='<td style="font-weight:500;cursor:pointer;" title="Double-cliquer pour modifier" ondblclick="openBrokerModal(\''+b.replace(/'/g,"\\'")+'\')" >'+b+'</td><td style="text-align:center;">'+nb+'</td><td style="text-align:right;color:var(--blue);font-weight:500;">'+(tUF>0?fE(tUF):'—')+'</td><td style="text-align:right;color:var(--green);font-weight:500;">'+(tRun>0?fE(tRun):'—')+'</td><td class="mono" style="color:var(--text2);">'+last+'</td>';
+    r.innerHTML='<td style="font-weight:500;cursor:pointer;" title="Double-cliquer pour modifier" ondblclick="openBrokerModal(\''+escAttr(b)+'\')" >'+escH(b)+'</td><td style="text-align:center;">'+nb+'</td><td style="text-align:right;color:var(--blue);font-weight:500;">'+(tUF>0?fE(tUF):'—')+'</td><td style="text-align:right;color:var(--green);font-weight:500;">'+(tRun>0?fE(tRun):'—')+'</td><td class="mono" style="color:var(--text2);">'+escH(last)+'</td>';
   });
   rebuildBrokerSelect();
 }
@@ -4060,7 +4074,7 @@ function cKpi(l,v,s,c){var col=c==='blue'?'color:var(--blue);':'';return '<div c
 function openCommDrill(vendeur){
   commDrillVendeur=vendeur;
   document.getElementById('commDrillCard').style.display='block';
-  document.getElementById('commDrillTitle').innerHTML='← <strong>'+vendeur+'</strong> — Détail · '+getPeriodLabel();
+  document.getElementById('commDrillTitle').innerHTML='← <strong>'+escH(vendeur)+'</strong> — Détail · '+escH(getPeriodLabel());
   setDrillTab('fournisseur',document.querySelectorAll('#commDrillTabs .stab')[0]);
   document.getElementById('commDrillCard').scrollIntoView({behavior:'smooth',block:'start'});
 }
@@ -4115,7 +4129,7 @@ function renderDrill(){
     });
     Object.entries(by).sort((a,b)=>b[1].uf+b[1].run-(a[1].uf+a[1].run)).forEach(([f,v])=>{
       var ht=v.uf+v.run;var r=t.insertRow();
-      r.innerHTML='<td style="font-weight:500;">'+f+'</td><td style="text-align:center;">'+v.nb+'</td><td style="text-align:right;color:var(--blue);font-weight:500;">'+fE(v.uf)+'</td><td style="text-align:right;color:var(--green);font-weight:500;">'+fE(v.run)+'</td><td style="text-align:right;color:var(--purple);">'+(v.pf>0?fE(v.pf):'—')+'</td><td style="text-align:right;font-weight:500;">'+fE(ht)+'</td>';
+      r.innerHTML='<td style="font-weight:500;">'+escH(f)+'</td><td style="text-align:center;">'+v.nb+'</td><td style="text-align:right;color:var(--blue);font-weight:500;">'+fE(v.uf)+'</td><td style="text-align:right;color:var(--green);font-weight:500;">'+fE(v.run)+'</td><td style="text-align:right;color:var(--purple);">'+(v.pf>0?fE(v.pf):'—')+'</td><td style="text-align:right;font-weight:500;">'+fE(ht)+'</td>';
     });
   } else if(commDrillTab==='client'){
     t.innerHTML='<tr><th>Client</th><th>Nb deals</th><th>UF (EUR)</th><th>'+runCol+'</th><th>Perf fees</th><th>Total</th></tr>';
@@ -4128,7 +4142,7 @@ function renderDrill(){
     });
     Object.entries(by).sort((a,b)=>b[1].uf+b[1].run-(a[1].uf+a[1].run)).forEach(([c,v])=>{
       var ht=v.uf+v.run;var r=t.insertRow();
-      r.innerHTML='<td style="font-weight:500;">'+c+'</td><td style="text-align:center;">'+v.nb+'</td><td style="text-align:right;color:var(--blue);font-weight:500;">'+fE(v.uf)+'</td><td style="text-align:right;color:var(--green);font-weight:500;">'+fE(v.run)+'</td><td style="text-align:right;color:var(--purple);">'+(v.pf>0?fE(v.pf):'—')+'</td><td style="text-align:right;font-weight:500;">'+fE(ht)+'</td>';
+      r.innerHTML='<td style="font-weight:500;">'+escH(c)+'</td><td style="text-align:center;">'+v.nb+'</td><td style="text-align:right;color:var(--blue);font-weight:500;">'+fE(v.uf)+'</td><td style="text-align:right;color:var(--green);font-weight:500;">'+fE(v.run)+'</td><td style="text-align:right;color:var(--purple);">'+(v.pf>0?fE(v.pf):'—')+'</td><td style="text-align:right;font-weight:500;">'+fE(ht)+'</td>';
     });
   } else {
     t.innerHTML='<tr><th>Date</th><th>Client</th><th>Fournisseur</th><th>Produit</th><th>Nominal</th><th>UF</th><th>'+runCol+'</th><th>Perf fees</th><th>Statut</th></tr>';
@@ -4136,7 +4150,7 @@ function renderDrill(){
       var r=t.insertRow();r.className='cl';r.onclick=()=>openDet(d);
       var pf=d.pf&&d.pf.mode!=='none'&&d.pf.amount?fE(d.pf.amount):(d.pf&&d.pf.mode==='pct'&&d.pf.rate?d.pf.rate+'%':'—');
       var runP=getRunProrata(d);
-      r.innerHTML='<td class="mono">'+d.date+'</td><td style="font-weight:500;">'+d.client+'</td><td>'+d.fourn+'</td><td style="color:var(--text2);">'+d.produit+'</td><td class="mono" style="text-align:right;">'+f0(d.nom)+' '+d.dev+'</td><td style="text-align:right;color:var(--blue);font-weight:500;">'+(d.ufE>0?fE(d.ufE):'—')+'</td><td style="text-align:right;color:var(--green);font-weight:500;">'+(runP>0?fE(runP):'—')+'</td><td style="text-align:right;color:var(--purple);">'+pf+'</td><td>'+fBadge(d.fSt)+'</td>';
+      r.innerHTML='<td class="mono">'+escH(d.date)+'</td><td style="font-weight:500;">'+escH(d.client)+'</td><td>'+escH(d.fourn)+'</td><td style="color:var(--text2);">'+escH(d.produit)+'</td><td class="mono" style="text-align:right;">'+f0(d.nom)+' '+escH(d.dev)+'</td><td style="text-align:right;color:var(--blue);font-weight:500;">'+(d.ufE>0?fE(d.ufE):'—')+'</td><td style="text-align:right;color:var(--green);font-weight:500;">'+(runP>0?fE(runP):'—')+'</td><td style="text-align:right;color:var(--purple);">'+pf+'</td><td>'+fBadge(d.fSt)+'</td>';
     });
   }
 }
@@ -4328,7 +4342,7 @@ async function confirmUFInvoice(){
 // ── WEALINS CONTRATS PAGE ────────────────────────────────────────────────────
 var ctrExp={};       // contract id → expanded
 var prodExp={};      // contractId|prodId → expanded
-function escH(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+// escH defined globally at top of file (XSS helpers)
 function fmtEUR(n){return new Intl.NumberFormat('fr-FR',{style:'currency',currency:'EUR',maximumFractionDigits:0}).format(n||0);}
 
 function renderContratsStats(){
@@ -4745,7 +4759,7 @@ function addEditorStep(containerId,opts){
 function buildTemplateSelectHTML(selected){
   var opts='<option value="">— Aucun (sur mesure) —</option>';
   templates_db.slice().sort(function(a,b){return a.name.localeCompare(b.name);}).forEach(function(t){
-    opts+='<option value="'+t.name+'"'+(t.name===selected?' selected':'')+'>'+escH(t.name)+'</option>';
+    opts+='<option value="'+escH(t.name)+'"'+(t.name===selected?' selected':'')+'>'+escH(t.name)+'</option>';
   });
   return opts;
 }

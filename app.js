@@ -1767,7 +1767,17 @@ function renderAlertes(){
   }).join('')+(alertes.length>10?'<div style="font-size:11px;color:var(--text3);padding:6px 0;text-align:center;">+ '+(alertes.length-10)+' autres alertes</div>':'');
 }
 
+function renderEncoursGlobaux(){
+  var active=deals.filter(function(d){return d.stat==='Deal pipe'||d.stat==='Deal réalisé';});
+  var total=active.reduce(function(s,d){return s+(d.dev==='USD'?d.nom/(d.fx||1):d.nom);},0);
+  var nbDeals=active.length;
+  var nbClients=new Set(active.map(function(d){return d.client;}).filter(Boolean)).size;
+  document.getElementById('encoursGlobaux').textContent='€ '+f0(total);
+  document.getElementById('encoursGlobauxSub').textContent=nbDeals+' deal'+(nbDeals>1?'s':'')+' actifs · '+nbClients+' client'+(nbClients>1?'s':'');
+}
+
 function renderCharts(){
+  renderEncoursGlobaux();
   var data=filt();
   var byF={};data.filter(d=>d.ufE>0).forEach(d=>{byF[d.fourn]=(byF[d.fourn]||0)+d.ufE;});
   var uL=Object.keys(byF).sort((a,b)=>byF[b]-byF[a]),uV=uL.map(k=>Math.round(byF[k])),uC=['#1d5fd4','#1a8a4a','#6b4fc4','#b07a10','#c23b3b','#6b6b65','#8b5cf6','#f59e0b','#06b6d4','#ec4899'];

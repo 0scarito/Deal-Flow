@@ -2680,10 +2680,10 @@ function renderCharts(){
     options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{boxWidth:12,boxHeight:12,padding:14,font:CHART_DEFAULTS.font,color:'#374151'}},tooltip:Object.assign({},CHART_DEFAULTS.tooltip,{callbacks:{label:function(c){return c.dataset.label+' : '+fE(c.raw);}}})},scales:{x:{stacked:true,grid:{display:false,drawBorder:false},ticks:{color:'#374151',font:Object.assign({},CHART_DEFAULTS.font,{size:13,weight:'600'})}},y:{stacked:true,ticks:{color:'#9aa0a6',font:CHART_DEFAULTS.font,callback:function(v){return v>=1000?Math.round(v/1000)+'k':v;}},grid:{color:CHART_DEFAULTS.gridSoft,drawBorder:false},beginAtZero:true}}}
   });
 
-  // ── 7. Pipeline en cours (par statut de facture) ─────────────────────────
-  var pipeData=data.filter(function(d){return d.fSt==='À émettre'||d.fSt==='Facturé';});
-  var pipeBySt={'À émettre':{uf:0,run:0,nom:0,nb:0},'Facturé':{uf:0,run:0,nom:0,nb:0}};
-  pipeData.forEach(function(d){
+  // ── 7. Pipeline & facturation par statut (À émettre / Facturé / Payé) ──
+  var statuses=['À émettre','Facturé','Payé'];
+  var pipeBySt={};statuses.forEach(function(s){pipeBySt[s]={uf:0,run:0,nom:0,nb:0};});
+  data.forEach(function(d){
     var s=pipeBySt[d.fSt];if(!s)return;
     s.uf+=(d.ufE||0);s.run+=(d.runE||0);s.nb++;
     s.nom+=(d.dev==='USD'?d.nom/(d.fx||1):d.nom);
@@ -2692,28 +2692,19 @@ function renderCharts(){
   charts.pipe=new Chart(document.getElementById('cPipe'),{
     type:'bar',
     data:{
-      labels:['À émettre','Facturé'],
+      labels:statuses,
       datasets:[
-        {label:'UF',data:[Math.round(pipeBySt['À émettre'].uf),Math.round(pipeBySt['Facturé'].uf)],backgroundColor:'#1d5fd4',borderRadius:6,maxBarThickness:60},
-        {label:'Running annuel',data:[Math.round(pipeBySt['À émettre'].run),Math.round(pipeBySt['Facturé'].run)],backgroundColor:'#1a8a4a',borderRadius:6,maxBarThickness:60}
+        {label:'UF',data:statuses.map(function(s){return Math.round(pipeBySt[s].uf);}),backgroundColor:'#1d5fd4',borderRadius:6,maxBarThickness:60},
+        {label:'Running annuel',data:statuses.map(function(s){return Math.round(pipeBySt[s].run);}),backgroundColor:'#1a8a4a',borderRadius:6,maxBarThickness:60}
       ]
     },
     options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{boxWidth:12,boxHeight:12,padding:14,font:CHART_DEFAULTS.font,color:'#374151'}},tooltip:Object.assign({},CHART_DEFAULTS.tooltip,{callbacks:{label:function(c){return c.dataset.label+' : '+fE(c.raw);}}})},scales:{x:{stacked:true,grid:{display:false,drawBorder:false},ticks:{color:'#374151',font:Object.assign({},CHART_DEFAULTS.font,{size:13,weight:'600'})}},y:{stacked:true,ticks:{color:'#9aa0a6',font:CHART_DEFAULTS.font,callback:function(v){return v>=1000?Math.round(v/1000)+'k':v;}},grid:{color:CHART_DEFAULTS.gridSoft,drawBorder:false},beginAtZero:true}}}
   });
-  document.getElementById('legPipe').innerHTML=
-    '<span style="color:var(--text2);">À émettre : <b>'+pipeBySt['À émettre'].nb+'</b> deal(s) · nominal '+fE(pipeBySt['À émettre'].nom)+'</span>'+
-    '<span style="color:var(--text2);">Facturé : <b>'+pipeBySt['Facturé'].nb+'</b> deal(s) · nominal '+fE(pipeBySt['Facturé'].nom)+'</span>';
+  document.getElementById('legPipe').innerHTML=statuses.map(function(s){
+    return '<span style="color:var(--text2);">'+s+' : <b>'+pipeBySt[s].nb+'</b> deal'+(pipeBySt[s].nb>1?'s':'')+' · nominal '+fE(pipeBySt[s].nom)+'</span>';
+  }).join('');
 
-  // ── 8. Statut facturation (donut nb deals) ──────────────────────────────
-  var bySt={};data.forEach(function(d){bySt[d.fSt]=(bySt[d.fSt]||0)+1;});
-  var stOrder=['Payé','Facturé','À émettre','Litige'];
-  var stL=stOrder.filter(function(k){return bySt[k];}),stV=stL.map(function(k){return bySt[k];});
-  var stC={'Payé':'#1a8a4a','Facturé':'#1d5fd4','À émettre':'#b07a10','Litige':'#c23b3b'};
-  if(charts.fa)charts.fa.destroy();
-  if(stL.length)charts.fa=new Chart(document.getElementById('cFact'),{type:'doughnut',data:{labels:stL,datasets:[{data:stV,backgroundColor:stL.map(function(l){return stC[l]||'#9aa0a6';}),borderWidth:2,borderColor:'#fff',hoverOffset:8}]},options:{responsive:true,maintainAspectRatio:false,cutout:'62%',plugins:{legend:{display:false},tooltip:Object.assign({},CHART_DEFAULTS.tooltip,{callbacks:{label:function(c){return c.label+' : '+c.raw+' deal'+(c.raw>1?'s':'');}}})}}});
-  document.getElementById('legFact').innerHTML=stL.map(function(l,i){return legendChip(stC[l]||'#9aa0a6',l,stV[i]);}).join('');
-
-  // ── 9. Devise (donut nominal) ───────────────────────────────────────────
+  // ── 8. Devise (donut nominal) ───────────────────────────────────────────
   var eur=data.filter(function(d){return d.dev==='EUR';}).reduce(function(s,d){return s+d.nom;},0);
   var usd=data.filter(function(d){return d.dev==='USD';}).reduce(function(s,d){return s+d.nom;},0);
   if(charts.dv)charts.dv.destroy();
@@ -2755,14 +2746,19 @@ function brokerOptHtml(selected){
   var list=brokers_db.slice().sort((a,b)=>a.name.localeCompare(b.name,undefined,{sensitivity:'base'})).map(b=>b.name);
   return '<option value="">— Aucun —</option>'+list.map(b=>'<option'+(b===(selected||'')?' selected':'')+'>'+b+'</option>').join('');
 }
+var PRODUIT_TYPES=['Action','Obligation','Produit Structuré','Private Equity','UCITS / OPCVM','Fonds Alternatif','ETF','Immobilier','Autre'];
+function produitTypeOptHtml(selected){
+  return '<option value="">— Choisir —</option>'+PRODUIT_TYPES.map(function(t){return '<option'+(t===(selected||'')?' selected':'')+'>'+t+'</option>';}).join('');
+}
 function addCodifLine(codif){
-  codif=codif||{fourn:'',produit:'',isin:'',broker:'',maturite:''};
+  codif=codif||{fourn:'',produit:'',type:'',isin:'',broker:'',maturite:''};
   var container=document.getElementById('codifLines');
   var row=document.createElement('div');
   row.className='codif-line';
-  row.style.cssText='display:grid;grid-template-columns:1fr 1fr 100px 1fr 120px 28px;gap:6px;margin-bottom:6px;align-items:center;';
+  row.style.cssText='display:grid;grid-template-columns:1.3fr 1.3fr 130px 100px 1fr 120px 28px;gap:6px;margin-bottom:6px;align-items:center;';
   row.innerHTML='<select class="codifFourn">'+fournOptHtml(codif.fourn)+'</select>'
     +'<input type="text" class="codifProduit" value="'+(codif.produit||'')+'" placeholder="Produit / Support"/>'
+    +'<select class="codifType">'+produitTypeOptHtml(codif.type)+'</select>'
     +'<input type="text" class="codifISIN" value="'+(codif.isin||'')+'" placeholder="ISIN" style="font-family:monospace;font-size:11px;"/>'
     +'<select class="codifBroker">'+brokerOptHtml(codif.broker)+'</select>'
     +'<input type="date" class="codifMaturite" value="'+(codif.maturite||'')+'"/>'
@@ -2781,7 +2777,14 @@ function renderCodifLines(codifs){
 function getCodifLines(){
   var result=[];
   document.querySelectorAll('#codifLines .codif-line').forEach(function(row){
-    result.push({fourn:row.querySelector('.codifFourn').value,produit:row.querySelector('.codifProduit').value,isin:row.querySelector('.codifISIN').value,broker:row.querySelector('.codifBroker').value,maturite:row.querySelector('.codifMaturite').value});
+    result.push({
+      fourn:row.querySelector('.codifFourn').value,
+      produit:row.querySelector('.codifProduit').value,
+      type:row.querySelector('.codifType')?row.querySelector('.codifType').value:'',
+      isin:row.querySelector('.codifISIN').value,
+      broker:row.querySelector('.codifBroker').value,
+      maturite:row.querySelector('.codifMaturite').value
+    });
   });
   return result;
 }
@@ -2789,7 +2792,7 @@ function openDealModal(idx){
   editIdx=idx!=null?idx:-1;
   rebuildFournSelect();rebuildBrokerSelect();
   document.getElementById('dmTitle').textContent=editIdx>=0?'Modifier le deal':'Nouveau deal';
-  if(editIdx>=0){var d=deals[editIdx];document.getElementById('mV').value=d.v;document.getElementById('mDate').value=d.date;document.getElementById('mStat').value=d.stat;renderClientLines([d.client],[d.contrat],[d.nom],[d.depositaire||'']);document.getElementById('mContrat').value=d.contrat;document.getElementById('mNom').value=d.nom;document.getElementById('mDev').value=d.dev;document.getElementById('mIssue').value=d.issue||'';document.getElementById('mInvS').value=d.invS||'';document.getElementById('mInv').value=d.inv||'';document.getElementById('mUFR').value=d.ufR;document.getElementById('mRunR').value=d.runR;document.getElementById('mNotes').value=d.notes||'';renderCodifLines(d.codifications&&d.codifications.length?d.codifications:[{fourn:d.fourn||'',produit:d.produit||'',isin:d.isin||'',broker:d.broker||'',maturite:d.maturite||''}]);setCT(d.ct);
+  if(editIdx>=0){var d=deals[editIdx];document.getElementById('mV').value=d.v;document.getElementById('mDate').value=d.date;document.getElementById('mStat').value=d.stat;renderClientLines([d.client],[d.contrat],[d.nom],[d.depositaire||'']);document.getElementById('mContrat').value=d.contrat;document.getElementById('mNom').value=d.nom;document.getElementById('mDev').value=d.dev;document.getElementById('mIssue').value=d.issue||'';document.getElementById('mInvS').value=d.invS||'';document.getElementById('mInv').value=d.inv||'';document.getElementById('mUFR').value=d.ufR;document.getElementById('mRunR').value=d.runR;document.getElementById('mNotes').value=d.notes||'';renderCodifLines(d.codifications&&d.codifications.length?d.codifications:[{fourn:d.fourn||'',produit:d.produit||'',type:d.produit_type||'',isin:d.isin||'',broker:d.broker||'',maturite:d.maturite||d.terme||''}]);setCT(d.ct);
     var pf=d.pf||{mode:'none'};pfMode=pf.mode||'none';
     var pfBtn=document.getElementById('ctPF');pfBtn.classList.toggle('on',pfMode!=='none');
     document.getElementById('pfRow').style.display=pfMode!=='none'?'block':'none';
@@ -2861,7 +2864,7 @@ async function saveDeal(){
   var pf={mode:pfMode};
   if(pfMode!=='none'){var pfType=document.getElementById('mPFType').value;pf.type=pfType;pf.freq=document.getElementById('mPFFreq').value;if(pfType==='pct'){pf.rate=parseFloat(document.getElementById('mPFRate').value)||0;pf.hurdle=parseFloat(document.getElementById('mPFHurdle').value)||0;}else{pf.amount=parseFloat(document.getElementById('mPFFixed').value)||0;}}
   var codifs=getCodifLines();
-  var base={v:document.getElementById('mV').value,date:document.getElementById('mDate').value,stat:document.getElementById('mStat').value,contrat:document.getElementById('mContrat').value,fourn:codifs[0]?codifs[0].fourn:'',produit:codifs[0]?codifs[0].produit:'',produit_type:codifs[0]?codifs[0].produit_type||null:null,isin:codifs[0]?codifs[0].isin:'',broker:codifs[0]?codifs[0].broker:'',maturite:codifs[0]?codifs[0].maturite||'':'',terme:codifs[0]?codifs[0].maturite||null:null,codifications:codifs,nom,dev,fx,issue:document.getElementById('mIssue').value,invS:document.getElementById('mInvS').value,inv:document.getElementById('mInv').value,ct,ufR:parseFloat(document.getElementById('mUFR').value)||0,runR:parseFloat(document.getElementById('mRunR').value)||0,tva:0,ufE:Math.round(dev==='USD'?(nom*ufP/fx):nom*ufP),runE:Math.round(nomE*runP),pf,fSt:'À émettre',fRef:'',notes:document.getElementById('mNotes').value};
+  var base={v:document.getElementById('mV').value,date:document.getElementById('mDate').value,stat:document.getElementById('mStat').value,contrat:document.getElementById('mContrat').value,fourn:codifs[0]?codifs[0].fourn:'',produit:codifs[0]?codifs[0].produit:'',produit_type:codifs[0]&&codifs[0].type?codifs[0].type:null,isin:codifs[0]?codifs[0].isin:'',broker:codifs[0]?codifs[0].broker:'',maturite:codifs[0]?codifs[0].maturite||null:null,terme:codifs[0]?codifs[0].maturite||null:null,codifications:codifs,nom,dev,fx,issue:document.getElementById('mIssue').value,invS:document.getElementById('mInvS').value,inv:document.getElementById('mInv').value,ct,ufR:parseFloat(document.getElementById('mUFR').value)||0,runR:parseFloat(document.getElementById('mRunR').value)||0,tva:0,ufE:Math.round(dev==='USD'?(nom*ufP/fx):nom*ufP),runE:Math.round(nomE*runP),pf,fSt:'À émettre',fRef:'',notes:document.getElementById('mNotes').value};
   if(editIdx>=0){
     var cc=getSelectedClients();
     var lineNom=cc.length&&cc[0].nom?cc[0].nom:nom;
@@ -3031,23 +3034,69 @@ function openAddClientModal(name){
         byContrat[c].push(d);
       });
       var html='';
-      Object.entries(byContrat).forEach(function([contrat,cDeals]){
-        html+='<div style="margin-bottom:12px;">'+
-          '<div style="font-size:11px;font-weight:600;color:var(--text2);background:var(--surface2);padding:4px 10px;border-radius:4px;margin-bottom:6px;">'+contrat+'</div>'+
-          cDeals.map(function(d){
-            var statut=d.fSt==='Payé'?'<span class="badge bg">Payé</span>':d.fSt==='Facturé'?'<span class="badge bb">Facturé</span>':'<span class="badge ba">À émettre</span>';
-            var montant=d.ct==='UF'?fE(d.ufE)+' UF':d.ct==='RUN'?fE(d.runE)+'/an':fE(d.ufE)+' UF + '+fE(d.runE)+'/an';
-            return '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;border:1px solid var(--border);border-radius:6px;margin-bottom:4px;">'+
-              '<div>'+
-                '<span style="font-weight:500;font-size:13px;">'+d.fourn+'</span>'+
-                '<span style="color:var(--text2);font-size:12px;margin-left:8px;">'+d.produit+'</span>'+
-              '</div>'+
-              '<div style="display:flex;gap:12px;align-items:center;">'+
-                (d.depositaire?'<span style="font-size:12px;color:var(--text3);font-style:italic;">'+d.depositaire+'</span>':'') +
-                '<span style="font-size:12px;color:var(--blue);font-weight:500;">'+fE(d.nom)+' '+d.dev+'</span>'+
+      Object.entries(byContrat).forEach(function(entry){
+        var contrat=entry[0],cDeals=entry[1];
+        // Stats du contrat
+        var sumNomEUR=cDeals.reduce(function(s,d){return s+(d.dev==='USD'?d.nom/(d.fx||1):d.nom);},0);
+        var sumUF=cDeals.reduce(function(s,d){return s+(d.ufE||0);},0);
+        var sumRun=cDeals.reduce(function(s,d){return s+(d.runE||0);},0);
+
+        html+='<div style="margin-bottom:14px;">'+
+          // En-tête contrat avec récap
+          '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--surface2);border-radius:8px 8px 0 0;border:1px solid var(--border);border-bottom:none;">'+
+            '<div style="font-size:12px;font-weight:600;color:var(--text);text-transform:uppercase;letter-spacing:.3px;">'+escH(contrat)+'</div>'+
+            '<div style="display:flex;gap:14px;font-size:11px;color:var(--text2);align-items:center;">'+
+              '<span><b style="color:var(--text);">'+cDeals.length+'</b> deal'+(cDeals.length>1?'s':'')+'</span>'+
+              '<span><b style="color:var(--text);">'+fE(sumNomEUR)+'</b></span>'+
+              (sumUF>0?'<span style="color:var(--blue);"><b>'+fE(sumUF)+'</b> UF</span>':'')+
+              (sumRun>0?'<span style="color:var(--green);"><b>'+fE(sumRun)+'</b>/an</span>':'')+
+            '</div>'+
+          '</div>'+
+          // Liste des deals dans le contrat
+          '<div style="border:1px solid var(--border);border-radius:0 0 8px 8px;border-top:none;background:var(--surface);">'+
+          cDeals.map(function(d,i){
+            var stMap={'Payé':{cls:'bg',color:'var(--green)'},'Facturé':{cls:'bb',color:'var(--blue)'},'À émettre':{cls:'ba',color:'var(--amber)'},'Litige':{cls:'br',color:'var(--red)'}};
+            var st=stMap[d.fSt]||{cls:'bgr',color:'var(--text3)'};
+            var statusBadge='<span class="badge '+st.cls+'">'+escH(d.fSt||'')+'</span>';
+            var typeBadge=d.ct==='UF'?'<span class="badge bb">UF</span>':d.ct==='RUN'?'<span class="badge bg">Running</span>':d.ct==='BOTH'?'<span class="badge bb">UF</span><span class="badge bg" style="margin-left:3px;">Run</span>':'';
+            var feesParts=[];
+            if(d.ufE>0)feesParts.push('<span style="color:var(--blue);font-weight:500;">'+fE(d.ufE)+'</span> UF');
+            if(d.runE>0)feesParts.push('<span style="color:var(--green);font-weight:500;">'+fE(d.runE)+'</span>/an');
+            if(d.pf&&d.pf.amount)feesParts.push('<span style="color:var(--purple);font-weight:500;">'+fE(d.pf.amount)+'</span> PF');
+            var depChip=d.depositaire?'<span style="font-size:10px;color:var(--text3);background:var(--surface2);padding:1px 6px;border-radius:3px;white-space:nowrap;">📍 '+escH(d.depositaire)+'</span>':'';
+            var isLast=i===cDeals.length-1;
+            var idx=deals.indexOf(d);
+            return '<div style="display:flex;border-bottom:'+(isLast?'none':'1px solid var(--border)')+';cursor:pointer;transition:background .12s;" onmouseover="this.style.background=\'var(--surface2)\'" onmouseout="this.style.background=\'\'" onclick="closeClientModal();openDet(deals['+idx+'])">'+
+              // Bandeau couleur statut
+              '<div style="width:3px;background:'+st.color+';flex-shrink:0;"></div>'+
+              '<div style="flex:1;padding:10px 12px;min-width:0;">'+
+                // Ligne 1 : fournisseur + produit + depositaire (gauche) | nominal + status (droite)
+                '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:5px;">'+
+                  '<div style="display:flex;align-items:center;gap:8px;min-width:0;flex:1;">'+
+                    '<span style="font-weight:600;font-size:13px;color:var(--text);white-space:nowrap;">'+escH(d.fourn||'')+'</span>'+
+                    '<span style="color:var(--text2);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;">'+escH(d.produit||'')+'</span>'+
+                    depChip+
+                  '</div>'+
+                  '<div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">'+
+                    '<span style="font-weight:600;font-size:13px;color:var(--text);" class="mono">'+f0(d.nom)+' '+escH(d.dev||'')+'</span>'+
+                    statusBadge+
+                  '</div>'+
+                '</div>'+
+                // Ligne 2 : type + commissions + ISIN/maturité
+                '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:11px;">'+
+                  '<div style="display:flex;align-items:center;gap:8px;min-width:0;">'+
+                    typeBadge+
+                    (feesParts.length?'<span style="color:var(--text2);">'+feesParts.join(' · ')+'</span>':'')+
+                  '</div>'+
+                  '<div style="display:flex;align-items:center;gap:8px;color:var(--text3);font-size:10px;">'+
+                    (d.isin?'<span class="mono">'+escH(d.isin)+'</span>':'')+
+                    (d.maturite||d.terme?'<span>échéance '+escH(d.maturite||d.terme)+'</span>':'')+
+                  '</div>'+
+                '</div>'+
               '</div>'+
             '</div>';
           }).join('')+
+          '</div>'+
         '</div>';
       });
       investLines.innerHTML=html;

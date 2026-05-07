@@ -2699,7 +2699,6 @@ function renderPilotageKpis(){
       '<div style="font-size:11px;color:rgba(255,255,255,.75);margin-top:4px;">UF + Running + Perf fees</div>'+
     '</div>';
 }
-}
 
 function fournOptHtml(selected){
   var list=loadFourn().slice().sort((a,b)=>a.name.localeCompare(b.name,undefined,{sensitivity:'base'}));

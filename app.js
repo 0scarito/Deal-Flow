@@ -4174,13 +4174,19 @@ function genInvoicePDF(fournName,type,period,amount,deals_list){
   var dateStr='Paris, le '+today.getDate()+' '+['January','February','March','April','May','June','July','August','September','October','November','December'][today.getMonth()]+' '+today.getFullYear();
   var trimLabel=period||'';
   var code=fournName.replace(/[^A-Z0-9]/gi,'').toUpperCase().substring(0,3);
-  var invoiceNum=code+'-'+type+'-'+trimLabel.replace(/[^0-9T]/g,'')+'-001';
+  // Suffixe : T1/T2/T3/T4 pour les factures trimestrielles (RUN), 001 sinon
+  var trimMatch=(period||'').match(/T([1-4])/);
+  var invSuffix=(type==='RUN'&&trimMatch)?'T'+trimMatch[1]:'001';
+  var invoiceNum=code+'-'+type+'-'+trimLabel.replace(/[^0-9T]/g,'')+'-'+invSuffix;
   var productsDesc=deals_list.map(function(d){return d.produit;}).filter(function(v,i,a){return a.indexOf(v)===i;}).join(' / ')||'Management Fees';
   // Logo en filigrane : URL absolue (window.open + document.write n'a pas de baseURI fiable)
   var logoUrl=window.location.origin+window.location.pathname.replace(/[^/]+$/,'')+'logo.png';
 
   var html=`<!DOCTYPE html>
 <html><head><meta charset="UTF-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   @page{margin:15mm 20mm 20mm 20mm;}
   body{font-family:Arial,sans-serif;font-size:11px;color:#222;margin:0;padding:0;position:relative;}
@@ -4194,9 +4200,10 @@ function genInvoicePDF(fournName,type,period,amount,deals_list){
     pointer-events:none;
     print-color-adjust:exact;-webkit-print-color-adjust:exact;
   }
-  .header-bar{background:#234c3e;color:white;padding:10px 20px;display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;}
-  .header-bar .company{font-size:16px;font-weight:bold;letter-spacing:1px;}
-  .header-bar .invoice-num{font-size:13px;font-weight:bold;}
+  .header-bar{background:#234c3e;color:white;padding:14px 22px;display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;}
+  .header-bar .company-name{font-family:'Cinzel',Georgia,serif;font-size:20px;font-weight:600;letter-spacing:.08em;line-height:1;}
+  .header-bar .company-suffix{font-family:'Cinzel',Georgia,serif;font-size:10px;font-weight:500;letter-spacing:.45em;margin-top:3px;text-indent:.45em;}
+  .header-bar .invoice-num{font-family:'Cinzel',Georgia,serif;font-size:13px;font-weight:500;letter-spacing:.05em;}
   .section{margin-bottom:16px;}
   .label{font-weight:bold;font-size:11px;color:#234c3e;text-transform:uppercase;margin-bottom:4px;}
   .from-to{display:grid;grid-template-columns:1fr 1fr;gap:30px;margin-bottom:20px;}
@@ -4216,7 +4223,10 @@ function genInvoicePDF(fournName,type,period,amount,deals_list){
 </style></head><body>
 
 <div class="header-bar">
-  <div class="company">CHAMFEUIL CAPITAL</div>
+  <div>
+    <div class="company-name">CHAMFEUIL</div>
+    <div class="company-suffix">CAPITAL</div>
+  </div>
   <div class="invoice-num">INVOICE #${invoiceNum}</div>
 </div>
 

@@ -53,7 +53,7 @@
       <div class="sb-label" style="margin-top:14px;">Référentiels</div>
       <button class="nbtn" onclick="goTo('clients',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="5" r="2.5"/><path d="M1 13c0-2.8 2.2-5 5-5s5 2.2 5 5"/><circle cx="12" cy="5" r="2"/><path d="M12 8.5c1.7.3 3 1.8 3 3.5"/></svg>Clients</button>
       <button class="nbtn" onclick="goTo('fournisseurs',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M5 3V2a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1"/><path d="M1 7h14"/></svg>Fournisseurs</button>
-      <button class="nbtn" onclick="goTo('brokers',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 12V5l6-3 6 3v7"/><path d="M6 12V9h4v3"/><rect x="1" y="12" width="14" height="2" rx="1"/></svg>Brokers</button>
+      <button class="nbtn" onclick="goTo('fournisseurs',this);setFournSub('brokers',document.getElementById('fstBrokers'))"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 12V5l6-3 6 3v7"/><path d="M6 12V9h4v3"/><rect x="1" y="12" width="14" height="2" rx="1"/></svg>Brokers</button>
 
       <!-- Alertes : standalone, séparée visuellement -->
       <div style="margin-top:auto;padding-top:18px;border-top:1px solid var(--border);">
@@ -436,6 +436,7 @@
         <div class="subtabs" id="fournSubTabs" style="margin-bottom:14px;">
           <button class="stab on" id="fstRef" onclick="setFournSub('ref',this)">Référentiel</button>
           <button class="stab" id="fstRappr" onclick="setFournSub('rappr',this)">Rapprochement encours</button>
+          <button class="stab" id="fstBrokers" onclick="setFournSub('brokers',this)">Brokers</button>
         </div>
 
         <!-- RÉFÉRENTIEL -->
@@ -496,28 +497,31 @@
 
         </div>
 
+        <!-- BROKERS (sous-onglet) -->
+        <div id="fournBrokersSection" style="display:none;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+            <span style="font-size:12px;color:var(--text2);" id="brokerCount"></span>
+            <button class="btn btn-primary" onclick="openBrokerModal()">+ Nouveau broker</button>
+          </div>
+          <div class="card" style="padding:0;overflow:hidden;">
+            <table id="brokerT">
+              <tr>
+                <th>Nom</th>
+                <th>Nb deals</th>
+                <th>UF total</th>
+                <th>Running /an</th>
+                <th>Dernier deal</th>
+                <th></th>
+              </tr>
+            </table>
+            <div id="brokerEmpty" class="empty">Aucun broker.</div>
+          </div>
+        </div>
+
       </div>
 
-      <!-- BROKERS -->
-      <div class="page" id="p-brokers">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
-          <span style="font-size:12px;color:var(--text2);" id="brokerCount"></span>
-          <button class="btn btn-primary" onclick="openBrokerModal()">+ Nouveau broker</button>
-        </div>
-        <div class="card" style="padding:0;overflow:hidden;">
-          <table id="brokerT">
-            <tr>
-              <th>Nom</th>
-              <th>Nb deals</th>
-              <th>UF total</th>
-              <th>Running /an</th>
-              <th>Dernier deal</th>
-              <th></th>
-            </tr>
-          </table>
-          <div id="brokerEmpty" class="empty">Aucun broker.</div>
-        </div>
-      </div>
+      <!-- ancienne page brokers (vide, conservée pour compatibilité liens) -->
+      <div class="page" id="p-brokers"></div>
 
       <!-- SUIVI CONTRATS -->
       <div class="page" id="p-contrats">

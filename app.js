@@ -3376,7 +3376,9 @@ function setFournSub(sub,btn){
   btn.classList.add('on');
   document.getElementById('fournRefSection').style.display=sub==='ref'?'block':'none';
   document.getElementById('fournRapprSection').style.display=sub==='rappr'?'block':'none';
+  document.getElementById('fournBrokersSection').style.display=sub==='brokers'?'block':'none';
   if(sub==='rappr'){initRapprTrim();renderRapprochement();}
+  if(sub==='brokers')renderBrokers();
 }
 
 // ── RAPPROCHEMENT ENCOURS ────────────────────────────────────────────────────

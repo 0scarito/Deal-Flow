@@ -2123,8 +2123,11 @@ async function saveDeal(){
       var res=await sbInsert('deals',d);
       if(res&&res[0])d._id=res[0].id;
       deals.push(d);
-      // Auto-create line in Suivi Contrats: append investissement to client's contract
-      try{await autoLinkDealToContract(d);autoLinked++;}catch(e){console.error('autoLinkDealToContract failed',e);}
+      // Auto-create line in Suivi Contrats only for pipeline deals — realized deals
+      // are already done, no procedures to track.
+      if(d.stat==='Deal pipe'){
+        try{await autoLinkDealToContract(d);autoLinked++;}catch(e){console.error('autoLinkDealToContract failed',e);}
+      }
     }
     closeDM();renderAll();toast((items.length>1?items.length+' deals enregistrés':'Nouveau deal enregistré')+(autoLinked?' · '+autoLinked+' investissement'+(autoLinked>1?'s':'')+' ajouté'+(autoLinked>1?'s':'')+' au suivi.':'.'));
   }

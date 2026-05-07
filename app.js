@@ -1314,7 +1314,7 @@ function addArbDestLine(){
       '<option value="BOTH">UF+Run</option>'+
       '<option value="PF">Perf fees</option>'+
     '</select>'+
-    '<input type="number" class="arbTauxSel" placeholder="%" step="0.01" style="min-width:0;" title="Taux UF ou Running (%)"/>'+
+    '<input type="number" class="arbTauxSel" placeholder="%" step="0.01" style="min-width:0;" title="Taux UF ou Running (%)" oninput="updateArbSummary()"/>'+
     '<button type="button" class="btn btn-sm" onclick="this.closest(\'div\').remove();updateArbSummary();" style="color:var(--red);border-color:var(--red-bg);">\u2715</button>';
   document.getElementById('arbDestLines').appendChild(div);
   updateArbSummary();

@@ -1021,19 +1021,13 @@ function renderSynthFactPaye(){
   // UF payés tous
   var ufAll=d.filter(x=>(x.ct==='UF'||x.ct==='BOTH')&&x.fSt==='Payé');
   var ufYTD=ufAll.filter(x=>x.inv&&x.inv.startsWith(year));
-  // Running: récupérer depuis localStorage
-  var allKeys=[];try{for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);if(k&&k.startsWith('recapfact_'))allKeys.push(k);}}catch(e){}
-  var runFacts=allKeys.map(k=>{
-    try{var data=JSON.parse(localStorage.getItem(k)||'{}');if(!data.paid||!data.declared)return null;
-    var parts=k.replace('recapfact_','').split('_');var yr=parts[parts.length-1];var tr=parts[parts.length-2];var fn=parts.slice(0,-2).join('_');
-    return{fourn:fn,trim:tr,year:yr,amount:data.declared,paidDate:data.paidDate||''};}catch(e){return null;}
-  }).filter(Boolean);
-  var runAll=runFacts;
-  var runYTD=runFacts.filter(x=>x.year===year);
+  // Running: source = rapprochement_db (Supabase). Toutes les running paid.
+  var runAll=rapprochement_db.filter(function(r){return r.type==='run'&&r.paid&&r.declared;});
+  var runYTD=runAll.filter(function(r){return r.period&&r.period.endsWith('_'+year);});
   var totalUFAll=ufAll.reduce((s,x)=>s+(x.ufE||0),0);
   var totalUFYTD=ufYTD.reduce((s,x)=>s+(x.ufE||0),0);
-  var totalRunAll=runAll.reduce((s,x)=>s+x.amount,0);
-  var totalRunYTD=runYTD.reduce((s,x)=>s+x.amount,0);
+  var totalRunAll=runAll.reduce(function(s,r){return s+(r.declared||0);},0);
+  var totalRunYTD=runYTD.reduce(function(s,r){return s+(r.declared||0);},0);
   var html='<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:16px;">'+
     '<div style="background:var(--blue-bg,#e8f0fb);border-radius:var(--rs);padding:12px;">'+
       '<div style="font-size:10px;color:var(--text3);">UF payés — '+year+'</div>'+
@@ -3372,10 +3366,18 @@ function getCommDeals(){
   var year=document.getElementById('commYear').value;
   var month=parseInt(document.getElementById('commMonth').value)||1;
   var trim=parseInt(document.getElementById('commTrim').value)||1;
-  // Uniquement les factures codifiées Payé, filtrées sur la date de paiement (inv)
-  return deals.filter(d=>{
-    if(d.fSt!=='Payé')return false;
-    return matchPeriod(d.inv,year,month,trim);
+  // Set of fournisseurs with at least one paid running rapprochement in the active period
+  var paidRunFourns={};
+  rapprochement_db.forEach(function(r){
+    if(r.type==='run'&&r.paid&&r.declared&&rapprMatchesCommPeriod(r.period))paidRunFourns[r.fourn]=true;
+  });
+  return deals.filter(function(d){
+    // (A) Per-deal payments (UF / PF / one-off): require fSt='Payé' AND inv date in period
+    if(d.fSt==='Payé'&&matchPeriod(d.inv,year,month,trim))return true;
+    // (B) Running contribution: include this deal if it has running and its fournisseur has a
+    // paid rapprochement in the period (running is tracked at trim+fourn level, independent of fSt)
+    if((d.ct==='RUN'||d.ct==='BOTH')&&d.runE>0&&paidRunFourns[d.fourn])return true;
+    return false;
   });
 }
 
@@ -3387,52 +3389,76 @@ function getPeriodLabel(){
   return '';
 }
 
-function commSummary(data){
+// Match a rapprochement period (T#_YYYY) against the active Commissions period selection.
+function rapprMatchesCommPeriod(period){
+  if(!period)return false;
+  var m=period.match(/^T([1-4])_(\d{4})$/);if(!m)return false;
+  var trim=parseInt(m[1]),year=m[2];
+  var selYear=(document.getElementById('commYear')||{}).value||'';
+  if(selYear&&year!==selYear)return false;
+  if(commPeriod==='trimestre'){
+    var selTrim=parseInt((document.getElementById('commTrim')||{}).value)||0;
+    if(selTrim&&trim!==selTrim)return false;
+  } else if(commPeriod==='mois'){
+    var selMonth=parseInt((document.getElementById('commMonth')||{}).value)||0;
+    if(selMonth){
+      var trimOfMonth=Math.ceil(selMonth/3);
+      if(trim!==trimOfMonth)return false;
+    }
+  }
+  return true;
+}
+
+// commSummary computes UF / Running / Perf-fees totals for a slice of deals.
+// `data` = deals filtered by period (and optionally by vendor). It drives UF + PF (per-deal).
+// `vendorScope` = optional array of vendor names this slice represents. Used to attribute
+// the Running rapprochement share by runE proportion at each fournisseur.
+// Pass `null`/undefined for the "all vendors" total.
+function commSummary(data,vendorScope){
   function splitFactor(d){return d.v==='Audrey & David'?0.5:1;}
+  function isInScope(v){
+    if(!vendorScope||!vendorScope.length)return true; // global view
+    if(vendorScope.indexOf(v)!==-1)return true;
+    if(v==='Audrey & David'&&(vendorScope.indexOf('Audrey')!==-1||vendorScope.indexOf('David')!==-1))return true;
+    return false;
+  }
 
-  // UF : somme des ufE des deals de ce vendeur (split 50% si deal commun)
+  // UF — per-deal, only deals with fSt='Payé' in period
   var uf=0;
-  for(var i=0;i<data.length;i++) uf+=(data[i].ufE||0)*splitFactor(data[i]);
+  for(var i=0;i<data.length;i++)uf+=(data[i].ufE||0)*splitFactor(data[i]);
 
-  // Running : pour chaque fournisseur présent dans data,
-  // chercher la facture payée dans localStorage et attribuer la part
+  // RUNNING — walk ALL paid rapprochements in the selected period (regardless of data),
+  // then attribute share to the vendor scope based on runE proportion at the fournisseur.
+  // This handles the case where running deals are never individually marked "Payé" — the
+  // rapprochement IS the running invoice.
   var run=0;
-  var year='';
-  try{var el=document.getElementById('commYear');if(el)year=el.value;}catch(e){}
-
-  // Fournisseurs distincts dans les deals Running de data
-  var fourns={};
-  for(var di=0;di<data.length;di++){
-    var d=data[di];
-    if(d.ct!=='RUN'&&d.ct!=='BOTH') continue;
-    if(!fourns[d.fourn]) fourns[d.fourn]=[];
-    fourns[d.fourn].push(d);
-  }
-
-  // Pour chaque fournisseur, trouver toutes les factures payées
-  for(var fourn in fourns){
-    var vendeurDeals=fourns[fourn];
-    // Tous les deals Running Payés chez ce fournisseur (tous vendeurs)
-    var allDeals=deals.filter(function(x){
-      return (x.ct==='RUN'||x.ct==='BOTH')&&x.fourn===fourn&&x.fSt==='Pay\xe9';
+  rapprochement_db.forEach(function(r){
+    if(r.type!=='run'||!r.paid||!r.declared)return;
+    if(!rapprMatchesCommPeriod(r.period))return;
+    // All running deals at this fournisseur (any status — used for runE share computation)
+    var fournDeals=deals.filter(function(x){return (x.ct==='RUN'||x.ct==='BOTH')&&x.fourn===r.fourn;});
+    var totalRunE=fournDeals.reduce(function(s,x){return s+(x.runE||0);},0);
+    if(!totalRunE){
+      // Edge: rapprochement exists with no associated running deal (e.g., legacy data)
+      // → in global view, count it; in vendor view, skip (cannot attribute)
+      if(!vendorScope||!vendorScope.length)run+=r.declared;
+      return;
+    }
+    var inScopeRunE=0;
+    fournDeals.forEach(function(x){
+      if(isInScope(x.v))inScopeRunE+=(x.runE||0)*splitFactor(x);
     });
-    var allRunE=allDeals.reduce(function(s,x){return s+(x.runE||0);},0);
-    if(!allRunE) continue;
+    var share=totalRunE>0?(inScopeRunE/totalRunE):0;
+    run+=r.declared*share;
+  });
 
-    // Part runE du vendeur avec split
-    var vendeurRunE=vendeurDeals.reduce(function(s,x){return s+(x.runE||0)*splitFactor(x);},0);
-    var share=vendeurRunE/allRunE;
-
-    rapprochement_db.filter(function(r){
-      return r.type==='run'&&r.fourn===fourn&&r.paid&&r.declared&&(!year||(r.period&&r.period.endsWith('_'+year)));
-    }).forEach(function(r){run+=r.declared*share;});
-  }
-
+  // PERF FEES — per-deal, only deals with fSt='Payé' in period and pf.amount set
   var pf=0;
   for(var pi=0;pi<data.length;pi++){
     var pd=data[pi];
-    if(pd.pf&&pd.pf.mode!=='none'&&pd.pf.amount) pf+=pd.pf.amount*splitFactor(pd);
+    if(pd.pf&&pd.pf.mode!=='none'&&pd.pf.amount)pf+=pd.pf.amount*splitFactor(pd);
   }
+
   return {nb:data.length,uf:uf,run:run,pf:pf};
 }
 
@@ -3442,7 +3468,7 @@ function renderCommissions(){
   document.getElementById('commPeriodLabel').textContent=getPeriodLabel();
   closeCommDrill();
 
-  var s=commSummary(allData);
+  var s=commSummary(allData,null); // null = global view across all vendors
   var ht=s.uf+s.run;
   var runLabel='Running facturé & payé';
 
@@ -3458,7 +3484,7 @@ function renderCommissions(){
   document.getElementById('commVendeurCards').innerHTML=vendeurs.map(v=>{
     // Deals solo du vendeur + deals communs (avec 50% appliqué dans commSummary)
     var vData=allData.filter(d=>d.v===v||d.v==='Audrey & David');
-    var vs=commSummary(vData);
+    var vs=commSummary(vData,[v]);
     var vht=vs.uf+vs.run;
     var pct=ht>0?Math.round(vht/ht*100):0;
     return '<div class="card" style="cursor:pointer;border:1.5px solid var(--border);" onclick="openCommDrill(\''+v+'\')">'+
@@ -3517,23 +3543,23 @@ function setDrillTab(tab,btn){
   renderDrill();
 }
 
+// For commission drill: returns this deal's running contribution across all paid rapprochements
+// at d.fourn that match the active commission period. Source: rapprochement_db (Supabase), not
+// the legacy localStorage. Share computed against ALL running deals at the fournisseur (any
+// status — running is tracked at trim+fourn level, not per-deal-payment).
 function getRunProrata(d){
-  if(!d.runE||d.runE===0)return 0;
-  if(!d.invS||!d.inv)return 0;
-  var invYear=d.invS.substring(0,4);
-  var invMonth=parseInt(d.invS.substring(5,7));
-  var invTrim=Math.ceil(invMonth/3);
-  var key='recapfact_'+d.fourn+'_T'+invTrim+'_'+invYear;
-  try{
-    var saved=JSON.parse(localStorage.getItem(key)||'null');
-    if(saved&&saved.paid&&saved.declared!=null){
-      // Proportional share based on runE
-      var allDealsForTrim=deals.filter(x=>(x.ct==='RUN'||x.ct==='BOTH')&&x.fourn===d.fourn&&x.invS===d.invS&&x.fSt==='Payé');
-      var totalRunE=allDealsForTrim.reduce((s,x)=>s+(x.runE||0),0);
-      return totalRunE>0?saved.declared*(d.runE/totalRunE):0;
-    }
-  }catch(e){}
-  return 0;
+  if(!d||(!d.runE)||d.runE===0)return 0;
+  if(d.ct!=='RUN'&&d.ct!=='BOTH')return 0;
+  var fournDeals=deals.filter(function(x){return (x.ct==='RUN'||x.ct==='BOTH')&&x.fourn===d.fourn;});
+  var totalRunE=fournDeals.reduce(function(s,x){return s+(x.runE||0);},0);
+  if(!totalRunE)return 0;
+  var contribution=0;
+  rapprochement_db.forEach(function(r){
+    if(r.type!=='run'||r.fourn!==d.fourn||!r.paid||!r.declared)return;
+    if(!rapprMatchesCommPeriod(r.period))return;
+    contribution+=r.declared*(d.runE/totalRunE);
+  });
+  return contribution;
 }
 
 function renderDrill(){

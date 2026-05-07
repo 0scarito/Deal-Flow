@@ -3279,15 +3279,55 @@ function openAddClientModal(name){
     investSection.style.display='none';
     investLines.innerHTML='';
   }
-  // Historique des opérations
+  // Historique des opérations — deals + retraits, fusionnés sur la même timeline
   var histSection=document.getElementById('clientHistSection');
   var histLines=document.getElementById('clientHistLines');
   if(name){
-    var allDeals=deals.filter(function(d){return d.client===name;}).sort(function(a,b){return b.date.localeCompare(a.date);});
-    if(allDeals.length){
+    var events=[];
+    // Deals (création + arbitrages = ils apparaissent comme deal ou arbitrage selon arbId/arbSrc)
+    deals.filter(function(d){return d.client===name;}).forEach(function(d){
+      events.push({kind:d.arbId||d.arbSrc?'arb':'deal',date:d.date||'',deal:d});
+    });
+    // Retraits (stockés dans contracts_db[].produits[].retraits[])
+    contracts_db.forEach(function(c){
+      if(c.client!==name)return;
+      (c.produits||[]).forEach(function(p){
+        (p.retraits||[]).forEach(function(r){
+          var srcDeal=p.deal_id?deals.find(function(x){return x._id===p.deal_id;}):null;
+          events.push({kind:'retrait',date:r.date||'',retrait:r,prod:p,contract:c,srcDeal:srcDeal});
+        });
+      });
+    });
+    if(events.length){
       histSection.style.display='block';
+      events.sort(function(a,b){return (b.date||'').localeCompare(a.date||'');});
       var html='<div style="border-left:2px solid var(--border);padding-left:12px;">';
-      allDeals.forEach(function(d){
+      events.forEach(function(ev){
+        if(ev.kind==='retrait'){
+          var r=ev.retrait,p=ev.prod,sd=ev.srcDeal;
+          var icon='↓',color='var(--amber)',label='Retrait'+(r.closed?' (clôture)':'');
+          var srcLabel=sd?(escH(sd.fourn||'')+' — '+escH(sd.produit||'')):escH(p.name||'(produit)');
+          var dev=sd?(sd.dev||'EUR'):'EUR';
+          html+=
+            '<div style="position:relative;margin-bottom:12px;">'+
+              '<div style="position:absolute;left:-18px;top:3px;color:'+color+';font-size:14px;font-weight:700;">'+icon+'</div>'+
+              '<div style="display:flex;justify-content:space-between;align-items:flex-start;">'+
+                '<div>'+
+                  '<span style="font-size:11px;color:var(--text3);">'+escH(r.date||'')+'</span>'+
+                  '<span style="font-size:11px;color:var(--amber-t);margin-left:6px;font-weight:500;">'+label+'</span>'+
+                  '<div style="font-weight:500;margin-top:2px;">'+srcLabel+'</div>'+
+                  (r.note?'<div style="font-size:11px;color:var(--text3);margin-top:1px;font-style:italic;">'+escH(r.note)+'</div>':'')+
+                '</div>'+
+                '<div style="text-align:right;flex-shrink:0;margin-left:12px;">'+
+                  '<span class="badge ba">↓ Cash retiré</span>'+
+                  '<div style="font-size:12px;color:var(--amber-t);font-weight:600;margin-top:3px;">−'+fE(r.montant||0)+' '+escH(dev)+'</div>'+
+                  (r.prorata_run?'<div style="font-size:11px;color:var(--text2);">+ pro-rata '+fE(r.prorata_run)+'</div>':'')+
+                '</div>'+
+              '</div>'+
+            '</div>';
+          return;
+        }
+        var d=ev.deal;
         var isArb=d.arbId||d.arbSrc;
         var icon=isArb?'⇄':'●';
         var color=isArb?'var(--purple,#7c3aed)':'var(--blue)';
@@ -3299,20 +3339,20 @@ function openAddClientModal(name){
         if(d.pf&&d.pf.amount)fees+=(fees?' · ':'')+fE(d.pf.amount)+' PF';
         html+=
           '<div style="position:relative;margin-bottom:12px;">'+
-          '<div style="position:absolute;left:-18px;top:3px;color:'+color+';font-size:14px;font-weight:700;">'+icon+'</div>'+
-          '<div style="display:flex;justify-content:space-between;align-items:flex-start;">'+
-            '<div>'+
-              '<span style="font-size:11px;color:var(--text3);">'+d.date+'</span>'+
-              '<span style="font-size:11px;color:var(--text3);margin-left:6px;">'+label+'</span>'+
-              '<div style="font-weight:500;margin-top:2px;">'+d.fourn+' — '+d.produit+'</div>'+
-              (d.notes&&d.notes!=='Deal test'?'<div style="font-size:11px;color:var(--text3);margin-top:1px;font-style:italic;">'+d.notes+'</div>':'')+
+            '<div style="position:absolute;left:-18px;top:3px;color:'+color+';font-size:14px;font-weight:700;">'+icon+'</div>'+
+            '<div style="display:flex;justify-content:space-between;align-items:flex-start;">'+
+              '<div>'+
+                '<span style="font-size:11px;color:var(--text3);">'+escH(d.date||'')+'</span>'+
+                '<span style="font-size:11px;color:var(--text3);margin-left:6px;">'+label+'</span>'+
+                '<div style="font-weight:500;margin-top:2px;">'+escH(d.fourn||'')+' — '+escH(d.produit||'')+'</div>'+
+                (d.notes&&d.notes!=='Deal test'?'<div style="font-size:11px;color:var(--text3);margin-top:1px;font-style:italic;">'+escH(d.notes)+'</div>':'')+
+              '</div>'+
+              '<div style="text-align:right;flex-shrink:0;margin-left:12px;">'+
+                typeBadge+
+                '<div style="font-size:12px;color:var(--blue);font-weight:500;margin-top:3px;">'+fE(d.nom)+' '+escH(d.dev||'')+'</div>'+
+                (fees?'<div style="font-size:11px;color:var(--text2);">'+fees+'</div>':'')+
+              '</div>'+
             '</div>'+
-            '<div style="text-align:right;flex-shrink:0;margin-left:12px;">'+
-              typeBadge+
-              '<div style="font-size:12px;color:var(--blue);font-weight:500;margin-top:3px;">'+fE(d.nom)+' '+d.dev+'</div>'+
-              (fees?'<div style="font-size:11px;color:var(--text2);">'+fees+'</div>':'')+
-            '</div>'+
-          '</div>'+
           '</div>';
       });
       html+='</div>';

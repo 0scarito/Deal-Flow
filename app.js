@@ -3775,10 +3775,29 @@ async function deleteProdFromModal(){
   }catch(e){console.error(e);alert('Erreur: '+(e.message||e));}
 }
 
+function withTimeout(promise,ms,label){
+  return Promise.race([
+    promise,
+    new Promise(function(_,reject){setTimeout(function(){reject(new Error('Timeout '+(label||'')+' après '+(ms/1000)+'s'));},ms);})
+  ]);
+}
+function _showStuckLoadingHelp(){
+  // Show a "Reset session" button on the loading overlay after 10s
+  var ov=document.getElementById('loadingOverlay');if(!ov)return;
+  if(ov.querySelector('.stuckHelp'))return;
+  var div=document.createElement('div');
+  div.className='stuckHelp';
+  div.style.cssText='margin-top:20px;text-align:center;font-size:12px;color:var(--text2);max-width:380px;';
+  div.innerHTML='Le chargement est anormalement long.<br>Cela arrive après un redémarrage Supabase (token périmé).<br><br>'+
+    '<button class="btn btn-primary" style="font-size:12px;" onclick="localStorage.clear();location.reload();">Réinitialiser la session</button>';
+  ov.appendChild(div);
+}
+
 async function initApp(){
   document.getElementById('loadingOverlay').style.display='flex';
+  var stuckTimer=setTimeout(_showStuckLoadingHelp,10000);
   try{
-    var results=await Promise.all([
+    var results=await withTimeout(Promise.all([
       sbGetAll('deals'),
       sbGetAll('clients'),
       sbGetAll('fournisseurs'),
@@ -3786,7 +3805,7 @@ async function initApp(){
       sb.from('rapprochement').select('*'),
       sb.from('contracts').select('*'),
       sb.from('contract_templates').select('*').order('name')
-    ]);
+    ]),20000,'chargement initial');
     deals=results[0]||[];
     clients_db=results[1]||[];
     fourn_db=results[2]||[];
@@ -3818,11 +3837,21 @@ async function initApp(){
     else await mergeFournDefaults();
     if(!brokers_db.length)await seedBrokers();
   }catch(e){
+    clearTimeout(stuckTimer);
     console.error('Init error',e);
+    var msg=String(e.message||e);
+    var stuck=msg.indexOf('Timeout')!==-1||msg.toLowerCase().indexOf('jwt')!==-1||msg.toLowerCase().indexOf('expired')!==-1;
+    if(stuck){
+      // Force a clean reset on session-related issues
+      if(confirm('Connexion impossible — token de session probablement périmé.\n\nRéinitialiser la session et se reconnecter ?')){
+        localStorage.clear();location.reload();return;
+      }
+    }
     document.getElementById('loadingOverlay').style.display='none';
-    alert('Erreur de chargement: '+(e.message||e)+'\n\nVérifiez votre connexion ou rechargez la page.');
+    alert('Erreur de chargement : '+msg+'\n\nVérifiez votre connexion ou rechargez la page.');
     return;
   }
+  clearTimeout(stuckTimer);
   document.getElementById('loadingOverlay').style.display='none';
   renderAll();rebuildFournSelect();rebuildBrokerSelect();
   setupRealtime();

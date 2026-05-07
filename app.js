@@ -4183,27 +4183,30 @@ function genInvoicePDF(fournName,type,period,amount,deals_list){
   var logoUrl=window.location.origin+window.location.pathname.replace(/[^/]+$/,'')+'logo.png';
 
   var html=`<!DOCTYPE html>
-<html><head><meta charset="UTF-8">
+<html><head><meta charset="UTF-8"><title>Facture ${invoiceNum}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  @page{margin:15mm 20mm 20mm 20mm;}
+  @page{margin:14mm 18mm;size:A4;}
   body{font-family:Arial,sans-serif;font-size:11px;color:#222;margin:0;padding:0;position:relative;}
-  /* Filigrane Chamfeuil : très peu opaque, en arrière-plan, fixe au centre, n'interfère pas avec le texte */
+  /* Filigrane Chamfeuil : positionné plus haut (env. 38% de la page), plus grand, légèrement plus opaque */
   body::before{
-    content:'';position:fixed;top:50%;left:50%;width:65vw;height:65vw;max-width:520px;max-height:520px;
+    content:'';position:fixed;top:38%;left:50%;width:90vw;height:90vw;max-width:720px;max-height:720px;
     transform:translate(-50%,-50%);
     background:url('${logoUrl}') no-repeat center/contain;
-    opacity:0.05;
+    opacity:0.09;
     z-index:-1;
     pointer-events:none;
     print-color-adjust:exact;-webkit-print-color-adjust:exact;
   }
-  .header-bar{background:#234c3e;color:white;padding:14px 22px;display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;}
-  .header-bar .company-name{font-family:'Cinzel',Georgia,serif;font-size:20px;font-weight:600;letter-spacing:.08em;line-height:1;}
-  .header-bar .company-suffix{font-family:'Cinzel',Georgia,serif;font-size:10px;font-weight:500;letter-spacing:.45em;margin-top:3px;text-indent:.45em;}
-  .header-bar .invoice-num{font-family:'Cinzel',Georgia,serif;font-size:13px;font-weight:500;letter-spacing:.05em;}
+  /* Header : fond blanc, wordmark vert, logo + divider, comme la charte Chamfeuil */
+  .header-bar{background:transparent;color:#234c3e;padding:8px 0 18px 0;margin-bottom:24px;display:flex;align-items:center;gap:20px;border-bottom:1.5px solid #234c3e;}
+  .header-bar .header-logo{height:54px;width:auto;flex-shrink:0;}
+  .header-bar .header-divider{width:1.5px;height:54px;background:#234c3e;flex-shrink:0;}
+  .header-bar .company-name{font-family:'Cinzel',Georgia,serif;font-size:30px;font-weight:600;letter-spacing:.10em;line-height:1;color:#234c3e;}
+  .header-bar .company-suffix{font-family:'Cinzel',Georgia,serif;font-size:13px;font-weight:500;letter-spacing:.55em;margin-top:5px;text-indent:.55em;color:#234c3e;}
+  .header-bar .invoice-num{margin-left:auto;font-family:'Cinzel',Georgia,serif;font-size:14px;font-weight:500;letter-spacing:.05em;color:#234c3e;text-align:right;}
   .section{margin-bottom:16px;}
   .label{font-weight:bold;font-size:11px;color:#234c3e;text-transform:uppercase;margin-bottom:4px;}
   .from-to{display:grid;grid-template-columns:1fr 1fr;gap:30px;margin-bottom:20px;}
@@ -4223,6 +4226,8 @@ function genInvoicePDF(fournName,type,period,amount,deals_list){
 </style></head><body>
 
 <div class="header-bar">
+  <img src="${logoUrl}" class="header-logo" alt="">
+  <div class="header-divider"></div>
   <div>
     <div class="company-name">CHAMFEUIL</div>
     <div class="company-suffix">CAPITAL</div>

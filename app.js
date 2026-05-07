@@ -1,4 +1,4 @@
-// ── SUPABASE CLIENT ───────────────────────────────────────────────────────────
+﻿// ── SUPABASE CLIENT ───────────────────────────────────────────────────────────
 var SUPABASE_URL='https://nlnvnqfuuggtbcqvnxag.supabase.co';
 var SUPABASE_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5sbnZucWZ1dWdndGJjcXZueGFnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgwNjYyMjgsImV4cCI6MjA5MzY0MjIyOH0.DpaQdphDzDkl7_Q1VoUfH9Z3EbAP21rTl0GVkBtnwd0';
 var sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
@@ -1768,13 +1768,12 @@ function renderAlertes(){
 }
 
 function renderEncoursGlobaux(){
-  var active=deals.filter(function(d){return d.stat==='Deal pipe'||d.stat==='Deal réalisé';});
-  var total=active.reduce(function(s,d){return s+(d.dev==='USD'?d.nom/(d.fx||1):d.nom);},0);
-  var nbDeals=active.length;
-  var nbClients=new Set(active.map(function(d){return d.client;}).filter(Boolean)).size;
+  var total=clients_db.reduce(function(s,c){return s+(c.encours||0);},0);
+  var nbClients=clients_db.filter(function(c){return (c.encours||0)>0;}).length;
   document.getElementById('encoursGlobaux').textContent='€ '+f0(total);
-  document.getElementById('encoursGlobauxSub').textContent=nbDeals+' deal'+(nbDeals>1?'s':'')+' actifs · '+nbClients+' client'+(nbClients>1?'s':'');
+  document.getElementById('encoursGlobauxSub').textContent=nbClients+' client'+(nbClients>1?'s':'')+' renseigné'+(nbClients>1?'s':'');
 }
+
 
 function renderCharts(){
   renderEncoursGlobaux();
@@ -2020,7 +2019,8 @@ function renderClients(){
     var lastDate=dDeals.length?dDeals.sort((a,b)=>b.date.localeCompare(a.date))[0].date:'—';
     var typeBadge=c.type==='PP'?'<span class="badge bb">Pers. physique</span>':'<span class="badge bp">Pers. morale</span>';
     var r=t.insertRow();
-    r.innerHTML='<td style="font-weight:500;cursor:pointer;" title="Double-cliquer pour modifier" ondblclick="openAddClientModal(\''+c.name.replace(/'/g,"\\'")+'\')">'+c.name+'</td><td>'+typeBadge+'</td><td style="color:var(--text2);">'+(c.vendeur||'—')+'</td><td style="text-align:center;">'+nbD+'</td><td style="text-align:right;" class="mono">'+(totalNom>0?fE(totalNom):'—')+'</td><td style="text-align:right;color:var(--blue);font-weight:500;">'+(totalUF>0?fE(totalUF):'—')+'</td><td style="text-align:right;color:var(--green);font-weight:500;">'+(totalRun>0?fE(totalRun):'—')+'</td><td class="mono" style="color:var(--text2);">'+lastDate+'</td>';
+    var encours=c.encours||0;
+    r.innerHTML='<td style="font-weight:500;cursor:pointer;" title="Double-cliquer pour modifier" ondblclick="openAddClientModal(\''+c.name.replace(/'/g,"\\'")+'\')">'+c.name+'</td><td>'+typeBadge+'</td><td style="color:var(--text2);">'+(c.vendeur||'—')+'</td><td style="text-align:right;font-weight:600;color:var(--blue);" class="mono">'+(encours>0?fE(encours):'—')+'</td><td style="text-align:center;">'+nbD+'</td><td style="text-align:right;" class="mono">'+(totalNom>0?fE(totalNom):'—')+'</td><td style="text-align:right;color:var(--blue);font-weight:500;">'+(totalUF>0?fE(totalUF):'—')+'</td><td style="text-align:right;color:var(--green);font-weight:500;">'+(totalRun>0?fE(totalRun):'—')+'</td><td class="mono" style="color:var(--text2);">'+lastDate+'</td>';
   });
 }
 function openAddClientModal(name){
@@ -2032,11 +2032,13 @@ function openAddClientModal(name){
     document.getElementById('cType').value=c.type||'PP';
     document.getElementById('cVendeur').value=c.vendeur||'';
     document.getElementById('cEmail').value=c.email||'';
+    document.getElementById('cEncours').value=c.encours||'';
     document.getElementById('cNotes').value=c.notes||'';
   } else {
     document.getElementById('cType').value='PP';
     document.getElementById('cVendeur').value='';
     document.getElementById('cEmail').value='';
+    document.getElementById('cEncours').value='';
     document.getElementById('cNotes').value='';
   }
   document.getElementById('clientDeleteBtn').style.display=name?'':'none';
@@ -2183,7 +2185,7 @@ async function saveClient(){
   var name=document.getElementById('cName').value.trim();
   var original=document.getElementById('cName').dataset.original||'';
   if(!name){alert('Nom requis.');return;}
-  var entry={name,type:document.getElementById('cType').value,vendeur:document.getElementById('cVendeur').value,email:document.getElementById('cEmail').value,notes:document.getElementById('cNotes').value};
+  var entry={name,type:document.getElementById('cType').value,vendeur:document.getElementById('cVendeur').value,email:document.getElementById('cEmail').value,encours:parseFloat(document.getElementById('cEncours').value)||0,notes:document.getElementById('cNotes').value};
   if(original&&original!==name){
     var c=clients_db.find(x=>x.name===original);
     if(c){entry._id=c._id;await sbUpdate('clients',c._id,entry);Object.assign(c,entry);}

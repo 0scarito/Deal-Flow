@@ -981,6 +981,8 @@ function renderSynthRealise(){
   var d=filt();
   var realise=d.filter(x=>x.stat==='Deal réalisé');
   var recent=realise.slice().sort(function(a,b){return (b.date||'').localeCompare(a.date||'');}).slice(0,5);
+  var nbUF=realise.filter(x=>x.ct==='UF'||x.ct==='BOTH').length;
+  var nbRun=realise.filter(x=>x.ct==='RUN'||x.ct==='BOTH').length;
   var totalNom=realise.reduce((s,x)=>s+(x.dev==='USD'?x.nom/(x.fx||1):x.nom),0);
   var totalUF=realise.filter(x=>x.ct==='UF'||x.ct==='BOTH').reduce((s,x)=>s+(x.ufE||0),0);
   var totalRun=realise.filter(x=>x.ct==='RUN'||x.ct==='BOTH').reduce((s,x)=>s+(x.runE||0),0);
@@ -989,7 +991,7 @@ function renderSynthRealise(){
       '<div style="background:var(--surface2);border-radius:var(--rs);padding:12px 14px;">'+
         '<div style="font-size:11px;color:var(--text3);margin-bottom:4px;">Deals réalisés</div>'+
         '<div style="font-size:28px;font-weight:600;color:var(--text);">'+realise.length+'</div>'+
-        '<div style="font-size:11px;color:var(--text2);">'+realise.filter(x=>x.fSt==='À émettre').length+' à facturer · '+realise.filter(x=>x.fSt==='Facturé').length+' facturés</div>'+
+        '<div style="font-size:11px;color:var(--text2);">'+nbUF+' UF · '+nbRun+' Running</div>'+
       '</div>'+
       '<div style="background:var(--surface2);border-radius:var(--rs);padding:12px 14px;">'+
         '<div style="font-size:11px;color:var(--text3);margin-bottom:4px;">Nominaux réalisés</div>'+

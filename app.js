@@ -631,7 +631,6 @@ async function saveLocal(){
 async function loadLocal(){
   deals=await sbGetAll('deals');
 }
-var CLIENT_DEFAULTS=['OAA','Anthony Ravau','Evelyne Berdugo','Sacha Zerbib','Franck Gary','SBM Lux','SIHPM','LevCap','Matthieu Senra','JackMélo','Eric Billen','David Niddam','COHEN Joachim','TFC','SPN'];
 function loadClients(){return clients_db.map(c=>c.name);}
 function saveClients(list){/* managed via saveClientDB */}
 function buildClientSelect(selected){
@@ -2742,12 +2741,6 @@ function importCSV(e){
 var clientTab='ALL';
 function loadClientDB(){return clients_db;}
 function saveClientDB(db){/* async handled in saveClient */}
-function buildDefaultClientDB(){
-  var pp=['OAA','Anthony Ravau','Evelyne Berdugo','Sacha Zerbib','Franck Gary','Matthieu Senra','JackMélo','Eric Billen','David Niddam','COHEN Joachim'];
-  var pm=['SBM Lux','SIHPM','LevCap','TFC','SPN'];
-  var db=[...pp.map(n=>({name:n,type:'PP',vendeur:'',email:'',notes:''})),...pm.map(n=>({name:n,type:'PM',vendeur:'',email:'',notes:''}))];
-  return db;
-}
 // saveClientDB handled by Supabase
 function setClientTab(t,btn){
   clientTab=t;
@@ -3286,6 +3279,46 @@ async function mergeFournDefaults(){
     if(!fourn_db.find(function(f){return f.name===def.name;})){
       var res=await sbInsert('fournisseurs',def);
       if(res&&res[0])fourn_db.push(Object.assign({},def,{_id:res[0].id}));
+    }
+  }
+}
+
+// Sync reference tables with entities actually used in deals (handles imported data)
+async function mergeClientsFromDeals(){
+  var names=new Set();
+  deals.forEach(function(d){if(d.client&&d.client.trim())names.add(d.client.trim());});
+  for(var name of names){
+    if(!clients_db.find(function(c){return c.name===name;})){
+      var entry={name:name,type:'',vendeur:'',email:'',notes:''};
+      try{var res=await sbInsert('clients',entry);if(res&&res[0])clients_db.push(Object.assign({},entry,{_id:res[0].id}));}
+      catch(e){console.warn('mergeClientsFromDeals: insert failed for "'+name+'"',e);}
+    }
+  }
+}
+async function mergeFournsFromDeals(){
+  var names=new Set();
+  deals.forEach(function(d){
+    if(d.fourn&&d.fourn.trim())names.add(d.fourn.trim());
+    if(Array.isArray(d.codifications))d.codifications.forEach(function(c){if(c.fourn&&c.fourn.trim())names.add(c.fourn.trim());});
+  });
+  for(var name of names){
+    if(!fourn_db.find(function(f){return f.name===name;})){
+      var entry={name:name,famille:'',addr1:'',addr2:'',contact:'',email:''};
+      try{var res=await sbInsert('fournisseurs',entry);if(res&&res[0])fourn_db.push(Object.assign({},entry,{_id:res[0].id}));}
+      catch(e){console.warn('mergeFournsFromDeals: insert failed for "'+name+'"',e);}
+    }
+  }
+}
+async function mergeBrokersFromDeals(){
+  var names=new Set();
+  deals.forEach(function(d){
+    if(d.broker&&d.broker.trim())names.add(d.broker.trim());
+    if(Array.isArray(d.codifications))d.codifications.forEach(function(c){if(c.broker&&c.broker.trim())names.add(c.broker.trim());});
+  });
+  for(var name of names){
+    if(!brokers_db.find(function(b){return b.name===name;})){
+      try{var res=await sbInsert('brokers',{name:name});if(res&&res[0])brokers_db.push({name:name,_id:res[0].id});}
+      catch(e){console.warn('mergeBrokersFromDeals: insert failed for "'+name+'"',e);}
     }
   }
 }
@@ -4485,6 +4518,10 @@ async function initApp(){
     if(!fourn_db.length)await seedFournisseurs();
     else await mergeFournDefaults();
     if(!brokers_db.length)await seedBrokers();
+    // Ensure all entities referenced in deals exist in their reference tables
+    await mergeClientsFromDeals();
+    await mergeFournsFromDeals();
+    await mergeBrokersFromDeals();
   }catch(e){
     clearTimeout(stuckTimer);
     console.error('Init error',e);

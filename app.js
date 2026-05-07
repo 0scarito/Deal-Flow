@@ -1154,16 +1154,32 @@ async function bulkApplyStatus(){
 async function bulkDelete(){
   var sel=getSelectedDealsList();
   if(!sel.length){alert('Aucun deal sélectionné.');return;}
-  if(!confirm('Supprimer définitivement '+sel.length+' deal(s) ? Cette action est irréversible.'))return;
+  // Count deals with linked Suivi Contrats investments
+  var withLinks=sel.map(findLinkedInvestissement).filter(Boolean).length;
+  if(!confirm('Supprimer définitivement '+sel.length+' deal(s) ? Cette action est irréversible.'+(withLinks?'\n\n⚠ '+withLinks+' deal(s) ont un investissement lié dans Suivi Contrats.':'')))return;
+  var alsoDeleteLinks=false;
+  if(withLinks>0){
+    alsoDeleteLinks=confirm('Supprimer aussi les '+withLinks+' investissement(s) liés dans Suivi Contrats ?\n\nOK = supprimer les deux, Annuler = supprimer uniquement les deals (les investissements restent dans Suivi Contrats).');
+  }
   var failed=0;
+  var contractsToSave={};
   for(var i=0;i<sel.length;i++){
     var d=sel[i];
+    var link=alsoDeleteLinks?findLinkedInvestissement(d):null;
     if(d._id){try{await sbDelete('deals',d._id);}catch(e){console.error('Bulk delete failed for',d._id,e);failed++;continue;}}
     var idx=deals.indexOf(d);if(idx>=0)deals.splice(idx,1);
+    if(link){
+      link.contract.produits=(link.contract.produits||[]).filter(function(p){return p.id!==link.prod.id;});
+      contractsToSave[link.contract._id]=link.contract;
+    }
+  }
+  // Save touched contracts
+  for(var cid in contractsToSave){
+    try{await saveContract(contractsToSave[cid]);}catch(e){console.error('Save contract after bulk delete failed',e);}
   }
   selectedDealIds.clear();
   renderAll();
-  toast(sel.length+' deal(s) supprimé(s)'+(failed?' ('+failed+' erreur(s))':'.'));
+  toast(sel.length+' deal(s) supprimé(s)'+(alsoDeleteLinks&&withLinks?' avec leurs investissements liés':'')+(failed?' ('+failed+' erreur(s))':'.'));
 }
 function bulkExportCSV(){
   var sel=getSelectedDealsList();
@@ -1227,7 +1243,27 @@ function openDet(d){
     '</div>'+arbBlock;
   document.getElementById('detHist').innerHTML=(d.hist||[]).slice().reverse().map(function(h){return '<div style="font-size:12px;padding:4px 0;border-bottom:1px solid var(--border);"><span style="color:var(--text3);">'+h.ts+'</span> — '+h.a+'</div>';}).join('');
   document.getElementById('detEdit').onclick=function(){closeDet();openDealModal(idx);};
-  document.getElementById('detDelete').onclick=async function(){if(confirm('Supprimer ce deal ?')){if(d._id)await sbDelete('deals',d._id);deals.splice(idx,1);closeDet();renderAll();}};
+  document.getElementById('detDelete').onclick=function(){
+    showDealDeleteConfirm(d,async function(action,link){
+      if(action==='cancel')return;
+      if(action==='view'){
+        closeDet();
+        if(link)ctrExp[link.contract._id]=true;
+        goTo('contrats',document.querySelector('.nbtn[onclick*=contrats]'));
+        return;
+      }
+      try{
+        if(d._id)await sbDelete('deals',d._id);
+        deals.splice(idx,1);
+        if(action==='delete-both'&&link){
+          link.contract.produits=(link.contract.produits||[]).filter(function(p){return p.id!==link.prod.id;});
+          await saveContract(link.contract);
+        }
+        closeDet();renderAll();
+        toast(action==='delete-both'?'Deal et investissement supprimés.':link?'Deal supprimé. Investissement conservé.':'Deal supprimé.');
+      }catch(e){console.error(e);alert('Erreur : '+(e.message||e));}
+    });
+  };
   var showArb=(d.ct==='RUN'||d.ct==='BOTH')&&d.nom>0&&!d.arbClosed;
   document.getElementById('detArbitre').style.display=showArb?'':'none';
   document.getElementById('detArbitre').onclick=function(){closeDet();openArbitrage(idx);};
@@ -3065,13 +3101,68 @@ function openAddClientModal(name){
 }
 function closeClientModal(){document.getElementById('clientModal').classList.remove('on');document.getElementById('cName').dataset.original='';}
 function deleteClientFromModal(){var o=document.getElementById('cName').dataset.original;if(!o)return;closeClientModal();deleteClient(o);}
+// Returns {contract, prod} if a Suivi-Contrats investissement is linked to this deal, else null.
+function findLinkedInvestissement(deal){
+  if(!deal||!deal._id)return null;
+  for(var i=0;i<contracts_db.length;i++){
+    var c=contracts_db[i];
+    if(!Array.isArray(c.produits))continue;
+    var p=c.produits.find(function(x){return x.deal_id===deal._id;});
+    if(p)return{contract:c,prod:p};
+  }
+  return null;
+}
+
+// Show the linked-deletion confirm modal. callback(action, link)
+// action ∈ {'cancel','view','delete-deal-only','delete-both'}
+var _ddcCallback=null;
+function showDealDeleteConfirm(deal,callback){
+  var link=findLinkedInvestissement(deal);
+  if(!link){
+    // No linked investissement, fallback to plain confirm
+    if(confirm('Supprimer le deal "'+(deal.client||'')+' — '+(deal.produit||'')+'" ?\n\nCette action est irréversible.'))callback('delete-deal-only',null);
+    else callback('cancel',null);
+    return;
+  }
+  document.getElementById('ddcClient').textContent=link.contract.client;
+  document.getElementById('ddcDealLabel').textContent=(deal.client||'')+' — '+(deal.produit||'');
+  document.getElementById('ddcDetails').innerHTML=
+    '<div><b>Investissement</b> : '+escH(link.prod.name||'(sans nom)')+(link.prod.isin?' · ISIN '+escH(link.prod.isin):'')+(link.prod.montant?' · '+escH(link.prod.montant):'')+'</div>'+
+    '<div style="margin-top:4px;"><b>Contrat</b> : '+escH(link.contract.client)+(link.contract.num?' (#'+escH(link.contract.num)+')':'')+'</div>';
+  _ddcCallback=function(action){callback(action,link);};
+  document.getElementById('dealDeleteConfirmModal').classList.add('on');
+}
+function closeDealDeleteConfirm(){
+  document.getElementById('dealDeleteConfirmModal').classList.remove('on');
+  if(_ddcCallback){var cb=_ddcCallback;_ddcCallback=null;cb('cancel');}
+}
+function ddcAction(action){
+  document.getElementById('dealDeleteConfirmModal').classList.remove('on');
+  if(_ddcCallback){var cb=_ddcCallback;_ddcCallback=null;cb(action);}
+}
+
 async function deleteDeal(idx){
   if(idx<0||idx>=deals.length)return;
   var d=deals[idx];
-  if(!confirm('Supprimer le deal "'+d.client+' — '+d.produit+'" ? Cette action est irréversible.'))return;
-  if(d._id)await sbDelete('deals',d._id);
-  deals.splice(idx,1);
-  renderAll();toast('Deal supprimé.');
+  showDealDeleteConfirm(d,async function(action,link){
+    if(action==='cancel')return;
+    if(action==='view'){
+      // Navigate to Suivi Contrats with the relevant contract expanded
+      ctrExp[link.contract._id]=true;
+      goTo('contrats',document.querySelector('.nbtn[onclick*=contrats]'));
+      return;
+    }
+    try{
+      if(d._id)await sbDelete('deals',d._id);
+      var i=deals.indexOf(d);if(i>=0)deals.splice(i,1);
+      if(action==='delete-both'&&link){
+        link.contract.produits=(link.contract.produits||[]).filter(function(p){return p.id!==link.prod.id;});
+        await saveContract(link.contract);
+      }
+      renderAll();
+      toast(action==='delete-both'?'Deal et investissement supprimés.':link?'Deal supprimé. Investissement conservé.':'Deal supprimé.');
+    }catch(e){console.error(e);alert('Erreur : '+(e.message||e));}
+  });
 }
 
 async function deleteClient(name){

@@ -4,6 +4,7 @@ var SUPABASE_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsI
 var sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
 
 // JS camelCase <-> DB snake_case mapping for deals
+var DATE_FIELDS=['date','issue','inv_s','inv','end_date','terme','runStart','run_start'];
 function dealToRow(d){
   var r=Object.assign({},d);
   delete r._id; delete r.created_at; delete r.updated_at;
@@ -11,9 +12,12 @@ function dealToRow(d){
   r.inv_s=r.invS; r.f_st=r.fSt; r.f_ref=r.fRef;
   r.arb_id=r.arbId; r.arb_src=r.arbSrc; r.arb_closed=r.arbClosed;
   r.end_date=r.end;
+  // produit_type and terme already use snake_case names matching DB columns; keep as-is.
   delete r.ufR; delete r.runR; delete r.ufE; delete r.runE;
   delete r.invS; delete r.fSt; delete r.fRef;
   delete r.arbId; delete r.arbSrc; delete r.arbClosed; delete r.end;
+  // Normalize empty strings to null for date-typed columns (Postgres rejects "")
+  DATE_FIELDS.forEach(function(f){if(r[f]==='')r[f]=null;});
   return r;
 }
 function rowToDeal(r){
@@ -370,6 +374,16 @@ function addClientLine(){
   container.appendChild(div);
 }
 
+function removeClientLine(btn){
+  var row=btn.closest('div');
+  if(!row)return;
+  var container=document.getElementById('clientLines');
+  // Don't allow removing the last line
+  if(container.children.length<=1){alert('Au moins une ligne client requise.');return;}
+  row.remove();
+  calcM();
+}
+
 function getSelectedClients(){
   var sels=document.querySelectorAll('.mClientSel');
   var contSels=document.querySelectorAll('.mContratSel');
@@ -425,7 +439,7 @@ function goTo(id,btn){
 }
 function setV(v,btn){curV=v;document.querySelectorAll('.vbtn').forEach(b=>b.classList.remove('on'));btn.classList.add('on');renderAll();}
 function onSearch(){var q=document.getElementById('gSearch').value;if(q)goTo('deals',document.querySelectorAll('.nbtn')[1]);document.getElementById('srch').value=q;renderDeals();}
-function renderAll(){renderKpis();renderRecent();updateAlertBadge();updateContratsBadge();if(document.getElementById('p-facturation').classList.contains('on'))renderFact();}
+function renderAll(){renderKpis();renderRecent();renderAlertes();updateAlertBadge();updateContratsBadge();if(document.getElementById('p-facturation').classList.contains('on'))renderFact();}
 
 function renderKpis(){
   var d=filt();
@@ -606,6 +620,7 @@ function renderSynthPaye(){
 function renderSynthPipe(){
   var d=filt();
   var pipe=d.filter(x=>x.fSt==='À émettre'||x.fSt==='Facturé');
+  var recent=pipe.slice().sort(function(a,b){return (b.date||'').localeCompare(a.date||'');}).slice(0,5);
   var totalNom=pipe.reduce((s,x)=>s+(x.dev==='USD'?x.nom/(x.fx||1):x.nom),0);
   var totalUF=pipe.filter(x=>x.ct==='UF'||x.ct==='BOTH').reduce((s,x)=>s+(x.ufE||0),0);
   var totalRun=pipe.filter(x=>x.ct==='RUN'||x.ct==='BOTH').reduce((s,x)=>s+(x.runE||0),0);
@@ -679,14 +694,97 @@ function tBadge(c){return c==='BOTH'?'<span class="badge bb">UF</span> <span cla
 function fBadge(s){var m={Payé:'bg',Facturé:'bb','À émettre':'ba',Litige:'br'};return '<span class="badge '+(m[s]||'bgr')+'">'+s+'</span>';}
 function sRow(d){return '<td class="mono">'+d.date+'</td><td><span class="av av-'+avC(d.v)+'">'+avL(d.v)+'</span></td><td style="font-weight:500;">'+d.client+'</td><td>'+d.fourn+'</td><td style="color:var(--text2);">'+d.produit+'</td><td style="text-align:right;" class="mono">'+f0(d.nom)+' '+d.dev+'</td><td>'+tBadge(d.ct)+'</td><td style="text-align:right;color:var(--blue);font-weight:500;">'+(d.ufE>0?fE(d.ufE):'—')+'</td><td style="text-align:right;color:var(--green);font-weight:500;">'+(d.runE>0?fE(d.runE):'—')+'</td><td>'+fBadge(d.fSt)+'</td>';}
 
+var selectedDealIds=new Set();
+var _dealsFiltered=[];
+function dealKey(d){return d._id||('idx_'+deals.indexOf(d));}
 function renderDeals(){
   var q=(document.getElementById('srch').value||'').toLowerCase(),ft=document.getElementById('flT').value,ff=document.getElementById('flF').value,fd=document.getElementById('flDev').value,ff2=document.getElementById('flFourn').value;
   var data=filt().filter(d=>{if(ft&&d.ct!==ft)return false;if(ff&&d.fSt!==ff)return false;if(fd&&d.dev!==fd)return false;if(ff2&&d.fourn!==ff2)return false;if(q&&!(d.client.toLowerCase().includes(q)||d.fourn.toLowerCase().includes(q)||(d.produit||'').toLowerCase().includes(q)||(d.isin||'').toLowerCase().includes(q)))return false;return true;});
   data.sort((a,b)=>{var av=a[sCol]||0,bv=b[sCol]||0;return typeof av==='string'?av.localeCompare(bv)*sDir:(av-bv)*sDir;});
+  _dealsFiltered=data;
   var t=document.getElementById('dealsT');while(t.rows.length>1)t.deleteRow(1);
   document.getElementById('dealsEmpty').style.display=data.length?'none':'block';
-  data.forEach(d=>{var r=t.insertRow();r.className='cl';r.onclick=()=>openDet(d);var av='<span class="av av-'+avC(d.v)+'">'+avL(d.v)+'</span>';r.innerHTML='<td class="mono">'+d.date+'</td><td>'+av+'</td><td style="font-weight:500;white-space:nowrap;">'+d.client+'</td><td style="color:var(--text2);font-size:11px;">'+d.contrat+'</td><td>'+d.produit+'</td><td>'+d.fourn+'</td><td style="color:var(--text2);">'+(d.broker||'—')+'</td><td style="text-align:right;" class="mono">'+f0(d.nom)+'</td><td>'+d.dev+'</td><td class="mono" style="font-size:10px;color:var(--text2);">'+(d.isin||'—')+'</td><td class="mono" style="font-size:11px;color:var(--text2);">'+(d.issue||'—')+'</td><td class="mono" style="font-size:11px;color:var(--text2);">'+(d.invS||'—')+'</td><td class="mono" style="font-size:11px;color:var(--text2);">'+(d.inv||'—')+'</td><td>'+tBadge(d.ct)+'</td><td style="text-align:right;color:var(--blue);font-weight:500;">'+(d.ufE>0?fE(d.ufE):'—')+'</td><td style="text-align:right;color:var(--green);font-weight:500;">'+(d.runE>0?fE(d.runE):'—')+'</td><td style="color:var(--text2);">'+(d.tva===0?'Exo':(d.tva*100).toFixed(0)+'%')+'</td><td class="mono" style="font-size:11px;">'+(d.fRef||'—')+'</td><td>'+fBadge(d.fSt)+'</td><td style="font-size:11px;color:var(--text2);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+(d.notes||'—')+'</td><td style="display:flex;gap:5px;"><button class="btn btn-sm" onclick="event.stopPropagation();openDealModal('+deals.indexOf(d)+')">Modifier</button><button class="btn btn-sm" style="color:var(--red);border-color:var(--red-bg);" onclick="event.stopPropagation();deleteDeal('+deals.indexOf(d)+')">Supprimer</button></td>';});
+  data.forEach(d=>{
+    var r=t.insertRow();r.className='cl';r.onclick=function(ev){if(ev.target.tagName==='INPUT'||ev.target.tagName==='BUTTON')return;openDet(d);};
+    var av='<span class="av av-'+avC(d.v)+'">'+avL(d.v)+'</span>';
+    var k=dealKey(d);
+    var checked=selectedDealIds.has(k)?' checked':'';
+    r.innerHTML='<td style="text-align:center;"><input type="checkbox" class="rowSel" data-key="'+k+'"'+checked+' onclick="event.stopPropagation();onDealRowSel(this)"/></td><td class="mono">'+d.date+'</td><td>'+av+'</td><td style="font-weight:500;white-space:nowrap;">'+d.client+'</td><td style="color:var(--text2);font-size:11px;">'+d.contrat+'</td><td>'+d.produit+'</td><td style="color:var(--text2);font-size:11px;">'+(d.produit_type||'—')+'</td><td>'+d.fourn+'</td><td style="color:var(--text2);">'+(d.broker||'—')+'</td><td style="text-align:right;" class="mono">'+f0(d.nom)+'</td><td>'+d.dev+'</td><td class="mono" style="font-size:10px;color:var(--text2);">'+(d.isin||'—')+'</td><td class="mono" style="font-size:11px;color:var(--text2);">'+(d.issue||'—')+'</td><td class="mono" style="font-size:11px;color:var(--text2);">'+(d.invS||'—')+'</td><td class="mono" style="font-size:11px;color:var(--text2);">'+(d.inv||'—')+'</td><td class="mono" style="font-size:11px;color:var(--text2);">'+(d.terme||'—')+'</td><td>'+tBadge(d.ct)+'</td><td style="text-align:right;color:var(--blue);font-weight:500;">'+(d.ufE>0?fE(d.ufE):'—')+'</td><td style="text-align:right;color:var(--green);font-weight:500;">'+(d.runE>0?fE(d.runE):'—')+'</td><td class="mono" style="font-size:11px;">'+(d.fRef||'—')+'</td><td>'+fBadge(d.fSt)+'</td><td style="font-size:11px;color:var(--text2);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+(d.notes||'—')+'</td><td style="display:flex;gap:5px;"><button class="btn btn-sm" onclick="event.stopPropagation();openDealModal('+deals.indexOf(d)+')">Modifier</button><button class="btn btn-sm" style="color:var(--red);border-color:var(--red-bg);" onclick="event.stopPropagation();deleteDeal('+deals.indexOf(d)+')">Supprimer</button></td>';
+  });
   var fourns=[...new Set(filt().map(d=>d.fourn))].sort(),sel=document.getElementById('flFourn'),cv=sel.value;sel.innerHTML='<option value="">Tous fournisseurs</option>';fourns.forEach(f=>{sel.innerHTML+='<option'+(f===cv?' selected':'')+'>'+f+'</option>';});
+  // Prune selected ids that no longer exist in filter (so the bar count stays accurate)
+  refreshBulkBar();
+}
+
+function onDealRowSel(cb){
+  var k=cb.dataset.key;
+  if(cb.checked)selectedDealIds.add(k);else selectedDealIds.delete(k);
+  refreshBulkBar();
+  syncSelectAllCheckbox();
+}
+function toggleSelectAllDeals(cb){
+  if(cb.checked){_dealsFiltered.forEach(function(d){selectedDealIds.add(dealKey(d));});}
+  else{_dealsFiltered.forEach(function(d){selectedDealIds.delete(dealKey(d));});}
+  document.querySelectorAll('#dealsT .rowSel').forEach(function(el){el.checked=cb.checked;});
+  refreshBulkBar();
+}
+function syncSelectAllCheckbox(){
+  var sa=document.getElementById('bulkSelectAll');if(!sa)return;
+  var allChecked=_dealsFiltered.length>0&&_dealsFiltered.every(function(d){return selectedDealIds.has(dealKey(d));});
+  sa.checked=allChecked;
+  sa.indeterminate=!allChecked&&_dealsFiltered.some(function(d){return selectedDealIds.has(dealKey(d));});
+}
+function refreshBulkBar(){
+  // Count only deals currently visible (filtered) for bar
+  var visibleSelected=_dealsFiltered.filter(function(d){return selectedDealIds.has(dealKey(d));});
+  var bar=document.getElementById('dealsBulkBar');
+  if(!bar)return;
+  if(visibleSelected.length>0){bar.style.display='flex';document.getElementById('bulkSelCount').textContent=visibleSelected.length;}
+  else bar.style.display='none';
+  syncSelectAllCheckbox();
+}
+function bulkClear(){selectedDealIds.clear();renderDeals();}
+function getSelectedDealsList(){return deals.filter(function(d){return selectedDealIds.has(dealKey(d));});}
+async function bulkApplyStatus(){
+  var newStatus=document.getElementById('bulkStatus').value;
+  if(!newStatus){alert('Choisissez un statut.');return;}
+  var sel=getSelectedDealsList();
+  if(!sel.length){alert('Aucun deal sélectionné.');return;}
+  if(!confirm('Appliquer le statut "'+newStatus+'" à '+sel.length+' deal(s) ?'))return;
+  var failed=0;
+  for(var i=0;i<sel.length;i++){
+    var d=sel[i];
+    d.fSt=newStatus;
+    if(!d.hist)d.hist=[];
+    d.hist.push({ts:nowS(),a:'Statut → '+newStatus+' (action groupée)',by:'Système'});
+    if(d._id){try{await sbUpdate('deals',d._id,d);}catch(e){console.error('Bulk status update failed for',d._id,e);failed++;}}
+  }
+  selectedDealIds.clear();
+  renderAll();
+  toast(sel.length+' deal(s) mis à jour'+(failed?' ('+failed+' erreur(s))':'.'));
+}
+async function bulkDelete(){
+  var sel=getSelectedDealsList();
+  if(!sel.length){alert('Aucun deal sélectionné.');return;}
+  if(!confirm('Supprimer définitivement '+sel.length+' deal(s) ? Cette action est irréversible.'))return;
+  var failed=0;
+  for(var i=0;i<sel.length;i++){
+    var d=sel[i];
+    if(d._id){try{await sbDelete('deals',d._id);}catch(e){console.error('Bulk delete failed for',d._id,e);failed++;continue;}}
+    var idx=deals.indexOf(d);if(idx>=0)deals.splice(idx,1);
+  }
+  selectedDealIds.clear();
+  renderAll();
+  toast(sel.length+' deal(s) supprimé(s)'+(failed?' ('+failed+' erreur(s))':'.'));
+}
+function bulkExportCSV(){
+  var sel=getSelectedDealsList();
+  if(!sel.length){alert('Aucun deal sélectionné.');return;}
+  var h=['Vendeur','Date','Client','Contrat','Fournisseur','Broker','Produit','TypeProduit','ISIN','Nominal','Devise','FX','Issue','Terme','Type','UF%','Run%','UF EUR','Run EUR','Statut','Ref','Invoice','Notes'];
+  var rows=sel.map(function(d){return[d.v,d.date,d.client,d.contrat,d.fourn,d.broker,d.produit,d.produit_type||'',d.isin,d.nom,d.dev,d.fx,d.issue,d.terme||'',d.ct,d.ufR,d.runR,d.ufE,d.runE,d.fSt,d.fRef,d.inv,d.notes].map(function(v){return (v||'').toString().replace(/,/g,';');});});
+  var csv=[h.join(','),...rows.map(function(r){return r.join(',');})].join('\n');
+  var a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8;'}));a.download='deals_selection_'+today()+'.csv';a.click();
+  toast(sel.length+' deal(s) exporté(s).');
 }
 function sBy(c){if(sCol===c)sDir*=-1;else{sCol=c;sDir=-1;}renderDeals();}
 
@@ -1612,7 +1710,63 @@ function setFT(t,btn){ftab=t;document.querySelectorAll('#factTabs .stab').forEac
 
 // ── RUNNING TRIMESTRIEL ───────────────────────────────────────────────────────
 function renderAlertes(){}
-function updateAlertBadge(){}
+// ── ALERTES TERME ────────────────────────────────────────────────────────────
+function getAlertes(){
+  // Returns deals approaching maturity (within 6 months) sorted by date asc.
+  var now=new Date();now.setHours(0,0,0,0);
+  var horizon=new Date(now);horizon.setMonth(horizon.getMonth()+6);
+  var out=[];
+  deals.forEach(function(d){
+    if(!d.terme)return;
+    var t=new Date(d.terme);if(isNaN(t))return;
+    if(t<now)return; // already past
+    if(t>horizon)return; // beyond 6 months
+    var days=Math.round((t-now)/(1000*60*60*24));
+    out.push({deal:d,days:days,date:d.terme});
+  });
+  out.sort(function(a,b){return a.days-b.days;});
+  return out;
+}
+function alerteSeverity(days){
+  if(days<=30)return{cls:'br',color:'var(--red)',bg:'var(--red-bg)',tx:'var(--red-t)',lbl:'urgent'};
+  if(days<=90)return{cls:'ba',color:'var(--amber)',bg:'var(--amber-bg)',tx:'var(--amber-t)',lbl:'proche'};
+  return{cls:'bb',color:'var(--blue)',bg:'var(--blue-bg)',tx:'var(--blue-t)',lbl:'à surveiller'};
+}
+function fmtDateFR(s){if(!s)return'';var d=new Date(s);if(isNaN(d))return s;return d.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'numeric'});}
+function fmtDelay(days){if(days===0)return"aujourd'hui";if(days===1)return'demain';if(days<30)return'dans '+days+' j';if(days<60)return'dans '+Math.round(days/7)+' sem';return'dans '+Math.round(days/30)+' mois';}
+
+function updateAlertBadge(){
+  var alertes=getAlertes();
+  // Badge sidebar Synthèse — first nav button
+  var syntheseBtn=document.querySelectorAll('.nbtn')[0];
+  if(syntheseBtn){
+    var existing=syntheseBtn.querySelector('.alert-dot-badge');
+    if(alertes.length>0){
+      if(!existing){var b=document.createElement('span');b.className='alert-dot-badge';b.textContent=alertes.length;syntheseBtn.appendChild(b);}
+      else existing.textContent=alertes.length;
+    } else if(existing){existing.remove();}
+  }
+}
+
+function renderAlertes(){
+  var el=document.getElementById('alertesPanel');if(!el)return;
+  var alertes=getAlertes();
+  if(!alertes.length){
+    el.innerHTML='<div style="font-size:12px;color:var(--text3);padding:10px 0;">Aucune alerte en cours. Tous les produits avec une date de terme sont au-delà de 6 mois.</div>';
+    return;
+  }
+  el.innerHTML=alertes.slice(0,10).map(function(a){
+    var d=a.deal,sv=alerteSeverity(a.days);
+    return '<div class="alert-item" onclick="openDet(deals['+deals.indexOf(d)+'])" style="cursor:pointer;">'+
+      '<span class="adot" style="background:'+sv.color+';"></span>'+
+      '<div style="flex:1;min-width:0;">'+
+        '<div style="font-size:13px;font-weight:500;color:var(--text);">'+(d.produit||'(sans nom)')+' — '+(d.client||'')+'</div>'+
+        '<div style="font-size:11px;color:var(--text2);margin-top:1px;">'+(d.produit_type?d.produit_type+' · ':'')+'Terme '+fmtDateFR(d.terme)+' · '+fmtDelay(a.days)+'</div>'+
+      '</div>'+
+      '<span class="badge '+sv.cls+'">'+sv.lbl+'</span>'+
+    '</div>';
+  }).join('')+(alertes.length>10?'<div style="font-size:11px;color:var(--text3);padding:6px 0;text-align:center;">+ '+(alertes.length-10)+' autres alertes</div>':'');
+}
 
 function renderCharts(){
   var data=filt();
@@ -1746,6 +1900,7 @@ function calcM(){
 }
 
 async function saveDeal(){
+ try{
   var nom=parseFloat(document.getElementById('mNom').value)||0;
   var items=getSelectedClients();
   if(!items.length){alert('Au moins un client requis.');return;}
@@ -1756,6 +1911,10 @@ async function saveDeal(){
   if(pfMode!=='none'){var pfType=document.getElementById('mPFType').value;pf.type=pfType;pf.freq=document.getElementById('mPFFreq').value;if(pfType==='pct'){pf.rate=parseFloat(document.getElementById('mPFRate').value)||0;pf.hurdle=parseFloat(document.getElementById('mPFHurdle').value)||0;}else{pf.amount=parseFloat(document.getElementById('mPFFixed').value)||0;}}
   var codifs=getCodifLines();
   var base={v:document.getElementById('mV').value,date:document.getElementById('mDate').value,stat:document.getElementById('mStat').value,contrat:document.getElementById('mContrat').value,fourn:codifs[0]?codifs[0].fourn:'',produit:codifs[0]?codifs[0].produit:'',isin:codifs[0]?codifs[0].isin:'',broker:codifs[0]?codifs[0].broker:'',codifications:codifs,nom,dev,fx,issue:document.getElementById('mIssue').value,invS:document.getElementById('mInvS').value,inv:document.getElementById('mInv').value,ct,ufR:parseFloat(document.getElementById('mUFR').value)||0,runR:parseFloat(document.getElementById('mRunR').value)||0,tva:0,ufE:Math.round(dev==='USD'?(nom*ufP/fx):nom*ufP),runE:Math.round(nomE*runP),pf,fSt:'À émettre',fRef:'',notes:document.getElementById('mNotes').value};
+  var produitType=(document.getElementById('mProduitType')||{}).value||null;
+  var termeRaw=(document.getElementById('mTerme')||{}).value||'';
+  var terme=termeRaw||null;
+  var base={v:document.getElementById('mV').value,date:document.getElementById('mDate').value,stat:document.getElementById('mStat').value,contrat:document.getElementById('mContrat').value,broker:document.getElementById('mBroker').value,fourn:document.getElementById('mFourn').value,produit:document.getElementById('mProduit').value,produit_type:produitType,terme:terme,isin:document.getElementById('mISIN').value,nom,dev,fx,issue:document.getElementById('mIssue').value,invS:document.getElementById('mInvS').value,inv:document.getElementById('mInv').value,ct,ufR:parseFloat(document.getElementById('mUFR').value)||0,runR:parseFloat(document.getElementById('mRunR').value)||0,tva:0,ufE:Math.round(dev==='USD'?(nom*ufP/fx):nom*ufP),runE:Math.round(nomE*runP),pf,fSt:'À émettre',fRef:'',notes:document.getElementById('mNotes').value};
   if(editIdx>=0){
     var cc=getSelectedClients();
     var lineNom=cc.length&&cc[0].nom?cc[0].nom:nom;
@@ -1779,6 +1938,10 @@ async function saveDeal(){
     }
     closeDM();renderAll();toast(items.length>1?items.length+' deals enregistrés.':'Nouveau deal enregistré.');
   }
+ }catch(err){
+  console.error('saveDeal failed',err);
+  alert('Erreur enregistrement deal :\n\n'+(err.message||err)+'\n\n(Voir la console pour le détail.)');
+ }
 }
 
 function exportCSV(){
@@ -3259,6 +3422,8 @@ async function initApp(){
   }
   document.getElementById('loadingOverlay').style.display='none';
   renderAll();rebuildFournSelect();rebuildBrokerSelect();
+  setupRealtime();
+  startCodeWatcher();
 }
 
 // Auth state listener — handle session expiry mid-use
@@ -3268,6 +3433,146 @@ sb.auth.onAuthStateChange(function(event,session){
     document.getElementById('loginOverlay').style.display='flex';
   }
 });
+
+// ── REALTIME (DB sync across collaborators) ─────────────────────────────────
+var _realtimeChannel=null,_realtimeSetup=false;
+function rerenderForTable(table){
+  // Always update KPIs/badges since they depend on all tables.
+  try{renderAll();}catch(e){}
+  if(table==='deals'){
+    if(document.getElementById('p-deals')&&document.getElementById('p-deals').classList.contains('on'))renderDeals();
+    rebuildFournSelect();
+  } else if(table==='contracts'){
+    if(document.getElementById('p-contrats')&&document.getElementById('p-contrats').classList.contains('on'))renderContrats();
+    updateContratsBadge();
+  } else if(table==='clients'){
+    if(document.getElementById('p-clients')&&document.getElementById('p-clients').classList.contains('on'))renderClients();
+  } else if(table==='fournisseurs'){
+    if(document.getElementById('p-fournisseurs')&&document.getElementById('p-fournisseurs').classList.contains('on'))renderFourn();
+    rebuildFournSelect();
+  } else if(table==='brokers'){
+    if(document.getElementById('p-brokers')&&document.getElementById('p-brokers').classList.contains('on'))renderBrokers();
+    rebuildBrokerSelect();
+  }
+  setLiveStatus('live');
+}
+
+function setupRealtime(){
+  if(_realtimeSetup)return;_realtimeSetup=true;
+  _realtimeChannel=sb.channel('app-realtime')
+    .on('postgres_changes',{event:'*',schema:'public',table:'deals'},function(p){
+      try{
+        if(p.eventType==='DELETE'){deals=deals.filter(function(x){return x._id!==p.old.id;});}
+        else{
+          var d=rowToDeal(p.new);
+          var idx=deals.findIndex(function(x){return x._id===d._id;});
+          if(idx>=0)deals[idx]=d;else deals.push(d);
+        }
+        rerenderForTable('deals');
+      }catch(e){console.error('Realtime deals error',e);}
+    })
+    .on('postgres_changes',{event:'*',schema:'public',table:'clients'},function(p){
+      try{
+        if(p.eventType==='DELETE'){clients_db=clients_db.filter(function(x){return x._id!==p.old.id;});}
+        else{
+          var c=rowToRef(p.new);
+          var idx=clients_db.findIndex(function(x){return x._id===c._id;});
+          if(idx>=0)clients_db[idx]=c;else clients_db.push(c);
+        }
+        rerenderForTable('clients');
+      }catch(e){console.error('Realtime clients error',e);}
+    })
+    .on('postgres_changes',{event:'*',schema:'public',table:'fournisseurs'},function(p){
+      try{
+        if(p.eventType==='DELETE'){fourn_db=fourn_db.filter(function(x){return x._id!==p.old.id;});}
+        else{
+          var f=rowToRef(p.new);
+          var idx=fourn_db.findIndex(function(x){return x._id===f._id;});
+          if(idx>=0)fourn_db[idx]=f;else fourn_db.push(f);
+        }
+        rerenderForTable('fournisseurs');
+      }catch(e){console.error('Realtime fournisseurs error',e);}
+    })
+    .on('postgres_changes',{event:'*',schema:'public',table:'brokers'},function(p){
+      try{
+        if(p.eventType==='DELETE'){brokers_db=brokers_db.filter(function(x){return x._id!==p.old.id;});}
+        else{
+          var b=rowToRef(p.new);
+          var idx=brokers_db.findIndex(function(x){return x._id===b._id;});
+          if(idx>=0)brokers_db[idx]=b;else brokers_db.push(b);
+        }
+        rerenderForTable('brokers');
+      }catch(e){console.error('Realtime brokers error',e);}
+    })
+    .on('postgres_changes',{event:'*',schema:'public',table:'rapprochement'},function(p){
+      try{
+        if(p.eventType==='DELETE'){rapprochement_db=rapprochement_db.filter(function(r){return r.id!==p.old.id;});}
+        else{
+          var r=rapprRowToObj(p.new);
+          var idx=rapprochement_db.findIndex(function(x){return x.id===r.id;});
+          if(idx>=0)rapprochement_db[idx]=r;else rapprochement_db.push(r);
+        }
+        rerenderForTable('rapprochement');
+      }catch(e){console.error('Realtime rapprochement error',e);}
+    })
+    .on('postgres_changes',{event:'*',schema:'public',table:'contracts'},function(p){
+      try{
+        if(p.eventType==='DELETE'){contracts_db=contracts_db.filter(function(c){return c._id!==p.old.id;});}
+        else{
+          var c=rowToContract(p.new);
+          var idx=contracts_db.findIndex(function(x){return x._id===c._id;});
+          if(idx>=0)contracts_db[idx]=c;else contracts_db.push(c);
+        }
+        rerenderForTable('contracts');
+      }catch(e){console.error('Realtime contracts error',e);}
+    })
+    .subscribe(function(status){
+      if(status==='SUBSCRIBED')setLiveStatus('live');
+      else if(status==='CHANNEL_ERROR'||status==='TIMED_OUT')setLiveStatus('offline');
+    });
+}
+
+function setLiveStatus(state){
+  var el=document.getElementById('liveStatus');if(!el)return;
+  if(state==='live'){el.textContent='● Live';el.style.color='var(--green)';el.title='Synchronisation temps réel active';}
+  else if(state==='offline'){el.textContent='● Hors ligne';el.style.color='var(--red)';el.title='Connexion temps réel perdue — rechargez si nécessaire';}
+  else{el.textContent='● Connexion…';el.style.color='var(--text3)';}
+}
+
+// ── CODE-UPDATE WATCHER (auto-banner when teammate pushes new code) ─────────
+var _initialCodeHash=null,_updateBannerShown=false;
+function _hashStr(s){var h=0;for(var i=0;i<s.length;i++){h=((h<<5)-h)+s.charCodeAt(i);h|=0;}return h.toString(36);}
+async function _fetchAppHash(){
+  // Hash app.js + index.html signatures together. Cache-busted so CDN serves fresh.
+  try{
+    var [a,b]=await Promise.all([
+      fetch('app.js?cb='+Date.now(),{cache:'no-store'}).then(function(r){return r.text();}),
+      fetch('index.html?cb='+Date.now(),{cache:'no-store'}).then(function(r){return r.text();})
+    ]);
+    return _hashStr(a)+'|'+_hashStr(b);
+  }catch(e){return null;}
+}
+async function checkCodeUpdate(){
+  if(_updateBannerShown)return;
+  var h=await _fetchAppHash();
+  if(!h)return;
+  if(_initialCodeHash===null){_initialCodeHash=h;return;}
+  if(h!==_initialCodeHash)showUpdateBanner();
+}
+function showUpdateBanner(){
+  if(_updateBannerShown)return;_updateBannerShown=true;
+  var div=document.createElement('div');
+  div.id='codeUpdateBanner';
+  div.style.cssText='position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--text);color:var(--surface);padding:12px 18px;border-radius:8px;display:flex;align-items:center;gap:14px;box-shadow:0 6px 20px rgba(0,0,0,.25);z-index:99999;font-size:13px;';
+  div.innerHTML=
+    '<span>🔄 Une nouvelle version de l\'application est disponible.</span>'+
+    '<button onclick="location.reload(true)" style="background:var(--blue);color:#fff;border:none;padding:6px 14px;border-radius:5px;font-size:12px;cursor:pointer;font-weight:500;">Recharger</button>'+
+    '<button onclick="document.getElementById(\'codeUpdateBanner\').remove();" style="background:transparent;color:rgba(255,255,255,.6);border:none;padding:4px 8px;font-size:16px;cursor:pointer;">×</button>';
+  document.body.appendChild(div);
+}
+// Poll every 30s. HEAD-only would be ideal but GitHub Pages CDN headers
+// aren't 100% reliable; full fetch with cache-bust is more robust.
+function startCodeWatcher(){checkCodeUpdate();setInterval(checkCodeUpdate,30000);}
 
 checkAuth();
 

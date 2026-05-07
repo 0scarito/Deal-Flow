@@ -57,6 +57,7 @@
     <div class="topbar">
       <div class="page-title" id="pageTitle">Synthèse</div>
       <div class="topbar-r">
+        <span id="liveStatus" style="font-size:11px;color:var(--text3);font-weight:500;" title="État de la synchronisation temps réel">● Connexion…</span>
         <input type="text" id="gSearch" placeholder="Rechercher…" style="width:190px;padding:6px 10px;" oninput="onSearch()"/>
         <button class="btn btn-primary" onclick="openDealModal()">+ Nouveau deal</button>
       </div>
@@ -65,6 +66,15 @@
 
       <!-- SYNTHESE -->
       <div class="page on" id="p-synthese">
+
+        <!-- ALERTES (produits arrivant à terme) -->
+        <div class="card" style="border-top:3px solid var(--amber);padding:16px 18px;margin-bottom:14px;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="var(--amber)" stroke-width="1.5"><path d="M8 1l7 13H1z"/><path d="M8 6v4M8 12.5v.5"/></svg>
+            <span style="font-size:12px;font-weight:600;color:var(--amber-t);text-transform:uppercase;letter-spacing:.5px;">Alertes produits — termes à 6 mois</span>
+          </div>
+          <div id="alertesPanel"></div>
+        </div>
 
         <!-- KPIs top -->
         <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:20px;" id="kpiGrid"></div>
@@ -112,9 +122,19 @@
           <select id="flDev" onchange="renderDeals()" style="width:auto;"><option value="">EUR+USD</option><option>EUR</option><option>USD</option></select>
           <select id="flFourn" onchange="renderDeals()" style="width:auto;"><option value="">Tous fournisseurs</option></select>
         </div>
+        <!-- Bulk action bar (visible when selection > 0) -->
+        <div id="dealsBulkBar" style="display:none;background:var(--blue-bg);border:1px solid rgba(29,95,212,.3);border-radius:var(--rs);padding:8px 14px;margin-bottom:10px;align-items:center;gap:10px;flex-wrap:wrap;">
+          <span style="font-size:12px;font-weight:600;color:var(--blue-t);"><span id="bulkSelCount">0</span> deal(s) sélectionné(s)</span>
+          <div style="flex:1;"></div>
+          <select id="bulkStatus" style="width:auto;font-size:11px;padding:4px 8px;"><option value="">Changer statut…</option><option>À émettre</option><option>Facturé</option><option>Payé</option><option>Litige</option></select>
+          <button class="btn btn-sm" onclick="bulkApplyStatus()">Appliquer</button>
+          <button class="btn btn-sm" onclick="bulkExportCSV()">Exporter CSV</button>
+          <button class="btn btn-sm" style="color:var(--red);border-color:var(--red-bg);" onclick="bulkDelete()">Supprimer</button>
+          <button class="btn btn-sm" onclick="bulkClear()">Tout désélectionner</button>
+        </div>
         <div class="card" style="padding:0;overflow:hidden;">
           <div class="tw"><table id="dealsT">
-            <tr><th><button class="sort-btn" onclick="sBy('date')">Date↕</button></th><th>Vendeur</th><th>Client</th><th>Contrat</th><th>Produit</th><th>Fournisseur</th><th>Broker</th><th><button class="sort-btn" onclick="sBy('nom')">Nominal↕</button></th><th>Dev.</th><th>ISIN</th><th>Trade date</th><th>Invoice sending</th><th>Invoice payment</th><th>Type</th><th><button class="sort-btn" onclick="sBy('ufE')">UF€↕</button></th><th><button class="sort-btn" onclick="sBy('runE')">Run/an↕</button></th><th>Réf.</th><th>Facture</th><th>Notes</th><th></th></tr>
+            <tr><th style="width:30px;"><input type="checkbox" id="bulkSelectAll" onclick="toggleSelectAllDeals(this)" title="Tout sélectionner / désélectionner"/></th><th><button class="sort-btn" onclick="sBy('date')">Date↕</button></th><th>Vendeur</th><th>Client</th><th>Contrat</th><th>Produit</th><th>Type produit</th><th>Fournisseur</th><th>Broker</th><th><button class="sort-btn" onclick="sBy('nom')">Nominal↕</button></th><th>Dev.</th><th>ISIN</th><th>Trade date</th><th>Invoice sending</th><th>Invoice payment</th><th>Terme</th><th>Type</th><th><button class="sort-btn" onclick="sBy('ufE')">UF€↕</button></th><th><button class="sort-btn" onclick="sBy('runE')">Run/an↕</button></th><th>Réf.</th><th>Facture</th><th>Notes</th><th></th></tr>
           </table></div>
           <div id="dealsEmpty" class="empty">Aucun deal correspondant.</div>
         </div>

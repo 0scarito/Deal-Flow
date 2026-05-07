@@ -1268,8 +1268,10 @@ function updateArbProrata(){
   var days=Math.round((new Date(arbDate)-new Date(tradeDate))/(1000*60*60*24));
   if(days<=0)return;
   var prorata=Math.round(d.runE*(days/365));
-  document.getElementById('arbProrataText').textContent='Pro-rata Running '+d.fourn+' : '+days+' jours ('+tradeDate+' \u2192 '+arbDate+') = '+fE(prorata)+' \u00e0 facturer';
+  var trim=trimFromDate(arbDate);
+  document.getElementById('arbProrataText').textContent='Pro-rata Running '+d.fourn+' : '+days+' jours ('+tradeDate+' \u2192 '+arbDate+') = '+fE(prorata)+' \u00e0 facturer'+(trim?' sur '+trimLabelFR(trim):'');
   document.getElementById('arbProrataInfo').style.display='block';
+  updateArbSummary();
 }
 
 function updateArbSummary(){
@@ -1280,6 +1282,46 @@ function updateArbSummary(){
   document.getElementById('arbTotalArb').textContent=fE(total);
   document.getElementById('arbSolde').textContent=fE(solde);
   document.getElementById('arbSolde').style.color=solde<0?'var(--red)':solde===0?'var(--green)':'var(--text)';
+  // Build a clear "what will happen" preview
+  var preview=document.getElementById('arbPreview');
+  var body=document.getElementById('arbPreviewBody');
+  if(!preview||!body)return;
+  var arbDate=document.getElementById('arbDate').value;
+  if(!arbDate||total<=0||total>d.nom){preview.style.display='none';return;}
+  var tradeDate=d.issue||d.date;
+  var days=tradeDate?Math.round((new Date(arbDate)-new Date(tradeDate))/86400000):0;
+  var prorataRun=d.runE>0&&days>0?Math.round(d.runE*(total/d.nom)*(days/365)):0;
+  var trim=trimFromDate(arbDate);
+  var destLines=document.querySelectorAll('#arbDestLines > div');
+  var dests=[];
+  destLines.forEach(function(line){
+    var fourn=line.querySelector('.arbFournSel').value;
+    var produit=line.querySelector('.arbProduitSel').value;
+    var montant=parseFloat(line.querySelector('.arbMontantSel').value)||0;
+    var type=line.querySelector('.arbTypeSel').value;
+    var taux=parseFloat(line.querySelector('.arbTauxSel').value)||0;
+    if(fourn&&montant>0)dests.push({fourn:fourn,produit:produit,montant:montant,type:type,taux:taux});
+  });
+  var clientHasContract=contracts_db.some(function(c){return c.client===d.client;});
+  var willCloseSrc=solde===0;
+  var lines=[];
+  lines.push('• <b>Source</b> '+escH(d.fourn)+' / '+escH(d.produit||'')+' : nominal '+fE(d.nom)+' → '+fE(solde)+(willCloseSrc?' <span class="badge bp">clôturé</span>':' (réduit)'));
+  if(prorataRun>0)lines.push('• <b>Pro-rata Running</b> à facturer : '+fE(prorataRun)+' ('+days+' j de '+escH(tradeDate||'?')+' à '+escH(arbDate)+')');
+  if(prorataRun>0&&trim)lines.push('• <b>Rapprochement '+trimLabelFR(trim)+' '+escH(d.fourn)+'</b> : auto-incrémenté de +'+fE(prorataRun)+' avec note d\'arbitrage');
+  if(dests.length){
+    lines.push('• <b>'+dests.length+' nouveau'+(dests.length>1?'x deals créés':' deal créé')+'</b> avec date '+escH(arbDate)+' (statut "Deal réalisé")');
+    dests.forEach(function(x){
+      var commTxt='';
+      if(x.type==='RUN')commTxt=' · Running '+x.taux+'%/an = '+fE(Math.round(x.taux/100*x.montant))+'/an';
+      else if(x.type==='UF')commTxt=' · UF '+x.taux+'% = '+fE(Math.round(x.taux/100*x.montant));
+      else if(x.type==='BOTH')commTxt=' · Run+UF '+x.taux+'%';
+      else if(x.type==='PF')commTxt=' · Perf fees '+fE(x.taux);
+      lines.push('&nbsp;&nbsp;&nbsp;&nbsp;→ '+escH(x.fourn)+' / '+escH(x.produit||'(produit)')+' · '+fE(x.montant)+commTxt);
+    });
+  }
+  if(clientHasContract)lines.push('• <b>Suivi Contrats</b> : invest. source marqué arbitré · '+dests.length+' nouvelle'+(dests.length>1?'s lignes':' ligne')+' ajoutée'+(dests.length>1?'s':'')+' au contrat de '+escH(d.client));
+  body.innerHTML=lines.join('<br>');
+  preview.style.display='';
 }
 
 async function confirmArbitrage(){
@@ -1345,6 +1387,30 @@ async function confirmArbitrage(){
     createdDeals.push(newDeal);
   }
 
+  // \u2500\u2500 Rapprochement: ajouter automatiquement le pro-rata sur le trim de l'arbDate \u2500\u2500
+  var rapprNote='';
+  if(prorataRun>0){
+    var trimPeriod=trimFromDate(arbDate);
+    if(trimPeriod){
+      try{
+        var existing=rapprFind(d.fourn,'run',trimPeriod);
+        var arbLine='[Arbitrage '+arbId+' \u00b7 '+arbDate+'] +'+f0(prorataRun)+' \u20ac pro-rata Running ('+f0(totalArb)+' \u20ac arbitr\u00e9 \u00b7 '+days+' j depuis '+(d.issue||d.date||'?')+')';
+        var newComment=existing&&existing.comment?(existing.comment+'\n'+arbLine):arbLine;
+        var newDeclared=(existing?(existing.declared||0):0)+prorataRun;
+        await rapprSave(d.fourn,'run',trimPeriod,{
+          declared:newDeclared,
+          comment:newComment,
+          facture:existing?existing.facture:false,
+          factureDate:existing?existing.factureDate:'',
+          paid:existing?existing.paid:false,
+          paidDate:existing?existing.paidDate:'',
+          theoTrim:existing?existing.theoTrim:0
+        });
+        rapprNote=' \u00b7 Rapprochement '+trimLabelFR(trimPeriod)+' '+d.fourn+' mis \u00e0 jour';
+      }catch(e){console.warn('Rapprochement auto-update failed',e);rapprNote=' \u00b7 \u26a0 Mise \u00e0 jour rapprochement \u00e9chou\u00e9e \u2014 \u00e0 compl\u00e9ter manuellement';}
+    }
+  }
+
   // \u2500\u2500 Suivi Contrats: marquer source arbitr\u00e9, ajouter destinations \u2500\u2500
   try{
     var clientContract=contracts_db.find(function(c){return c.client===d.client;});
@@ -1390,7 +1456,7 @@ async function confirmArbitrage(){
   }catch(e){console.error('Suivi Contrats sync after arbitrage failed',e);}
 
   closeArbModal();renderAll();
-  toast('Arbitrage '+arbId+' enregistr\u00e9 \u2014 '+destinations.length+' destination'+(destinations.length>1?'s':'')+' \u00b7 Pro-rata \u00e0 facturer : '+fE(prorataRun));
+  toast('Arbitrage '+arbId+' enregistr\u00e9 \u2014 '+destinations.length+' destination'+(destinations.length>1?'s':'')+' \u00b7 Pro-rata : '+fE(prorataRun)+rapprNote);
  }catch(err){
   console.error('confirmArbitrage failed',err);
   alert('Erreur arbitrage : '+(err.message||err));
@@ -2182,6 +2248,16 @@ function setFT(t,btn){ftab=t;document.querySelectorAll('#factTabs .stab').forEac
 // ── ALERTES (système de checks complet) ─────────────────────────────────────
 function fmtDateFR(s){if(!s)return'';var d=new Date(s);if(isNaN(d))return s;return d.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'numeric'});}
 function fmtDelay(days){if(days===0)return"aujourd'hui";if(days===1)return'demain';if(days<0)return Math.abs(days)+' j en retard';if(days<30)return'dans '+days+' j';if(days<60)return'dans '+Math.round(days/7)+' sem';return'dans '+Math.round(days/30)+' mois';}
+function trimFromDate(dateStr){
+  if(!dateStr)return null;
+  var d=new Date(dateStr);if(isNaN(d))return null;
+  return 'T'+Math.ceil((d.getMonth()+1)/3)+'_'+d.getFullYear();
+}
+function trimLabelFR(period){
+  if(!period)return'';
+  var m=period.match(/^T([1-4])_(\d{4})$/);if(!m)return period;
+  return 'Q'+m[1]+' '+m[2];
+}
 var ALERT_CATEGORIES={
   produits:{label:'Produits / Échéances',color:'var(--amber)'},
   deals:{label:'Cohérence des deals',color:'var(--red)'},
@@ -3782,11 +3858,51 @@ function renderContrats(){
         (c.notes?'<div style="font-size:12px;color:var(--text2);font-style:italic;margin-top:10px;padding:8px 10px;background:var(--amber-bg);border-radius:var(--rs);border-left:3px solid var(--amber);">'+escH(c.notes)+'</div>':'')+
         '<div class="ctr-section-title">Étapes préliminaires <span class="ctr-section-count">'+pp.done+'/'+pp.total+'</span></div>'+
         prelimHTML+
+        renderClientArbitragesPanel(c)+
         '<div class="ctr-section-title">Investissements <span class="ctr-section-count">'+produits.length+'</span><div style="flex:0;"><button class="btn btn-sm" onclick="openProdModal(\''+c._id+'\')" style="font-size:11px;margin-left:8px;">+ Ajouter</button></div></div>'+
         produitsHTML+
       '</div>':'')+
     '</div>';
   }).join('');
+}
+
+// Aggregate all arbitrages for a contract from its produits[].arbitrages,
+// and combine with any deal-level arb info for completeness.
+function renderClientArbitragesPanel(contract){
+  var produits=contract.produits||[];
+  var allArbs=[];
+  produits.forEach(function(p){
+    (p.arbitrages||[]).forEach(function(a){
+      allArbs.push({date:a.date,arbId:a.arbId,sourceProduit:p.name,sourceFourn:'',montant:a.montant,prorata:a.prorata_run,destinations:a.destinations||[]});
+    });
+  });
+  if(!allArbs.length)return '';
+  allArbs.sort(function(a,b){return (b.date||'').localeCompare(a.date||'');});
+  var totalArbed=allArbs.reduce(function(s,a){return s+(a.montant||0);},0);
+  var totalProrata=allArbs.reduce(function(s,a){return s+(a.prorata||0);},0);
+  var html='<div class="ctr-section-title">Arbitrages <span class="ctr-section-count">'+allArbs.length+'</span></div>'+
+    '<div style="background:var(--purple-bg);border-radius:var(--rs);padding:10px 12px;border:1px solid rgba(107,79,196,.2);font-size:12px;color:var(--purple-t);">'+
+      '<div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:8px;font-size:11px;">'+
+        '<span><b>'+allArbs.length+'</b> opération'+(allArbs.length>1?'s':'')+'</span>'+
+        '<span><b>'+fE(totalArbed)+'</b> arbitré au total</span>'+
+        '<span><b>'+fE(totalProrata)+'</b> de pro-rata cumulé</span>'+
+      '</div>'+
+      allArbs.map(function(a){
+        var dests=(a.destinations||[]).map(function(dst){return escH(dst.fourn||'?')+' ('+fE(dst.montant)+')';}).join(', ');
+        return '<div style="padding:6px 0;border-top:1px dashed rgba(107,79,196,.2);">'+
+          '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'+
+            '<span style="font-family:\'DM Mono\',monospace;font-size:10px;color:var(--text3);">'+escH(a.arbId||'')+'</span>'+
+            '<span style="font-weight:600;">'+escH(a.date||'')+'</span>'+
+            '<span style="color:var(--text2);">·</span>'+
+            '<span>'+escH(a.sourceProduit||'')+' → '+dests+'</span>'+
+            '<div style="flex:1;"></div>'+
+            '<span class="badge bp">'+fE(a.montant)+'</span>'+
+            (a.prorata?'<span class="badge ba">+'+fE(a.prorata)+' pro-rata</span>':'')+
+          '</div>'+
+        '</div>';
+      }).join('')+
+    '</div>';
+  return html;
 }
 
 function toggleCtr(id){ctrExp[id]=!ctrExp[id];renderContrats();}

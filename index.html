@@ -28,11 +28,13 @@
   <aside class="sidebar">
     <div class="sb-logo"><div class="name">Deal Tracker</div><div class="sub">Suivi des commissions</div></div>
     <div class="sb-section">
-      <div class="sb-label">Vue par vendeur</div>
+      <div class="sb-label" style="display:flex;align-items:center;gap:6px;justify-content:space-between;">
+        <span>Équipe</span>
+        <button class="btn btn-sm" onclick="goTo('membres',document.querySelector('.nbtn[onclick*=membres]')||null)" style="font-size:10px;padding:2px 8px;text-transform:none;letter-spacing:0;font-weight:500;" title="Gérer l'équipe et les rôles">Gérer</button>
+      </div>
       <button class="vbtn on" onclick="setV('Tous',this)"><span class="av av-all">∗</span>Tous les deals</button>
       <button class="vbtn" onclick="setV('Audrey',this)"><span class="av av-a">A</span>Audrey</button>
       <button class="vbtn" onclick="setV('David',this)"><span class="av av-d">D</span>David</button>
-
     </div>
     <div class="sb-section" style="flex:1;">
       <div class="sb-label" style="margin-top:6px;">Navigation</div>
@@ -45,7 +47,6 @@
       <button class="nbtn" onclick="goTo('fournisseurs',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M5 3V2a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1"/><path d="M1 7h14"/></svg>Fournisseurs</button>
       <button class="nbtn" onclick="goTo('brokers',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 12V5l6-3 6 3v7"/><path d="M6 12V9h4v3"/><rect x="1" y="12" width="14" height="2" rx="1"/></svg>Brokers</button>
       <button class="nbtn" onclick="goTo('contrats',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 1h7l3 3v11H3z"/><path d="M10 1v3h3"/><path d="M5.5 8.5l1.5 1.5 3-3"/><path d="M5.5 12h5"/></svg>Suivi Contrats <span id="contratsBadge" class="alert-dot-badge" style="display:none;"></span></button>
-      <button class="nbtn" onclick="goTo('membres',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="5" r="2.5"/><path d="M1.5 13c0-2.5 2-4.5 4.5-4.5s4.5 2 4.5 4.5"/><circle cx="11.5" cy="5.5" r="1.8"/><path d="M11.5 8.5c1.5 0 2.7 1.2 2.7 2.7"/></svg>Équipe</button>
     </div>
     <div class="sb-bottom">
       <button class="btn" style="width:100%;margin-bottom:6px;" onclick="document.getElementById('importFile').click()">↑ Importer CSV</button>

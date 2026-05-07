@@ -4910,6 +4910,7 @@ async function initApp(){
   setTimeout(function(){['srch','gSearch','ctSearch'].forEach(function(id){var el=document.getElementById(id);if(el)el.value='';});},100);
   setupRealtime();
   startCodeWatcher();
+  injectForceReloadLink();
 }
 async function migrateDealStatuses(){
   // Backfill: any deal with fSt='Payé' but stat!='Deal payé' is migrated.
@@ -5065,6 +5066,27 @@ function setLiveStatus(state){
   if(state==='live'){el.textContent='● Live';el.style.color='var(--green)';el.title='Synchronisation temps réel active';}
   else if(state==='offline'){el.textContent='● Hors ligne';el.style.color='var(--red)';el.title='Connexion temps réel perdue — rechargez si nécessaire';}
   else{el.textContent='● Connexion…';el.style.color='var(--text3)';}
+}
+
+// Show a "Forcer le rechargement" link in the topbar so users can manually
+// pull the latest code without waiting for the 30s watcher poll. Useful when
+// two collaborators see different versions due to CDN/cache lag.
+function injectForceReloadLink(){
+  if(document.getElementById('forceReloadLink'))return;
+  var topbar=document.querySelector('.topbar-r');if(!topbar)return;
+  var a=document.createElement('button');
+  a.id='forceReloadLink';
+  a.title='Recharger l\'app et purger le cache pour aligner avec les autres utilisateurs';
+  a.style.cssText='background:none;border:none;color:var(--text3);font-size:11px;cursor:pointer;padding:4px 8px;border-radius:4px;font-family:inherit;';
+  a.textContent='⟳ Sync';
+  a.onmouseover=function(){a.style.background='var(--surface2)';a.style.color='var(--text)';};
+  a.onmouseout=function(){a.style.background='';a.style.color='var(--text3)';};
+  a.onclick=function(){
+    // Hard reload: force re-fetch of all assets, bypass cache
+    if('caches' in window){caches.keys().then(function(keys){keys.forEach(function(k){caches.delete(k);});});}
+    location.reload(true);
+  };
+  topbar.insertBefore(a,topbar.firstChild);
 }
 
 // ── CODE-UPDATE WATCHER (auto-banner when teammate pushes new code) ─────────

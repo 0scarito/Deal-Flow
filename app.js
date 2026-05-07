@@ -4195,7 +4195,7 @@ function genInvoicePDF(fournName,type,period,amount,deals_list){
     content:'';position:fixed;top:38%;left:50%;width:90vw;height:90vw;max-width:720px;max-height:720px;
     transform:translate(-50%,-50%);
     background:url('${logoUrl}') no-repeat center/contain;
-    opacity:0.09;
+    opacity:0.18;
     z-index:-1;
     pointer-events:none;
     print-color-adjust:exact;-webkit-print-color-adjust:exact;

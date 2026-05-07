@@ -3397,6 +3397,8 @@ async function initApp(){
   }
   document.getElementById('loadingOverlay').style.display='none';
   renderAll();rebuildFournSelect();rebuildBrokerSelect();
+  setupRealtime();
+  startCodeWatcher();
 }
 
 // Auth state listener — handle session expiry mid-use
@@ -3406,6 +3408,146 @@ sb.auth.onAuthStateChange(function(event,session){
     document.getElementById('loginOverlay').style.display='flex';
   }
 });
+
+// ── REALTIME (DB sync across collaborators) ─────────────────────────────────
+var _realtimeChannel=null,_realtimeSetup=false;
+function rerenderForTable(table){
+  // Always update KPIs/badges since they depend on all tables.
+  try{renderAll();}catch(e){}
+  if(table==='deals'){
+    if(document.getElementById('p-deals')&&document.getElementById('p-deals').classList.contains('on'))renderDeals();
+    rebuildFournSelect();
+  } else if(table==='contracts'){
+    if(document.getElementById('p-contrats')&&document.getElementById('p-contrats').classList.contains('on'))renderContrats();
+    updateContratsBadge();
+  } else if(table==='clients'){
+    if(document.getElementById('p-clients')&&document.getElementById('p-clients').classList.contains('on'))renderClients();
+  } else if(table==='fournisseurs'){
+    if(document.getElementById('p-fournisseurs')&&document.getElementById('p-fournisseurs').classList.contains('on'))renderFourn();
+    rebuildFournSelect();
+  } else if(table==='brokers'){
+    if(document.getElementById('p-brokers')&&document.getElementById('p-brokers').classList.contains('on'))renderBrokers();
+    rebuildBrokerSelect();
+  }
+  setLiveStatus('live');
+}
+
+function setupRealtime(){
+  if(_realtimeSetup)return;_realtimeSetup=true;
+  _realtimeChannel=sb.channel('app-realtime')
+    .on('postgres_changes',{event:'*',schema:'public',table:'deals'},function(p){
+      try{
+        if(p.eventType==='DELETE'){deals=deals.filter(function(x){return x._id!==p.old.id;});}
+        else{
+          var d=rowToDeal(p.new);
+          var idx=deals.findIndex(function(x){return x._id===d._id;});
+          if(idx>=0)deals[idx]=d;else deals.push(d);
+        }
+        rerenderForTable('deals');
+      }catch(e){console.error('Realtime deals error',e);}
+    })
+    .on('postgres_changes',{event:'*',schema:'public',table:'clients'},function(p){
+      try{
+        if(p.eventType==='DELETE'){clients_db=clients_db.filter(function(x){return x._id!==p.old.id;});}
+        else{
+          var c=rowToRef(p.new);
+          var idx=clients_db.findIndex(function(x){return x._id===c._id;});
+          if(idx>=0)clients_db[idx]=c;else clients_db.push(c);
+        }
+        rerenderForTable('clients');
+      }catch(e){console.error('Realtime clients error',e);}
+    })
+    .on('postgres_changes',{event:'*',schema:'public',table:'fournisseurs'},function(p){
+      try{
+        if(p.eventType==='DELETE'){fourn_db=fourn_db.filter(function(x){return x._id!==p.old.id;});}
+        else{
+          var f=rowToRef(p.new);
+          var idx=fourn_db.findIndex(function(x){return x._id===f._id;});
+          if(idx>=0)fourn_db[idx]=f;else fourn_db.push(f);
+        }
+        rerenderForTable('fournisseurs');
+      }catch(e){console.error('Realtime fournisseurs error',e);}
+    })
+    .on('postgres_changes',{event:'*',schema:'public',table:'brokers'},function(p){
+      try{
+        if(p.eventType==='DELETE'){brokers_db=brokers_db.filter(function(x){return x._id!==p.old.id;});}
+        else{
+          var b=rowToRef(p.new);
+          var idx=brokers_db.findIndex(function(x){return x._id===b._id;});
+          if(idx>=0)brokers_db[idx]=b;else brokers_db.push(b);
+        }
+        rerenderForTable('brokers');
+      }catch(e){console.error('Realtime brokers error',e);}
+    })
+    .on('postgres_changes',{event:'*',schema:'public',table:'rapprochement'},function(p){
+      try{
+        if(p.eventType==='DELETE'){rapprochement_db=rapprochement_db.filter(function(r){return r.id!==p.old.id;});}
+        else{
+          var r=rapprRowToObj(p.new);
+          var idx=rapprochement_db.findIndex(function(x){return x.id===r.id;});
+          if(idx>=0)rapprochement_db[idx]=r;else rapprochement_db.push(r);
+        }
+        rerenderForTable('rapprochement');
+      }catch(e){console.error('Realtime rapprochement error',e);}
+    })
+    .on('postgres_changes',{event:'*',schema:'public',table:'contracts'},function(p){
+      try{
+        if(p.eventType==='DELETE'){contracts_db=contracts_db.filter(function(c){return c._id!==p.old.id;});}
+        else{
+          var c=rowToContract(p.new);
+          var idx=contracts_db.findIndex(function(x){return x._id===c._id;});
+          if(idx>=0)contracts_db[idx]=c;else contracts_db.push(c);
+        }
+        rerenderForTable('contracts');
+      }catch(e){console.error('Realtime contracts error',e);}
+    })
+    .subscribe(function(status){
+      if(status==='SUBSCRIBED')setLiveStatus('live');
+      else if(status==='CHANNEL_ERROR'||status==='TIMED_OUT')setLiveStatus('offline');
+    });
+}
+
+function setLiveStatus(state){
+  var el=document.getElementById('liveStatus');if(!el)return;
+  if(state==='live'){el.textContent='● Live';el.style.color='var(--green)';el.title='Synchronisation temps réel active';}
+  else if(state==='offline'){el.textContent='● Hors ligne';el.style.color='var(--red)';el.title='Connexion temps réel perdue — rechargez si nécessaire';}
+  else{el.textContent='● Connexion…';el.style.color='var(--text3)';}
+}
+
+// ── CODE-UPDATE WATCHER (auto-banner when teammate pushes new code) ─────────
+var _initialCodeHash=null,_updateBannerShown=false;
+function _hashStr(s){var h=0;for(var i=0;i<s.length;i++){h=((h<<5)-h)+s.charCodeAt(i);h|=0;}return h.toString(36);}
+async function _fetchAppHash(){
+  // Hash app.js + index.html signatures together. Cache-busted so CDN serves fresh.
+  try{
+    var [a,b]=await Promise.all([
+      fetch('app.js?cb='+Date.now(),{cache:'no-store'}).then(function(r){return r.text();}),
+      fetch('index.html?cb='+Date.now(),{cache:'no-store'}).then(function(r){return r.text();})
+    ]);
+    return _hashStr(a)+'|'+_hashStr(b);
+  }catch(e){return null;}
+}
+async function checkCodeUpdate(){
+  if(_updateBannerShown)return;
+  var h=await _fetchAppHash();
+  if(!h)return;
+  if(_initialCodeHash===null){_initialCodeHash=h;return;}
+  if(h!==_initialCodeHash)showUpdateBanner();
+}
+function showUpdateBanner(){
+  if(_updateBannerShown)return;_updateBannerShown=true;
+  var div=document.createElement('div');
+  div.id='codeUpdateBanner';
+  div.style.cssText='position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--text);color:var(--surface);padding:12px 18px;border-radius:8px;display:flex;align-items:center;gap:14px;box-shadow:0 6px 20px rgba(0,0,0,.25);z-index:99999;font-size:13px;';
+  div.innerHTML=
+    '<span>🔄 Une nouvelle version de l\'application est disponible.</span>'+
+    '<button onclick="location.reload(true)" style="background:var(--blue);color:#fff;border:none;padding:6px 14px;border-radius:5px;font-size:12px;cursor:pointer;font-weight:500;">Recharger</button>'+
+    '<button onclick="document.getElementById(\'codeUpdateBanner\').remove();" style="background:transparent;color:rgba(255,255,255,.6);border:none;padding:4px 8px;font-size:16px;cursor:pointer;">×</button>';
+  document.body.appendChild(div);
+}
+// Poll every 30s. HEAD-only would be ideal but GitHub Pages CDN headers
+// aren't 100% reliable; full fetch with cache-bust is more robust.
+function startCodeWatcher(){checkCodeUpdate();setInterval(checkCodeUpdate,30000);}
 
 checkAuth();
 

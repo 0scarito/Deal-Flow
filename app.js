@@ -211,8 +211,14 @@ function contratStatus(c){
   var pp=prelimProgress(c);
   var produits=c.produits||[];
   if(pp.done===0&&produits.every(function(p){return prodProgress(p).done===0;}))return'new';
-  var allDone=pp.total>0&&pp.done===pp.total&&produits.length>0&&produits.every(function(p){var pr=prodProgress(p);return pr.total>0&&pr.done===pr.total;});
-  return allDone?'done':'in-progress';
+  // "Done" = prelim fully ticked (or empty = nothing to do) AND at least one investissement
+  // AND every investissement is fully ticked (or empty = nothing to do).
+  var prelimOK=pp.total===0||pp.done===pp.total;
+  var produitsOK=produits.length>0&&produits.every(function(p){
+    var pr=prodProgress(p);
+    return pr.total===0||pr.done===pr.total;
+  });
+  return (prelimOK&&produitsOK)?'done':'in-progress';
 }
 function globalPct(c){
   var pp=prelimProgress(c);
@@ -4186,6 +4192,7 @@ function renderContrats(){
           (p.isin?'<span class="mono" style="font-size:11px;color:var(--text2);background:var(--surface);padding:2px 6px;border-radius:4px;">'+escH(p.isin)+'</span>':'')+
           (p.montant?'<span style="font-size:12px;color:var(--text);font-weight:600;">'+escH(p.montant)+'</span>':'')+
           '<span style="font-size:11px;font-weight:600;color:var(--text);">'+pr.pct+'%</span>'+
+          ((pr.total>0&&pr.done<pr.total)?'<button class="btn btn-sm" style="font-size:10px;padding:3px 8px;color:var(--green-t);border-color:var(--green-bg);background:var(--green-bg);" onclick="event.stopPropagation();completeAllProd(\''+c._id+'\',\''+p.id+'\')" title="Cocher toutes les étapes de cet investissement">✓</button>':'')+
           '<button class="btn btn-sm" onclick="event.stopPropagation();openProdModal(\''+c._id+'\',\''+p.id+'\')">Modifier</button>'+
           '<button class="btn btn-sm" style="color:var(--red);border-color:var(--red-bg);" onclick="event.stopPropagation();deleteProd(\''+c._id+'\',\''+p.id+'\')">×</button>'+
           '<span class="chev'+(pOpen?' open':'')+'">▾</span>'+
@@ -4209,6 +4216,7 @@ function renderContrats(){
         '<div class="ctr-right">'+
           '<span class="ctr-pill '+stCls+'">'+stLbl+'</span>'+
           '<span class="ctr-pct">'+pct+'%</span>'+
+          (pct<100?'<button class="btn btn-sm" style="color:var(--green-t);border-color:var(--green-bg);background:var(--green-bg);" onclick="event.stopPropagation();completeAllContract(\''+c._id+'\')" title="Cocher toutes les étapes (prélim + investissements)">✓ Tout cocher</button>':'')+
           '<button class="btn btn-sm" onclick="event.stopPropagation();openContractModal(\''+c._id+'\')">Modifier</button>'+
           '<button class="btn btn-sm" style="color:var(--red);border-color:var(--red-bg);" onclick="event.stopPropagation();deleteContractFromCard(\''+c._id+'\')">×</button>'+
           '<span class="chev'+(open?' open':'')+'">▾</span>'+
@@ -4270,6 +4278,28 @@ function toggleCtr(id){ctrExp[id]=!ctrExp[id];renderContrats();}
 function toggleProdExp(key){prodExp[key]=!prodExp[key];renderContrats();}
 
 async function persistContract(c){try{await saveContract(c);}catch(e){console.error(e);toast('Erreur de sauvegarde.');}}
+
+// Tick all prelim steps + all investment steps in one go.
+async function completeAllContract(contractId){
+  var c=contracts_db.find(function(x){return x._id===contractId;});if(!c)return;
+  var totalSteps=(c.prelim||[]).length+(c.produits||[]).reduce(function(s,p){return s+((p.steps||[]).length);},0);
+  if(totalSteps===0){toast('Aucune étape à cocher.');return;}
+  if(!confirm('Cocher toutes les étapes de ce contrat ('+totalSteps+' étape'+(totalSteps>1?'s':'')+') ?'))return;
+  (c.prelim||[]).forEach(function(s){s.done=true;});
+  (c.produits||[]).forEach(function(p){(p.steps||[]).forEach(function(s){s.done=true;});});
+  await persistContract(c);renderContrats();updateContratsBadge();
+  toast(totalSteps+' étape'+(totalSteps>1?'s':'')+' cochée'+(totalSteps>1?'s':''));
+}
+
+// Tick all steps of one investment.
+async function completeAllProd(contractId,prodId){
+  var c=contracts_db.find(function(x){return x._id===contractId;});if(!c)return;
+  var p=(c.produits||[]).find(function(x){return x.id===prodId;});if(!p||!p.steps||!p.steps.length)return;
+  var n=p.steps.length;
+  p.steps.forEach(function(s){s.done=true;});
+  await persistContract(c);renderContrats();updateContratsBadge();
+  toast(n+' étape'+(n>1?'s':'')+' cochée'+(n>1?'s':'')+' sur '+(p.name||'investissement'));
+}
 
 async function checkAndTransitionDeals(c){
   if(contratStatus(c)!=='done')return;

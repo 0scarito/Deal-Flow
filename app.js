@@ -2588,23 +2588,7 @@ function renderCharts(){
   var data=filt();
   var year=String(new Date().getFullYear());
 
-  // ── 1. Top fournisseurs UF (donut) ────────────────────────────────────────
-  var byUF={};data.filter(function(d){return d.ufE>0;}).forEach(function(d){byUF[d.fourn]=(byUF[d.fourn]||0)+d.ufE;});
-  var ufEntries=Object.entries(byUF).sort(function(a,b){return b[1]-a[1];}).slice(0,12);
-  var ufL=ufEntries.map(function(e){return e[0];}),ufV=ufEntries.map(function(e){return Math.round(e[1]);});
-  if(charts.uf)charts.uf.destroy();
-  if(ufL.length)charts.uf=new Chart(document.getElementById('cUF'),{type:'doughnut',data:{labels:ufL,datasets:[{data:ufV,backgroundColor:PALETTE.slice(0,ufL.length),borderWidth:2,borderColor:'#fff',hoverOffset:8}]},options:{responsive:true,maintainAspectRatio:false,cutout:'62%',plugins:{legend:{display:false},tooltip:Object.assign({},CHART_DEFAULTS.tooltip,{callbacks:{label:function(c){return c.label+' : '+fE(c.raw);}}})}}});
-  document.getElementById('legUF').innerHTML=ufL.length?ufL.map(function(l,i){return legendChip(PALETTE[i],l,fE(ufV[i]));}).join(''):'<span style="color:var(--text3);">Aucun deal UF</span>';
-
-  // ── 2. Top fournisseurs Running annuel (barres horizontales) ─────────────
-  var byRun={};data.filter(function(d){return d.runE>0;}).forEach(function(d){byRun[d.fourn]=(byRun[d.fourn]||0)+d.runE;});
-  var runEntries=Object.entries(byRun).sort(function(a,b){return a[1]-b[1];}).slice(-12);
-  var runL=runEntries.map(function(e){return e[0];}),runV=runEntries.map(function(e){return Math.round(e[1]);});
-  var hRun=Math.max(220,runL.length*32+40);document.getElementById('cRunW').style.height=hRun+'px';
-  if(charts.run)charts.run.destroy();
-  if(runL.length)charts.run=new Chart(document.getElementById('cRun'),{type:'bar',data:{labels:runL,datasets:[{data:runV,backgroundColor:'rgba(26,138,74,0.85)',hoverBackgroundColor:'#1a8a4a',borderRadius:6,borderWidth:0,maxBarThickness:22}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:Object.assign({},CHART_DEFAULTS.tooltip,{callbacks:{label:function(c){return fE(c.raw)+'/an';}}})},scales:{x:{ticks:{callback:function(v){return v>=1000?Math.round(v/1000)+'k':v;},color:'#9aa0a6',font:CHART_DEFAULTS.font},grid:{color:CHART_DEFAULTS.gridSoft,drawBorder:false}},y:{ticks:{color:'#374151',font:Object.assign({},CHART_DEFAULTS.font,{weight:'500'})},grid:{display:false,drawBorder:false}}}}});
-
-  // ── 3. Évolution mensuelle UF + Running (line area) ──────────────────────
+  // ── 2. Évolution mensuelle UF + Running (line area) ──────────────────────
   // Aggregate by month for the current year (or whatever year filter is)
   var byM={};
   data.forEach(function(d){

@@ -3034,23 +3034,69 @@ function openAddClientModal(name){
         byContrat[c].push(d);
       });
       var html='';
-      Object.entries(byContrat).forEach(function([contrat,cDeals]){
-        html+='<div style="margin-bottom:12px;">'+
-          '<div style="font-size:11px;font-weight:600;color:var(--text2);background:var(--surface2);padding:4px 10px;border-radius:4px;margin-bottom:6px;">'+contrat+'</div>'+
-          cDeals.map(function(d){
-            var statut=d.fSt==='Payé'?'<span class="badge bg">Payé</span>':d.fSt==='Facturé'?'<span class="badge bb">Facturé</span>':'<span class="badge ba">À émettre</span>';
-            var montant=d.ct==='UF'?fE(d.ufE)+' UF':d.ct==='RUN'?fE(d.runE)+'/an':fE(d.ufE)+' UF + '+fE(d.runE)+'/an';
-            return '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;border:1px solid var(--border);border-radius:6px;margin-bottom:4px;">'+
-              '<div>'+
-                '<span style="font-weight:500;font-size:13px;">'+d.fourn+'</span>'+
-                '<span style="color:var(--text2);font-size:12px;margin-left:8px;">'+d.produit+'</span>'+
-              '</div>'+
-              '<div style="display:flex;gap:12px;align-items:center;">'+
-                (d.depositaire?'<span style="font-size:12px;color:var(--text3);font-style:italic;">'+d.depositaire+'</span>':'') +
-                '<span style="font-size:12px;color:var(--blue);font-weight:500;">'+fE(d.nom)+' '+d.dev+'</span>'+
+      Object.entries(byContrat).forEach(function(entry){
+        var contrat=entry[0],cDeals=entry[1];
+        // Stats du contrat
+        var sumNomEUR=cDeals.reduce(function(s,d){return s+(d.dev==='USD'?d.nom/(d.fx||1):d.nom);},0);
+        var sumUF=cDeals.reduce(function(s,d){return s+(d.ufE||0);},0);
+        var sumRun=cDeals.reduce(function(s,d){return s+(d.runE||0);},0);
+
+        html+='<div style="margin-bottom:14px;">'+
+          // En-tête contrat avec récap
+          '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--surface2);border-radius:8px 8px 0 0;border:1px solid var(--border);border-bottom:none;">'+
+            '<div style="font-size:12px;font-weight:600;color:var(--text);text-transform:uppercase;letter-spacing:.3px;">'+escH(contrat)+'</div>'+
+            '<div style="display:flex;gap:14px;font-size:11px;color:var(--text2);align-items:center;">'+
+              '<span><b style="color:var(--text);">'+cDeals.length+'</b> deal'+(cDeals.length>1?'s':'')+'</span>'+
+              '<span><b style="color:var(--text);">'+fE(sumNomEUR)+'</b></span>'+
+              (sumUF>0?'<span style="color:var(--blue);"><b>'+fE(sumUF)+'</b> UF</span>':'')+
+              (sumRun>0?'<span style="color:var(--green);"><b>'+fE(sumRun)+'</b>/an</span>':'')+
+            '</div>'+
+          '</div>'+
+          // Liste des deals dans le contrat
+          '<div style="border:1px solid var(--border);border-radius:0 0 8px 8px;border-top:none;background:var(--surface);">'+
+          cDeals.map(function(d,i){
+            var stMap={'Payé':{cls:'bg',color:'var(--green)'},'Facturé':{cls:'bb',color:'var(--blue)'},'À émettre':{cls:'ba',color:'var(--amber)'},'Litige':{cls:'br',color:'var(--red)'}};
+            var st=stMap[d.fSt]||{cls:'bgr',color:'var(--text3)'};
+            var statusBadge='<span class="badge '+st.cls+'">'+escH(d.fSt||'')+'</span>';
+            var typeBadge=d.ct==='UF'?'<span class="badge bb">UF</span>':d.ct==='RUN'?'<span class="badge bg">Running</span>':d.ct==='BOTH'?'<span class="badge bb">UF</span><span class="badge bg" style="margin-left:3px;">Run</span>':'';
+            var feesParts=[];
+            if(d.ufE>0)feesParts.push('<span style="color:var(--blue);font-weight:500;">'+fE(d.ufE)+'</span> UF');
+            if(d.runE>0)feesParts.push('<span style="color:var(--green);font-weight:500;">'+fE(d.runE)+'</span>/an');
+            if(d.pf&&d.pf.amount)feesParts.push('<span style="color:var(--purple);font-weight:500;">'+fE(d.pf.amount)+'</span> PF');
+            var depChip=d.depositaire?'<span style="font-size:10px;color:var(--text3);background:var(--surface2);padding:1px 6px;border-radius:3px;white-space:nowrap;">📍 '+escH(d.depositaire)+'</span>':'';
+            var isLast=i===cDeals.length-1;
+            var idx=deals.indexOf(d);
+            return '<div style="display:flex;border-bottom:'+(isLast?'none':'1px solid var(--border)')+';cursor:pointer;transition:background .12s;" onmouseover="this.style.background=\'var(--surface2)\'" onmouseout="this.style.background=\'\'" onclick="closeClientModal();openDet(deals['+idx+'])">'+
+              // Bandeau couleur statut
+              '<div style="width:3px;background:'+st.color+';flex-shrink:0;"></div>'+
+              '<div style="flex:1;padding:10px 12px;min-width:0;">'+
+                // Ligne 1 : fournisseur + produit + depositaire (gauche) | nominal + status (droite)
+                '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:5px;">'+
+                  '<div style="display:flex;align-items:center;gap:8px;min-width:0;flex:1;">'+
+                    '<span style="font-weight:600;font-size:13px;color:var(--text);white-space:nowrap;">'+escH(d.fourn||'')+'</span>'+
+                    '<span style="color:var(--text2);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;">'+escH(d.produit||'')+'</span>'+
+                    depChip+
+                  '</div>'+
+                  '<div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">'+
+                    '<span style="font-weight:600;font-size:13px;color:var(--text);" class="mono">'+f0(d.nom)+' '+escH(d.dev||'')+'</span>'+
+                    statusBadge+
+                  '</div>'+
+                '</div>'+
+                // Ligne 2 : type + commissions + ISIN/maturité
+                '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:11px;">'+
+                  '<div style="display:flex;align-items:center;gap:8px;min-width:0;">'+
+                    typeBadge+
+                    (feesParts.length?'<span style="color:var(--text2);">'+feesParts.join(' · ')+'</span>':'')+
+                  '</div>'+
+                  '<div style="display:flex;align-items:center;gap:8px;color:var(--text3);font-size:10px;">'+
+                    (d.isin?'<span class="mono">'+escH(d.isin)+'</span>':'')+
+                    (d.maturite||d.terme?'<span>échéance '+escH(d.maturite||d.terme)+'</span>':'')+
+                  '</div>'+
+                '</div>'+
               '</div>'+
             '</div>';
           }).join('')+
+          '</div>'+
         '</div>';
       });
       investLines.innerHTML=html;

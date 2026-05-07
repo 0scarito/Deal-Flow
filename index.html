@@ -36,18 +36,29 @@
       <button class="vbtn" onclick="setV('Audrey',this)"><span class="av av-a">A</span>Audrey</button>
       <button class="vbtn" onclick="setV('David',this)"><span class="av av-d">D</span>David</button>
     </div>
-    <div class="sb-section" style="flex:1;">
-      <div class="sb-label" style="margin-top:6px;">Navigation</div>
+    <div class="sb-section" style="flex:1;display:flex;flex-direction:column;">
+      <!-- Section Deals & Suivi -->
+      <div class="sb-label" style="margin-top:6px;">Deals &amp; Suivi</div>
       <button class="nbtn on" onclick="goTo('synthese',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/></svg>Synthèse</button>
-      <button class="nbtn" onclick="goTo('alertes',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1l7 13H1z"/><path d="M8 6v4M8 12.5v.5"/></svg>Alertes <span id="alertesBadge" class="alert-dot-badge" style="display:none;"></span></button>
       <button class="nbtn" onclick="goTo('deals',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12M2 8h12M2 12h8"/></svg>Tous les deals</button>
+      <button class="nbtn" onclick="goTo('contrats',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 1h7l3 3v11H3z"/><path d="M10 1v3h3"/><path d="M5.5 8.5l1.5 1.5 3-3"/><path d="M5.5 12h5"/></svg>Suivi Contrats <span id="contratsBadge" class="alert-dot-badge" style="display:none;"></span></button>
+
+      <!-- Section Facturation & Commissions -->
+      <div class="sb-label" style="margin-top:14px;">Facturation &amp; Commissions</div>
       <button class="nbtn" onclick="goTo('facturation',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="1" width="12" height="14" rx="1.5"/><path d="M5 5h6M5 8h6M5 11h3"/></svg>Facturation</button>
-      <button class="nbtn" onclick="goTo('graphiques',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 13V7l4-3 4 3 4-4v10H2z"/></svg>Pilotage</button>
       <button class="nbtn" onclick="goTo('commissions',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 13V5l4-3 4 3 4-3v11"/><path d="M6 13V9h4v4"/><path d="M8 3v2"/></svg>Commissions</button>
+      <button class="nbtn" onclick="goTo('graphiques',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 13V7l4-3 4 3 4-4v10H2z"/></svg>Pilotage</button>
+
+      <!-- Section Référentiels -->
+      <div class="sb-label" style="margin-top:14px;">Référentiels</div>
       <button class="nbtn" onclick="goTo('clients',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="5" r="2.5"/><path d="M1 13c0-2.8 2.2-5 5-5s5 2.2 5 5"/><circle cx="12" cy="5" r="2"/><path d="M12 8.5c1.7.3 3 1.8 3 3.5"/></svg>Clients</button>
       <button class="nbtn" onclick="goTo('fournisseurs',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M5 3V2a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1"/><path d="M1 7h14"/></svg>Fournisseurs</button>
       <button class="nbtn" onclick="goTo('brokers',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 12V5l6-3 6 3v7"/><path d="M6 12V9h4v3"/><rect x="1" y="12" width="14" height="2" rx="1"/></svg>Brokers</button>
-      <button class="nbtn" onclick="goTo('contrats',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 1h7l3 3v11H3z"/><path d="M10 1v3h3"/><path d="M5.5 8.5l1.5 1.5 3-3"/><path d="M5.5 12h5"/></svg>Suivi Contrats <span id="contratsBadge" class="alert-dot-badge" style="display:none;"></span></button>
+
+      <!-- Alertes : standalone, séparée visuellement -->
+      <div style="margin-top:auto;padding-top:18px;border-top:1px solid var(--border);">
+        <button class="nbtn" onclick="goTo('alertes',this)" style="margin-top:6px;"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1l7 13H1z"/><path d="M8 6v4M8 12.5v.5"/></svg>Alertes <span id="alertesBadge" class="alert-dot-badge" style="display:none;"></span></button>
+      </div>
     </div>
     <div class="sb-bottom">
       <button class="btn" style="width:100%;margin-bottom:6px;" onclick="document.getElementById('importFile').click()">↑ Importer CSV</button>

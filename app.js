@@ -207,18 +207,19 @@ function prodProgress(p){
   var done=steps.filter(function(s){return s.done;}).length;
   return{done:done,total:steps.length,pct:Math.round(done/steps.length*100)};
 }
+// Status d'un contrat — basé sur le pourcentage global pour rester cohérent.
+// Règle simple : si globalPct === 100% et qu'il y a au moins un investissement
+// (sinon on n'a rien à suivre), c'est 'done'. Si rien n'est coché du tout, 'new'.
+// Sinon 'in-progress'. Cette logique est volontairement alignée avec globalPct
+// pour qu'on ne puisse plus avoir 100% affiché ET "En cours" en même temps.
 function contratStatus(c){
   var pp=prelimProgress(c);
   var produits=c.produits||[];
-  if(pp.done===0&&produits.every(function(p){return prodProgress(p).done===0;}))return'new';
-  // "Done" = prelim fully ticked (or empty = nothing to do) AND at least one investissement
-  // AND every investissement is fully ticked (or empty = nothing to do).
-  var prelimOK=pp.total===0||pp.done===pp.total;
-  var produitsOK=produits.length>0&&produits.every(function(p){
-    var pr=prodProgress(p);
-    return pr.total===0||pr.done===pr.total;
-  });
-  return (prelimOK&&produitsOK)?'done':'in-progress';
+  var allEmpty=pp.done===0&&produits.every(function(p){return prodProgress(p).done===0;});
+  if(allEmpty)return'new';
+  var pct=globalPct(c);
+  if(pct>=100&&produits.length>0)return'done';
+  return'in-progress';
 }
 function globalPct(c){
   var pp=prelimProgress(c);

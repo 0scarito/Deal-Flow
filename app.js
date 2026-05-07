@@ -1155,18 +1155,50 @@ var arbSrcDeal=null;
 function openDet(d){
   var idx=deals.indexOf(d);
   document.getElementById('detTitle').textContent=d.client+' — '+d.fourn;
+
+  // Build arbitrage chain block
+  var arbBlock='';
+  // Provenance: this deal came from an arbitrage
+  if(d.arbSrc){
+    var src=deals.find(function(x){return x._id===d.arbSrc;});
+    var srcLabel=src?(src.fourn+' / '+(src.produit||'')):'Source supprimée';
+    arbBlock+='<div style="background:var(--purple-bg);border:1px solid rgba(107,79,196,.25);border-radius:var(--rs);padding:10px 12px;margin-top:12px;font-size:12px;color:var(--purple-t);">'+
+      '← <b>Issu d\'un arbitrage '+escH(d.arbId||'')+'</b> · Source : '+escH(srcLabel)+(src?' <button class="btn btn-sm" onclick="closeDet();openDet(deals['+deals.indexOf(src)+'])" style="font-size:10px;padding:2px 8px;margin-left:6px;">Voir source</button>':'')+
+    '</div>';
+  }
+  // Destinations: this deal has been arbed to others
+  var destDeals=d._id?deals.filter(function(x){return x.arbSrc===d._id;}):[];
+  if(destDeals.length>0){
+    arbBlock+='<div style="background:var(--purple-bg);border:1px solid rgba(107,79,196,.25);border-radius:var(--rs);padding:10px 12px;margin-top:8px;font-size:12px;color:var(--purple-t);">'+
+      '<div style="font-weight:600;margin-bottom:6px;">→ Arbitrages sortants ('+destDeals.length+')</div>'+
+      destDeals.map(function(dd){
+        return '<div style="display:flex;align-items:center;gap:8px;padding:3px 0;border-top:1px dashed rgba(107,79,196,.2);">'+
+          '<span style="flex:1;">'+escH(dd.fourn)+' / '+escH(dd.produit||'')+' · '+fE(dd.nom)+(dd.runR>0?' · Run '+dd.runR+'%':'')+(dd.ufR>0?' · UF '+dd.ufR+'%':'')+' · '+escH(dd.date)+'</span>'+
+          '<button class="btn btn-sm" onclick="closeDet();openDet(deals['+deals.indexOf(dd)+'])" style="font-size:10px;padding:2px 8px;">Ouvrir</button>'+
+        '</div>';
+      }).join('')+
+    '</div>';
+  }
+  // Pro-rata to bill: detect last arb history entry on source side
+  if(destDeals.length>0||d.arbClosed){
+    var lastArbHist=(d.hist||[]).slice().reverse().find(function(h){return h.a&&h.a.indexOf('Pro-rata Running')!==-1;});
+    if(lastArbHist){
+      arbBlock+='<div style="background:var(--amber-bg);border:1px solid rgba(176,122,16,.3);border-radius:var(--rs);padding:8px 12px;margin-top:6px;font-size:12px;color:var(--amber-t);">⚠ <b>Pro-rata à facturer</b> mentionné dans l\'historique : "'+escH(lastArbHist.a)+'"</div>';
+    }
+  }
+
   document.getElementById('detBody').innerHTML=
     '<div class="fg2">'+
     '<div><div class="kpi-l">Vendeur</div><div>'+d.v+'</div></div>'+
     '<div><div class="kpi-l">Trade date</div><div>'+d.date+'</div></div>'+
     '<div><div class="kpi-l">Fournisseur</div><div>'+d.fourn+'</div></div>'+
     '<div><div class="kpi-l">Produit</div><div>'+d.produit+'</div></div>'+
-    '<div><div class="kpi-l">Nominal</div><div>'+fE(d.nom)+'</div></div>'+
+    '<div><div class="kpi-l">Nominal</div><div>'+fE(d.nom)+(d.arbClosed?' <span class="badge bp" style="margin-left:6px;">Clôturé par arbitrage</span>':'')+'</div></div>'+
     '<div><div class="kpi-l">Type</div><div>'+d.ct+'</div></div>'+
     (d.ufE>0?'<div><div class="kpi-l">UF</div><div>'+fE(d.ufE)+'</div></div>':'')+
     (d.runE>0?'<div><div class="kpi-l">Running/an</div><div>'+fE(d.runE)+'</div></div>':'')+
     '<div><div class="kpi-l">Statut facture</div><div>'+d.fSt+'</div></div>'+
-    '</div>';
+    '</div>'+arbBlock;
   document.getElementById('detHist').innerHTML=(d.hist||[]).slice().reverse().map(function(h){return '<div style="font-size:12px;padding:4px 0;border-bottom:1px solid var(--border);"><span style="color:var(--text3);">'+h.ts+'</span> — '+h.a+'</div>';}).join('');
   document.getElementById('detEdit').onclick=function(){closeDet();openDealModal(idx);};
   document.getElementById('detDelete').onclick=async function(){if(confirm('Supprimer ce deal ?')){if(d._id)await sbDelete('deals',d._id);deals.splice(idx,1);closeDet();renderAll();}};
@@ -1251,6 +1283,7 @@ function updateArbSummary(){
 }
 
 async function confirmArbitrage(){
+ try{
   if(arbSrcDeal==null)return;
   var d=deals[arbSrcDeal];
   var arbDate=document.getElementById('arbDate').value;
@@ -1271,23 +1304,97 @@ async function confirmArbitrage(){
   var totalArb=destinations.reduce(function(s,x){return s+x.nom;},0);
   if(totalArb>d.nom){alert('Le montant arb\u00e9tr\u00e9 ('+fE(totalArb)+') d\u00e9passe le nominal disponible ('+fE(d.nom)+').');return;}
   var arbId='ARB-'+Date.now();
+  // Pro-rata source: from "last billable point" (issue or last trim cutoff) to arbDate, on the arbed portion only
   var tradeDate=d.issue||d.date;
-  var days=Math.round((new Date(arbDate)-new Date(tradeDate))/(1000*60*60*24));
+  var days=tradeDate?Math.round((new Date(arbDate)-new Date(tradeDate))/(1000*60*60*24)):0;
   var prorataRun=d.runE>0&&days>0?Math.round(d.runE*(totalArb/d.nom)*(days/365)):0;
+
   // Mettre \u00e0 jour le deal source
+  var srcOriginalNom=d.nom;
   d.nom=d.nom-totalArb;
   d.runE=d.nom>0?Math.round((d.runR/100)*d.nom):0;
   d.arbClosed=d.nom===0;
-  d.hist.push({ts:nowS(),a:'Arbitrage de '+fE(totalArb)+' vers '+destinations.map(function(x){return x.fourn;}).join(', ')+' le '+arbDate+' \u2014 Pro-rata Running: '+fE(prorataRun),by:'Syst\u00e8me'});
+  if(d.nom===0)d.end=arbDate;
+  if(!d.hist)d.hist=[];
+  d.hist.push({ts:nowS(),a:'Arbitrage '+arbId+' \u2014 '+fE(totalArb)+' vers '+destinations.map(function(x){return x.fourn+' ('+fE(x.nom)+')';}).join(', ')+' le '+arbDate+' \u00b7 Pro-rata Running \u00e0 facturer : '+fE(prorataRun),by:'Syst\u00e8me'});
   if(d._id){var{_id,...upd}=d;await sbUpdate('deals',_id,upd);}
-  // Cr\u00e9er les nouveaux deals
+
+  // Cr\u00e9er les nouveaux deals destinations
+  var createdDeals=[];
   for(var dest of destinations){
-    var newDeal={v:d.v,date:arbDate,stat:'Deal r\u00e9alis\u00e9',client:d.client,contrat:dest.contrat,depositaire:dest.depositaire||'',broker:d.broker||'',fourn:dest.fourn,produit:dest.produit||d.produit,isin:d.isin||'',nom:dest.nom,dev:d.dev,fx:d.fx||1,issue:arbDate,invS:'',inv:'',ct:dest.ct||'RUN',ufR:dest.ct==='UF'||dest.ct==='BOTH'?dest.taux:0,runR:dest.ct==='RUN'||dest.ct==='BOTH'?dest.taux:0,tva:0,ufE:dest.ct==='UF'||dest.ct==='BOTH'?Math.round((dest.taux/100)*dest.nom):0,runE:dest.ct==='RUN'||dest.ct==='BOTH'?Math.round((dest.taux/100)*dest.nom):0,pf:dest.ct==='PF'?{mode:'fixed',amount:dest.taux,type:'fixed',freq:'Annuel'}:{mode:'none'},fSt:'\u00c0 \u00e9mettre',fRef:'',notes:'Arbitrage depuis '+d.fourn+' le '+arbDate,arbId:arbId,arbSrc:d._id||'',hist:[{ts:nowS(),a:'Deal cr\u00e9\u00e9 par arbitrage depuis '+d.fourn+' ('+fE(dest.nom)+')',by:'Syst\u00e8me'}]};
+    var ufR=(dest.ct==='UF'||dest.ct==='BOTH')?dest.taux:0;
+    var runR=(dest.ct==='RUN'||dest.ct==='BOTH')?dest.taux:0;
+    var newDeal={
+      v:d.v,date:arbDate,stat:'Deal r\u00e9alis\u00e9',
+      client:d.client,contrat:dest.contrat,depositaire:dest.depositaire||'',broker:d.broker||'',
+      fourn:dest.fourn,produit:dest.produit||d.produit,produit_type:d.produit_type||null,isin:d.isin||'',
+      nom:dest.nom,dev:d.dev,fx:d.fx||1,
+      issue:arbDate,invS:'',inv:'',
+      ct:dest.ct||'RUN',
+      ufR:ufR,runR:runR,tva:0,
+      ufE:Math.round(ufR/100*dest.nom),
+      runE:Math.round(runR/100*dest.nom),
+      pf:dest.ct==='PF'?{mode:'fixed',amount:dest.taux,type:'fixed',freq:'Annuel'}:{mode:'none'},
+      fSt:'\u00c0 \u00e9mettre',fRef:'',
+      notes:'Arbitrage depuis '+d.fourn+' ('+fE(dest.nom)+') le '+arbDate,
+      arbId:arbId,arbSrc:d._id||'',
+      hist:[{ts:nowS(),a:'Deal cr\u00e9\u00e9 par arbitrage '+arbId+' depuis '+d.fourn+' \u2014 Nominal '+fE(dest.nom)+(dest.ct==='RUN'||dest.ct==='BOTH'?' \u00b7 Running '+dest.taux+'%/an':'')+(dest.ct==='UF'||dest.ct==='BOTH'?' \u00b7 UF '+dest.taux+'%':''),by:'Syst\u00e8me'}]
+    };
     var res=await sbInsert('deals',newDeal);if(res&&res[0])newDeal._id=res[0].id;
     deals.push(newDeal);
+    createdDeals.push(newDeal);
   }
+
+  // \u2500\u2500 Suivi Contrats: marquer source arbitr\u00e9, ajouter destinations \u2500\u2500
+  try{
+    var clientContract=contracts_db.find(function(c){return c.client===d.client;});
+    if(clientContract){
+      // Marquer l'investissement source comme partiellement/totalement arbitr\u00e9
+      if(d._id&&Array.isArray(clientContract.produits)){
+        var srcProd=clientContract.produits.find(function(p){return p.deal_id===d._id;});
+        if(srcProd){
+          srcProd.arbitrages=srcProd.arbitrages||[];
+          srcProd.arbitrages.push({
+            arbId:arbId,date:arbDate,montant:totalArb,
+            prorata_run:prorataRun,
+            destinations:createdDeals.map(function(nd){return{deal_id:nd._id||null,fourn:nd.fourn,produit:nd.produit,montant:nd.nom};})
+          });
+          // If source fully arbed, update montant to 0; else reduce
+          var formatMontant=function(n,dev){return new Intl.NumberFormat('fr-FR').format(n)+' '+(dev||'EUR');};
+          srcProd.montant=d.nom>0?formatMontant(d.nom,d.dev):'0 '+(d.dev||'EUR')+' (arbitr\u00e9)';
+          srcProd.notes=(srcProd.notes||'')+(srcProd.notes?' \u00b7 ':'')+'Arbitr\u00e9 '+fE(totalArb)+' le '+arbDate;
+        }
+      }
+      // Ajouter les destinations comme nouvelles lignes investissement
+      var packSteps=clientContract.template_name?templatePackForType(clientContract.template_name,d.produit_type):null;
+      var stepsCopy=packSteps?templatePackCopy(clientContract.template_name,packSteps.id):[];
+      createdDeals.forEach(function(nd){
+        var prod={
+          id:newStepId(),
+          name:nd.produit||'(produit non nomm\u00e9)',
+          isin:nd.isin||'',
+          type:dealTypeToProdType(nd.produit_type),
+          pack_name:packSteps?packSteps.name:'',
+          montant:new Intl.NumberFormat('fr-FR').format(nd.nom)+' '+(nd.dev||'EUR'),
+          notes:'Issu de l\'arbitrage '+arbId+' (source: '+d.fourn+')',
+          steps:stepsCopy.map(function(s){return Object.assign({},s);}),
+          deal_id:nd._id||null,
+          arb_origin:{arbId:arbId,source_deal_id:d._id||null,source_fourn:d.fourn,date:arbDate}
+        };
+        clientContract.produits.push(prod);
+        ctrExp[clientContract._id]=true;
+        prodExp[clientContract._id+'|'+prod.id]=true;
+      });
+      await saveContract(clientContract);
+    }
+  }catch(e){console.error('Suivi Contrats sync after arbitrage failed',e);}
+
   closeArbModal();renderAll();
-  toast('Arbitrage enregistr\u00e9 \u2014 '+destinations.length+' nouveau'+(destinations.length>1?'x deals cr\u00e9\u00e9s':' deal cr\u00e9\u00e9')+'. Pro-rata Running '+d.fourn+': '+fE(prorataRun));
+  toast('Arbitrage '+arbId+' enregistr\u00e9 \u2014 '+destinations.length+' destination'+(destinations.length>1?'s':'')+' \u00b7 Pro-rata \u00e0 facturer : '+fE(prorataRun));
+ }catch(err){
+  console.error('confirmArbitrage failed',err);
+  alert('Erreur arbitrage : '+(err.message||err));
+ }
 }
 
 var factType='UF';
@@ -2139,6 +2246,11 @@ function buildAlerts(){
       }
     }
     if(d.stat==='Deal réalisé'&&(!d.ufE||d.ufE===0)&&(!d.runE||d.runE===0))alerts.push({id:'realnoq-'+key,severity:'info',category:'deals',title:'Deal réalisé sans commission',detail:ref,action:act});
+    // Arbitrage pro-rata not yet billed
+    var hasArbProrata=Array.isArray(d.hist)&&d.hist.some(function(h){return h.a&&h.a.indexOf('Pro-rata Running à facturer')!==-1;});
+    if(hasArbProrata&&d.fSt!=='Payé'){
+      alerts.push({id:'arbprorata-'+key,severity:'warning',category:'deals',title:'Pro-rata d\'arbitrage à facturer',detail:ref+' · '+(d.arbClosed?'clôturé':'partiellement arbitré'),action:act});
+    }
   });
   // ISIN duplicates with different product names
   var isinMap={};
@@ -3598,6 +3710,10 @@ function renderContrats(){
       // Prefer the user-defined pack_name as the pill label; fall back to old type label
       var pillText=p.pack_name||WTYPE_LBL[p.type]||p.type||'?';
       var typeBadge='<span class="badge '+(WTYPE_BADGE[p.type]||'bgr')+'">'+escH(pillText)+'</span>';
+      // Arbitrage badges
+      var arbBadges='';
+      if(p.arb_origin)arbBadges+='<span class="badge bp" title="Issu de l\'arbitrage '+escH(p.arb_origin.arbId||'')+' depuis '+escH(p.arb_origin.source_fourn||'')+' le '+escH(p.arb_origin.date||'')+'">← Arbitrage</span> ';
+      if(Array.isArray(p.arbitrages)&&p.arbitrages.length)arbBadges+='<span class="badge ba" title="'+p.arbitrages.length+' arbitrage(s) sortant(s)">→ Arbitré ('+p.arbitrages.length+')</span> ';
       var stepsHTML=(p.steps||[]).map(function(s,idx){
         return '<div class="step-row">'+
           '<div class="chk'+(s.done?' on':'')+'" onclick="toggleProdStep(\''+c._id+'\',\''+p.id+'\','+idx+')"></div>'+
@@ -3609,9 +3725,26 @@ function renderContrats(){
       }).join('')+
       '<div style="margin-top:6px;"><button class="btn btn-sm" onclick="addProdStep(\''+c._id+'\',\''+p.id+'\')" style="font-size:11px;">+ Ajouter une étape</button></div>';
 
+      // Arbitrage detail block when expanded
+      var arbDetail='';
+      if(Array.isArray(p.arbitrages)&&p.arbitrages.length){
+        arbDetail='<div style="margin:8px 0;padding:8px 10px;background:var(--purple-bg);border-radius:4px;border-left:2px solid var(--purple);font-size:11px;">'+
+          '<div style="font-weight:600;color:var(--purple-t);margin-bottom:4px;">Arbitrages sortants</div>'+
+          p.arbitrages.map(function(a){
+            return '<div style="margin-top:3px;color:var(--purple-t);">• '+escH(a.date)+' — '+fE(a.montant)+' vers '+(a.destinations||[]).map(function(dst){return escH(dst.fourn)+' ('+fE(dst.montant)+')';}).join(', ')+(a.prorata_run?' · pro-rata Running '+fE(a.prorata_run):'')+'</div>';
+          }).join('')+
+        '</div>';
+      }
+      if(p.arb_origin){
+        arbDetail+='<div style="margin:8px 0;padding:8px 10px;background:var(--purple-bg);border-radius:4px;border-left:2px solid var(--purple);font-size:11px;color:var(--purple-t);">'+
+          '← Issu de l\'arbitrage '+escH(p.arb_origin.arbId||'')+' depuis <b>'+escH(p.arb_origin.source_fourn||'')+'</b> le '+escH(p.arb_origin.date||'')+
+        '</div>';
+      }
+
       return '<div class="ctr-deal-card">'+
         '<div class="ctr-deal-hd" onclick="toggleProdExp(\''+pKey+'\')">'+
           typeBadge+
+          arbBadges+
           '<span style="font-size:12px;font-weight:600;flex:1;min-width:120px;">'+escH(p.name||'(sans nom)')+'</span>'+
           (p.isin?'<span class="mono" style="font-size:11px;color:var(--text2);background:var(--surface);padding:2px 6px;border-radius:4px;">'+escH(p.isin)+'</span>':'')+
           (p.montant?'<span style="font-size:12px;color:var(--text);font-weight:600;">'+escH(p.montant)+'</span>':'')+
@@ -3621,7 +3754,7 @@ function renderContrats(){
           '<span class="chev'+(pOpen?' open':'')+'">▾</span>'+
         '</div>'+
         '<div class="ctr-bar"><div class="ctr-bar-fill'+(pr.pct===100?' full':'')+'" style="width:'+pr.pct+'%;"></div></div>'+
-        (pOpen?'<div style="padding-top:8px;">'+(p.notes?'<div style="font-size:12px;color:var(--text2);font-style:italic;margin-bottom:8px;padding:6px 10px;background:var(--surface);border-radius:4px;border-left:2px solid var(--amber);">'+escH(p.notes)+'</div>':'')+stepsHTML+'</div>':'')+
+        (pOpen?'<div style="padding-top:8px;">'+arbDetail+(p.notes?'<div style="font-size:12px;color:var(--text2);font-style:italic;margin-bottom:8px;padding:6px 10px;background:var(--surface);border-radius:4px;border-left:2px solid var(--amber);">'+escH(p.notes)+'</div>':'')+stepsHTML+'</div>':'')+
       '</div>';
     }).join(''):'<div style="font-size:12px;color:var(--text3);padding:8px 0;">Aucun investissement — cliquez sur Ajouter.</div>';
 

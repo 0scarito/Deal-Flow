@@ -1290,12 +1290,9 @@ function openDet(d){
       }catch(e){console.error(e);alert('Erreur : '+(e.message||e));}
     });
   };
-  var hasNom=d.nom>0&&!d.arbClosed;
-  var showArb=(d.ct==='RUN'||d.ct==='BOTH')&&hasNom;
+  var showArb=(d.ct==='RUN'||d.ct==='BOTH')&&d.nom>0&&!d.arbClosed;
   document.getElementById('detArbitre').style.display=showArb?'':'none';
   document.getElementById('detArbitre').onclick=function(){closeDet();openArbitrage(idx);};
-  document.getElementById('detRetrait').style.display=hasNom?'':'none';
-  document.getElementById('detRetrait').onclick=function(){closeDet();openRetrait(idx);};
   document.getElementById('detModal').classList.add('on');
 }
 function closeDet(){document.getElementById('detModal').classList.remove('on');}
@@ -3264,8 +3261,9 @@ function openAddClientModal(name){
                   '</div>'+
                 '</div>'+
               '</div>'+
-              '<div style="display:flex;align-items:center;padding:0 10px;flex-shrink:0;">'+
+              '<div style="display:flex;flex-direction:column;align-items:stretch;gap:4px;padding:0 10px;flex-shrink:0;">'+
                 '<button class="btn btn-sm" onclick="event.stopPropagation();closeClientModal();openArbitrage('+idx+')" style="font-size:11px;padding:4px 10px;white-space:nowrap;" title="Arbitrer ce deal">⇄ Arbitrer</button>'+
+                '<button class="btn btn-sm" onclick="event.stopPropagation();closeClientModal();openRetrait('+idx+')" style="font-size:11px;padding:4px 10px;white-space:nowrap;color:var(--amber-t);border-color:rgba(176,122,16,.3);background:var(--amber-bg);" title="Retrait de cash sur ce deal">↓ Retirer</button>'+
               '</div>'+
             '</div>';
           }).join('')+

@@ -5,6 +5,9 @@ var sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
 
 // JS camelCase <-> DB snake_case mapping for deals
 var DATE_FIELDS=['date','issue','inv_s','inv','end_date','terme','runStart','run_start'];
+// Columns we'll strip out at insert/update time when the DB schema cache says
+// they don't exist. Populated on demand from PostgREST error messages.
+var _missingDealCols={};
 function dealToRow(d){
   var r=Object.assign({},d);
   delete r._id; delete r.created_at; delete r.updated_at;
@@ -12,13 +15,22 @@ function dealToRow(d){
   r.inv_s=r.invS; r.f_st=r.fSt; r.f_ref=r.fRef;
   r.arb_id=r.arbId; r.arb_src=r.arbSrc; r.arb_closed=r.arbClosed;
   r.end_date=r.end;
-  // produit_type and terme already use snake_case names matching DB columns; keep as-is.
   delete r.ufR; delete r.runR; delete r.ufE; delete r.runE;
   delete r.invS; delete r.fSt; delete r.fRef;
   delete r.arbId; delete r.arbSrc; delete r.arbClosed; delete r.end;
   // Normalize empty strings to null for date-typed columns (Postgres rejects "")
   DATE_FIELDS.forEach(function(f){if(r[f]==='')r[f]=null;});
+  // Strip columns previously flagged as missing in the schema cache
+  Object.keys(_missingDealCols).forEach(function(k){delete r[k];});
   return r;
+}
+// Try to detect a "Could not find the 'X' column of 'Y' in the schema cache" error.
+// Returns the missing column name if matched (and remembers it), null otherwise.
+function _detectMissingDealCol(err){
+  var msg=String((err&&err.message)||err||'');
+  var m=msg.match(/Could not find the '([^']+)' column of '([^']+)' in the schema cache/i);
+  if(m&&m[2]==='deals'){_missingDealCols[m[1]]=true;return m[1];}
+  return null;
 }
 function rowToDeal(r){
   var d=Object.assign({},r);
@@ -39,10 +51,28 @@ async function sbGet(table){
   if(res.error)throw res.error;
   return (res.data||[]).map(function(r){return{id:r.id,data:table==='deals'?rowToDeal(r):rowToRef(r)};});
 }
+function _warnedMissingCols={};
+function _warnAboutMissingCol(col){
+  if(_warnedMissingCols[col])return;
+  _warnedMissingCols[col]=true;
+  // Friendly toast — explain the workaround
+  toast('Colonne "'+col+'" absente — sauvegardé sans. Lance le SQL d\'ajout dans Supabase pour activer ce champ.');
+  console.warn('[Schema cache] deals.'+col+' missing. To enable it, run in Supabase SQL editor: alter table deals add column '+col+(col==='terme'?' date;':' text;'));
+}
+
 async function sbInsert(table,data){
   var row=table==='deals'?dealToRow(data):Object.assign({},data);
   delete row.id; delete row._id;
   var res=await sb.from(table).insert(row).select();
+  if(res.error&&table==='deals'){
+    var miss=_detectMissingDealCol(res.error);
+    if(miss){_warnAboutMissingCol(miss);
+      // Retry with stripped row
+      var row2=dealToRow(data);
+      delete row2.id; delete row2._id;
+      res=await sb.from(table).insert(row2).select();
+    }
+  }
   if(res.error)throw res.error;
   return (res.data||[]).map(function(r){return{id:r.id,data:table==='deals'?rowToDeal(r):rowToRef(r)};});
 }
@@ -50,6 +80,14 @@ async function sbUpdate(table,id,data){
   var row=table==='deals'?dealToRow(data):Object.assign({},data);
   delete row.id; delete row._id; delete row.created_at;
   var res=await sb.from(table).update(row).eq('id',id).select();
+  if(res.error&&table==='deals'){
+    var miss=_detectMissingDealCol(res.error);
+    if(miss){_warnAboutMissingCol(miss);
+      var row2=dealToRow(data);
+      delete row2.id; delete row2._id; delete row2.created_at;
+      res=await sb.from(table).update(row2).eq('id',id).select();
+    }
+  }
   if(res.error)throw res.error;
   return (res.data||[]).map(function(r){return{id:r.id,data:table==='deals'?rowToDeal(r):rowToRef(r)};});
 }

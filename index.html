@@ -62,6 +62,23 @@
     </div>
     <input type="file" id="importFile" accept=".csv" style="display:none" onchange="importCSV(event)"/>
   </aside>
+  <!-- Confirm modal: delete deal with linked Suivi Contrat investissement -->
+  <div class="ov" id="dealDeleteConfirmModal">
+    <div class="modal" style="max-width:500px;">
+      <div class="modal-hd"><span class="modal-title" style="display:flex;align-items:center;gap:8px;"><span style="color:var(--amber);">⚠</span> Investissement de Suivi Contrat lié</span><button class="close-btn" onclick="closeDealDeleteConfirm()">×</button></div>
+      <div class="modal-body">
+        <p style="font-size:13px;line-height:1.5;color:var(--text);margin:0 0 10px;">Le deal <b id="ddcDealLabel"></b> a généré un investissement dans le suivi de contrat de <b id="ddcClient"></b>.</p>
+        <div id="ddcDetails" style="background:var(--surface2);border-radius:var(--rs);padding:10px 12px;font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.5;"></div>
+        <p style="font-size:12px;color:var(--text2);margin:0;">Que voulez-vous faire&nbsp;?</p>
+      </div>
+      <div class="modal-ft" style="flex-direction:column;gap:8px;align-items:stretch;padding:14px 22px;">
+        <button class="btn btn-primary" style="text-align:left;padding:10px 14px;" onclick="ddcAction('view')">📄&nbsp;&nbsp;Voir le suivi d'abord <span style="color:rgba(255,255,255,.7);font-weight:400;font-size:11px;">— annule la suppression</span></button>
+        <button class="btn" style="text-align:left;padding:10px 14px;" onclick="ddcAction('delete-deal-only')">🗑&nbsp;&nbsp;Supprimer uniquement le deal <span style="color:var(--text3);font-weight:400;font-size:11px;">— l'investissement reste dans Suivi Contrats</span></button>
+        <button class="btn" style="text-align:left;padding:10px 14px;color:var(--red-t);border-color:rgba(194,59,59,.4);background:var(--red-bg);" onclick="ddcAction('delete-both')">⚠&nbsp;&nbsp;Supprimer les deux <span style="color:var(--red);opacity:.85;font-weight:400;font-size:11px;">— deal + investissement lié</span></button>
+        <button class="btn" onclick="closeDealDeleteConfirm()" style="color:var(--text2);text-align:center;margin-top:4px;">Annuler</button>
+      </div>
+    </div>
+  </div>
 
   <div class="main">
     <div class="topbar">

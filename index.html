@@ -60,11 +60,7 @@
         <button class="nbtn" onclick="goTo('alertes',this)" style="margin-top:6px;"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1l7 13H1z"/><path d="M8 6v4M8 12.5v.5"/></svg>Alertes <span id="alertesBadge" class="alert-dot-badge" style="display:none;"></span></button>
       </div>
     </div>
-    <div class="sb-bottom">
-      <button class="btn" style="width:100%;margin-bottom:6px;" onclick="document.getElementById('importFile').click()">↑ Importer CSV</button>
-      <input type="file" id="importFile" accept=".csv" style="display:none" onchange="importCSV(event)"/>
-      <button class="btn" style="width:100%;" onclick="exportCSV()">↓ Exporter CSV</button>
-    </div>
+    <input type="file" id="importFile" accept=".csv" style="display:none" onchange="importCSV(event)"/>
   </aside>
 
   <div class="main">
@@ -350,24 +346,42 @@
 
       </div>
       <div class="page" id="p-graphiques">
-        <div class="card" style="margin-bottom:16px;background:linear-gradient(135deg,#1a3a6b 0%,#1d5fd4 100%);color:#fff;border:none;">
-          <div style="font-size:12px;text-transform:uppercase;letter-spacing:.8px;opacity:.75;margin-bottom:6px;">Encours globaux gérés</div>
-          <div id="encoursGlobaux" style="font-size:36px;font-weight:700;letter-spacing:-1px;">—</div>
-          <div id="encoursGlobauxSub" style="font-size:12px;opacity:.7;margin-top:4px;"></div>
-        </div>
-        <div class="g2">
-          <div class="card"><div class="card-hd">UF par fournisseur</div><div style="position:relative;height:190px;"><canvas id="cUF" role="img" aria-label="UF par fournisseur"></canvas></div><div id="legUF" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;font-size:11px;color:var(--text2);"></div></div>
-          <div class="card"><div class="card-hd">Running annuel par fournisseur</div><div id="cRunW" style="position:relative;height:200px;"><canvas id="cRun" role="img" aria-label="Running par fournisseur"></canvas></div></div>
-        </div>
-        <div class="card">
-          <div class="card-hd">Évolution mensuelle — UF + Running
-            <div style="display:flex;gap:10px;font-size:11px;color:var(--text2);font-weight:400;"><span style="display:flex;align-items:center;gap:3px;"><span style="width:9px;height:9px;border-radius:2px;background:#1d5fd4;display:inline-block;"></span>UF</span><span style="display:flex;align-items:center;gap:3px;"><span style="width:9px;height:9px;border-radius:2px;background:#1a8a4a;display:inline-block;"></span>Running</span></div>
+
+        <!-- KPIs commissions (déplacés depuis Synthèse) -->
+        <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:14px;" id="pilKpis"></div>
+
+        <!-- Encours globaux + Évolution CA -->
+        <div style="display:grid;grid-template-columns:1fr 2fr;gap:12px;margin-bottom:14px;">
+          <div class="card" style="background:linear-gradient(135deg,#1a3a6b 0%,#1d5fd4 100%);color:#fff;border:none;display:flex;flex-direction:column;justify-content:center;">
+            <div style="font-size:11px;text-transform:uppercase;letter-spacing:.6px;opacity:.75;margin-bottom:6px;">Encours globaux gérés</div>
+            <div id="encoursGlobaux" style="font-size:30px;font-weight:700;letter-spacing:-.6px;">—</div>
+            <div id="encoursGlobauxSub" style="font-size:11px;opacity:.75;margin-top:4px;"></div>
           </div>
-          <div style="position:relative;height:200px;"><canvas id="cTL" role="img" aria-label="Timeline mensuelle"></canvas></div>
+          <div class="card"><div class="card-hd">Évolution mensuelle <span id="pilTLLegend" style="font-weight:400;color:var(--text2);font-size:11px;"></span></div><div style="position:relative;height:180px;"><canvas id="cTL"></canvas></div></div>
         </div>
+
+        <!-- Top fournisseurs (UF + Running) -->
+        <div class="g2" style="margin-bottom:14px;">
+          <div class="card"><div class="card-hd">Top fournisseurs — UF</div><div style="position:relative;height:200px;"><canvas id="cUF"></canvas></div><div id="legUF" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;font-size:11px;color:var(--text2);"></div></div>
+          <div class="card"><div class="card-hd">Top fournisseurs — Running annuel</div><div id="cRunW" style="position:relative;height:220px;"><canvas id="cRun"></canvas></div></div>
+        </div>
+
+        <!-- Top clients + mix par type produit -->
+        <div class="g2" style="margin-bottom:14px;">
+          <div class="card"><div class="card-hd">Top 10 clients — encours</div><div id="cTopClientsW" style="position:relative;height:240px;"><canvas id="cTopClients"></canvas></div></div>
+          <div class="card"><div class="card-hd">Mix par type de produit (encours)</div><div style="position:relative;height:200px;"><canvas id="cTypeProd"></canvas></div><div id="legTypeProd" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;font-size:11px;color:var(--text2);"></div></div>
+        </div>
+
+        <!-- Vendeurs + Pipeline -->
+        <div class="g2" style="margin-bottom:14px;">
+          <div class="card"><div class="card-hd">Audrey vs David <span style="font-weight:400;color:var(--text2);font-size:11px;">— commissions cumulées année</span></div><div style="position:relative;height:200px;"><canvas id="cVendeurs"></canvas></div></div>
+          <div class="card"><div class="card-hd">Pipeline en cours — par statut facture</div><div style="position:relative;height:200px;"><canvas id="cPipe"></canvas></div><div id="legPipe" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;font-size:11px;color:var(--text2);"></div></div>
+        </div>
+
+        <!-- Statut facturation + devise -->
         <div class="g2">
-          <div class="card"><div class="card-hd">Statut facturation</div><div style="position:relative;height:160px;"><canvas id="cFact" role="img" aria-label="Statut facturation"></canvas></div><div id="legFact" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;font-size:11px;color:var(--text2);"></div></div>
-          <div class="card"><div class="card-hd">Par devise (nominal)</div><div style="position:relative;height:160px;"><canvas id="cDev" role="img" aria-label="Devise"></canvas></div><div id="legDev" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;font-size:11px;color:var(--text2);"></div></div>
+          <div class="card"><div class="card-hd">Statut facturation (nb deals)</div><div style="position:relative;height:160px;"><canvas id="cFact"></canvas></div><div id="legFact" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;font-size:11px;color:var(--text2);"></div></div>
+          <div class="card"><div class="card-hd">Répartition par devise (nominal)</div><div style="position:relative;height:160px;"><canvas id="cDev"></canvas></div><div id="legDev" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;font-size:11px;color:var(--text2);"></div></div>
         </div>
       </div>
 

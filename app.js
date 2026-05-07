@@ -763,64 +763,50 @@ function renderAll(){
   if(document.getElementById('p-alertes')&&document.getElementById('p-alertes').classList.contains('on'))renderAlertesPage();
 }
 
-function renderKpis(){
+// Compute the year's three commission totals + CA total. Used by Synthèse (CA only)
+// and Pilotage (full breakdown).
+function computeYearTotals(year){
+  year=year||String(new Date().getFullYear());
   var d=filt();
-  var year=String(new Date().getFullYear());
-
-  // UF payés depuis le début de l'année (facture codifiée payée avec date inv)
-  var ufPaye=d.filter(x=>(x.ct==='UF'||x.ct==='BOTH')&&x.fSt==='Payé'&&x.inv&&x.inv.startsWith(year));
+  var ufPaye=d.filter(function(x){return (x.ct==='UF'||x.ct==='BOTH')&&x.fSt==='Payé'&&x.inv&&x.inv.startsWith(year);});
   var tUFPaye=ufPaye.reduce(function(s,x){return s+(x.ufE||0);},0);
+  var tRunPaye=0,fournSet={};
+  rapprochement_db.filter(function(r){return r.type==='run'&&r.paid&&r.declared&&r.period&&r.period.endsWith('_'+year);}).forEach(function(r){tRunPaye+=r.declared;fournSet[r.fourn]=true;});
+  var tPF=0,pfDeals=d.filter(function(x){return x.fSt==='Payé'&&x.inv&&x.inv.startsWith(year)&&x.pf&&x.pf.mode!=='none';});
+  pfDeals.forEach(function(x){if(x.pf.amount)tPF+=x.pf.amount;});
+  return{year:year,uf:tUFPaye,ufNb:ufPaye.length,run:tRunPaye,runNbFourn:Object.keys(fournSet).length,pf:tPF,pfNb:pfDeals.length,ca:tUFPaye+tRunPaye+tPF};
+}
 
-  // Running payés — montants réellement déclarés et payés (Supabase cache)
-  var tRunPaye=0,nbFourn=0;
-  rapprochement_db.filter(function(r){return r.type==='run'&&r.paid&&r.declared&&r.period&&r.period.endsWith('_'+year);}).forEach(function(r){tRunPaye+=r.declared;nbFourn++;});
+function renderKpis(){
+  var year=String(new Date().getFullYear());
+  var t=computeYearTotals(year);
 
-  // Perf fees payés (deals fSt=Payé avec pf.amount ou pf.rate, date inv dans l'année)
-  var tPF=0;
-  d.filter(function(x){return x.fSt==='Payé'&&x.inv&&x.inv.startsWith(year)&&x.pf&&x.pf.mode!=='none';}).forEach(function(x){
-    if(x.pf.amount) tPF+=x.pf.amount;
-  });
-
-  var ca=tUFPaye+tRunPaye+tPF;
-
-  // KPI grid : 4 encarts si perf fees > 0, sinon 3
+  // Synthèse : grand encart CA + (éventuellement) procédures Wealins en attente.
+  // Les détails UF / Running / Perf fees sont déplacés dans Pilotage.
   var kpiHtml=
-    '<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--rs);padding:16px 20px;">'+
-      '<div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">UF payés '+year+'</div>'+
-      '<div style="font-size:24px;font-weight:600;color:var(--text);">'+fE(tUFPaye)+'</div>'+
-      '<div style="font-size:12px;color:var(--text2);margin-top:4px;">'+ufPaye.length+' facture'+(ufPaye.length!==1?'s':'')+'</div>'+
-    '</div>'+
-    '<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--rs);padding:16px 20px;">'+
-      '<div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Running payés '+year+'</div>'+
-      '<div style="font-size:24px;font-weight:600;color:var(--text);">'+fE(tRunPaye)+'</div>'+
-      '<div style="font-size:12px;color:var(--text2);margin-top:4px;">'+nbFourn+' fournisseur'+(nbFourn!==1?'s':'')+'</div>'+
+    '<div style="background:linear-gradient(135deg,#1a3a6b 0%,#1d5fd4 100%);border-radius:var(--rs);padding:20px 24px;color:#fff;">'+
+      '<div style="font-size:11px;color:rgba(255,255,255,0.75);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;">Chiffre d\'affaires '+year+'</div>'+
+      '<div style="font-size:32px;font-weight:700;color:#fff;letter-spacing:-.5px;">'+fE(t.ca)+'</div>'+
+      '<div style="font-size:12px;color:rgba(255,255,255,0.75);margin-top:6px;">UF + Running + Perf fees · payés</div>'+
+      '<div style="display:flex;gap:18px;margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.18);">'+
+        '<div><div style="font-size:10px;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:.4px;">UF</div><div style="font-size:14px;font-weight:600;color:#fff;margin-top:2px;">'+fE(t.uf)+'</div></div>'+
+        '<div><div style="font-size:10px;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:.4px;">Running</div><div style="font-size:14px;font-weight:600;color:#fff;margin-top:2px;">'+fE(t.run)+'</div></div>'+
+        '<div><div style="font-size:10px;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:.4px;">Perf fees</div><div style="font-size:14px;font-weight:600;color:#fff;margin-top:2px;">'+fE(t.pf)+'</div></div>'+
+        '<div style="flex:1;"></div>'+
+        '<div style="font-size:11px;color:rgba(255,255,255,0.7);align-self:center;">Détails complets dans <button onclick="goTo(\'graphiques\',document.querySelector(\'.nbtn[onclick*=graphiques]\'))" style="background:rgba(255,255,255,.15);color:#fff;border:none;padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer;font-family:inherit;">Pilotage →</button></div>'+
+      '</div>'+
     '</div>';
 
-
-  kpiHtml+=
-    '<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--rs);padding:16px 20px;">'+
-      '<div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Perf fees payés '+year+'</div>'+
-      '<div style="font-size:24px;font-weight:600;color:var(--text);">'+fE(tPF)+'</div>'+
-      '<div style="font-size:12px;color:var(--text2);margin-top:4px;">commissions performance</div>'+
-    '</div>';
-
-  kpiHtml+=
-    '<div style="background:var(--blue);border-radius:var(--rs);padding:16px 20px;">'+
-      '<div style="font-size:11px;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">CA '+year+'</div>'+
-      '<div style="font-size:24px;font-weight:600;color:#fff;">'+fE(ca)+'</div>'+
-      '<div style="font-size:12px;color:rgba(255,255,255,0.7);margin-top:4px;">UF + Running + Perf fees</div>'+
-    '</div>';
-
-  // Procédures Wealins en attente (5e KPI quand >0)
+  // Procédures Wealins en attente (à droite du CA si >0)
   var nPending=pendingProcedures();
-  var nbCols=4;
+  var nbCols=1;
   if(nPending>0){
-    nbCols=5;
+    nbCols=2;
     kpiHtml+=
-      '<div onclick="goTo(\'contrats\',document.querySelector(\'.nbtn[onclick*=contrats]\'))" style="background:var(--amber-bg);border:1px solid rgba(176,122,16,.3);border-radius:var(--rs);padding:16px 20px;cursor:pointer;">'+
-        '<div style="font-size:11px;color:var(--amber);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Procédures Wealins en attente</div>'+
-        '<div style="font-size:24px;font-weight:600;color:var(--amber-t);">'+nPending+'</div>'+
-        '<div style="font-size:12px;color:var(--amber);margin-top:4px;">checklists incomplètes</div>'+
+      '<div onclick="goTo(\'contrats\',document.querySelector(\'.nbtn[onclick*=contrats]\'))" style="background:var(--amber-bg);border:1px solid rgba(176,122,16,.3);border-radius:var(--rs);padding:20px 24px;cursor:pointer;display:flex;flex-direction:column;justify-content:center;">'+
+        '<div style="font-size:11px;color:var(--amber);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;">Procédures Wealins en attente</div>'+
+        '<div style="font-size:32px;font-weight:700;color:var(--amber-t);letter-spacing:-.5px;">'+nPending+'</div>'+
+        '<div style="font-size:12px;color:var(--amber);margin-top:6px;">checklists incomplètes — cliquez pour voir</div>'+
       '</div>';
   }
 
@@ -2522,31 +2508,199 @@ function renderEncoursGlobaux(){
   document.getElementById('encoursGlobauxSub').textContent=nbDeals+' deal'+(nbDeals>1?'s':'')+' actifs · '+nbClients+' client'+(nbClients>1?'s':'');
 }
 
+// Palette catégorielle harmonisée (cohérente avec le design system)
+var PALETTE=['#1d5fd4','#1a8a4a','#6b4fc4','#b07a10','#c23b3b','#0ea5e9','#ec4899','#10b981','#8b5cf6','#f59e0b','#475569','#65a30d'];
+var CHART_DEFAULTS={
+  font:{family:"'DM Sans', sans-serif",size:11},
+  tooltip:{
+    backgroundColor:'rgba(20,20,20,0.92)',padding:10,cornerRadius:6,
+    titleFont:{size:12,weight:'600',family:"'DM Sans', sans-serif"},
+    bodyFont:{size:12,family:"'DM Sans', sans-serif"},
+    boxPadding:6,displayColors:true,borderColor:'rgba(255,255,255,0.08)',borderWidth:1
+  },
+  gridSoft:'rgba(0,0,0,0.05)'
+};
+function legendChip(color,label,suffix){
+  return '<span style="display:inline-flex;align-items:center;gap:5px;padding:2px 8px;background:var(--surface2);border-radius:999px;"><span style="width:8px;height:8px;border-radius:2px;background:'+color+';display:inline-block;"></span><span>'+escH(label)+(suffix?' <span style="color:var(--text3);">'+suffix+'</span>':'')+'</span></span>';
+}
+
 function renderCharts(){
+  renderPilotageKpis();
   renderEncoursGlobaux();
   var data=filt();
-  var byF={};data.filter(d=>d.ufE>0).forEach(d=>{byF[d.fourn]=(byF[d.fourn]||0)+d.ufE;});
-  var uL=Object.keys(byF).sort((a,b)=>byF[b]-byF[a]),uV=uL.map(k=>Math.round(byF[k])),uC=['#1d5fd4','#1a8a4a','#6b4fc4','#b07a10','#c23b3b','#6b6b65','#8b5cf6','#f59e0b','#06b6d4','#ec4899'];
+  var year=String(new Date().getFullYear());
+
+  // ── 1. Top fournisseurs UF (donut) ────────────────────────────────────────
+  var byUF={};data.filter(function(d){return d.ufE>0;}).forEach(function(d){byUF[d.fourn]=(byUF[d.fourn]||0)+d.ufE;});
+  var ufEntries=Object.entries(byUF).sort(function(a,b){return b[1]-a[1];}).slice(0,12);
+  var ufL=ufEntries.map(function(e){return e[0];}),ufV=ufEntries.map(function(e){return Math.round(e[1]);});
   if(charts.uf)charts.uf.destroy();
-  charts.uf=new Chart(document.getElementById('cUF'),{type:'doughnut',data:{labels:uL,datasets:[{data:uV,backgroundColor:uC.slice(0,uL.length),borderWidth:0}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.label+': '+fE(c.raw)}}}}});
-  document.getElementById('legUF').innerHTML=uL.map((l,i)=>'<span style="display:flex;align-items:center;gap:3px;"><span style="width:9px;height:9px;border-radius:2px;background:'+uC[i]+';display:inline-block;"></span>'+l+' '+fE(uV[i])+'</span>').join('');
-  var byF={};data.filter(d=>d.runE>0).forEach(d=>{byF[d.fourn]=(byF[d.fourn]||0)+d.runE;});
-  var rS=Object.entries(byF).sort((a,b)=>a[1]-b[1]),rL=rS.map(e=>e[0]),rV=rS.map(e=>Math.round(e[1]));
-  var h=Math.max(200,rL.length*36+60);document.getElementById('cRunW').style.height=h+'px';
+  if(ufL.length)charts.uf=new Chart(document.getElementById('cUF'),{type:'doughnut',data:{labels:ufL,datasets:[{data:ufV,backgroundColor:PALETTE.slice(0,ufL.length),borderWidth:2,borderColor:'#fff',hoverOffset:8}]},options:{responsive:true,maintainAspectRatio:false,cutout:'62%',plugins:{legend:{display:false},tooltip:Object.assign({},CHART_DEFAULTS.tooltip,{callbacks:{label:function(c){return c.label+' : '+fE(c.raw);}}})}}});
+  document.getElementById('legUF').innerHTML=ufL.length?ufL.map(function(l,i){return legendChip(PALETTE[i],l,fE(ufV[i]));}).join(''):'<span style="color:var(--text3);">Aucun deal UF</span>';
+
+  // ── 2. Top fournisseurs Running annuel (barres horizontales) ─────────────
+  var byRun={};data.filter(function(d){return d.runE>0;}).forEach(function(d){byRun[d.fourn]=(byRun[d.fourn]||0)+d.runE;});
+  var runEntries=Object.entries(byRun).sort(function(a,b){return a[1]-b[1];}).slice(-12);
+  var runL=runEntries.map(function(e){return e[0];}),runV=runEntries.map(function(e){return Math.round(e[1]);});
+  var hRun=Math.max(220,runL.length*32+40);document.getElementById('cRunW').style.height=hRun+'px';
   if(charts.run)charts.run.destroy();
-  charts.run=new Chart(document.getElementById('cRun'),{type:'bar',data:{labels:rL,datasets:[{data:rV,backgroundColor:'#1a8a4a',borderRadius:4,borderWidth:0}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>fE(c.raw)}}},scales:{x:{ticks:{callback:v=>'€'+f0(v)},grid:{color:'rgba(0,0,0,0.05)'}},y:{grid:{display:false}}}}});
-  var byM={};data.forEach(d=>{if(!d.date)return;var m=d.date.substring(0,7);if(!byM[m])byM[m]={uf:0,run:0};byM[m].uf+=d.ufE;byM[m].run+=d.runE;});
+  if(runL.length)charts.run=new Chart(document.getElementById('cRun'),{type:'bar',data:{labels:runL,datasets:[{data:runV,backgroundColor:'rgba(26,138,74,0.85)',hoverBackgroundColor:'#1a8a4a',borderRadius:6,borderWidth:0,maxBarThickness:22}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:Object.assign({},CHART_DEFAULTS.tooltip,{callbacks:{label:function(c){return fE(c.raw)+'/an';}}})},scales:{x:{ticks:{callback:function(v){return v>=1000?Math.round(v/1000)+'k':v;},color:'#9aa0a6',font:CHART_DEFAULTS.font},grid:{color:CHART_DEFAULTS.gridSoft,drawBorder:false}},y:{ticks:{color:'#374151',font:Object.assign({},CHART_DEFAULTS.font,{weight:'500'})},grid:{display:false,drawBorder:false}}}}});
+
+  // ── 3. Évolution mensuelle UF + Running (line area) ──────────────────────
+  // Aggregate by month for the current year (or whatever year filter is)
+  var byM={};
+  data.forEach(function(d){
+    if(!d.date)return;
+    var m=d.date.substring(0,7);
+    if(!byM[m])byM[m]={uf:0,run:0};
+    if(d.fSt==='Payé'&&d.inv)byM[m].uf+=(d.ufE||0);
+    byM[m].run+=(d.runE||0)/12; // running annuel → mensuel
+  });
   var months=Object.keys(byM).sort();
+  // Last 12 months window for readability
+  if(months.length>12)months=months.slice(-12);
+  var mUF=months.map(function(m){return Math.round(byM[m].uf);});
+  var mRun=months.map(function(m){return Math.round(byM[m].run);});
+  var mLabels=months.map(function(m){var p=m.split('-');return ['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'][parseInt(p[1])-1]+' '+p[0].slice(2);});
   if(charts.tl)charts.tl.destroy();
-  charts.tl=new Chart(document.getElementById('cTL'),{type:'bar',data:{labels:months,datasets:[{label:'UF',data:months.map(m=>Math.round(byM[m].uf)),backgroundColor:'#1d5fd4',borderRadius:3,borderWidth:0},{label:'Running',data:months.map(m=>Math.round(byM[m].run)),backgroundColor:'#1a8a4a',borderRadius:3,borderWidth:0}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.dataset.label+': '+fE(c.raw)}}},scales:{x:{stacked:true,grid:{display:false},ticks:{autoSkip:false,maxRotation:45}},y:{stacked:true,ticks:{callback:v=>'€'+f0(v)},grid:{color:'rgba(0,0,0,0.05)'}}}}});
-  var bySt={};data.forEach(d=>{bySt[d.fSt]=(bySt[d.fSt]||0)+1;});var stL=Object.keys(bySt),stV=stL.map(k=>bySt[k]),stC={'Payé':'#1a8a4a','Facturé':'#1d5fd4','À émettre':'#b07a10','Litige':'#c23b3b'};
+  charts.tl=new Chart(document.getElementById('cTL'),{
+    type:'line',
+    data:{labels:mLabels,datasets:[
+      {label:'UF payés',data:mUF,borderColor:'#1d5fd4',backgroundColor:'rgba(29,95,212,.15)',borderWidth:2.5,pointRadius:3,pointHoverRadius:6,pointBackgroundColor:'#1d5fd4',pointBorderColor:'#fff',pointBorderWidth:2,fill:true,tension:0.35},
+      {label:'Running mensuel',data:mRun,borderColor:'#1a8a4a',backgroundColor:'rgba(26,138,74,.12)',borderWidth:2.5,pointRadius:3,pointHoverRadius:6,pointBackgroundColor:'#1a8a4a',pointBorderColor:'#fff',pointBorderWidth:2,fill:true,tension:0.35}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:false},tooltip:Object.assign({},CHART_DEFAULTS.tooltip,{callbacks:{label:function(c){return c.dataset.label+' : '+fE(c.raw);}}})},scales:{x:{grid:{display:false,drawBorder:false},ticks:{color:'#9aa0a6',font:CHART_DEFAULTS.font}},y:{grid:{color:CHART_DEFAULTS.gridSoft,drawBorder:false},ticks:{color:'#9aa0a6',font:CHART_DEFAULTS.font,callback:function(v){return v>=1000?Math.round(v/1000)+'k':v;}},beginAtZero:true}}}
+  });
+  document.getElementById('pilTLLegend').innerHTML='<span style="margin-left:10px;">'+legendChip('#1d5fd4','UF payés')+' '+legendChip('#1a8a4a','Running mensuel')+'</span>';
+
+  // ── 4. Top 10 clients (encours) ──────────────────────────────────────────
+  var byClient={};
+  data.forEach(function(d){
+    if(!d.client||d.arbClosed)return;
+    var nomEUR=d.dev==='USD'?d.nom/(d.fx||1):d.nom;
+    byClient[d.client]=(byClient[d.client]||0)+nomEUR;
+  });
+  var topClients=Object.entries(byClient).sort(function(a,b){return a[1]-b[1];}).slice(-10);
+  var tcL=topClients.map(function(e){return e[0];}),tcV=topClients.map(function(e){return Math.round(e[1]);});
+  document.getElementById('cTopClientsW').style.height=Math.max(240,tcL.length*28+30)+'px';
+  if(charts.tc)charts.tc.destroy();
+  if(tcL.length)charts.tc=new Chart(document.getElementById('cTopClients'),{type:'bar',data:{labels:tcL,datasets:[{data:tcV,backgroundColor:'rgba(29,95,212,0.85)',hoverBackgroundColor:'#1d5fd4',borderRadius:6,borderWidth:0,maxBarThickness:22}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:Object.assign({},CHART_DEFAULTS.tooltip,{callbacks:{label:function(c){return fE(c.raw)+' d\'encours';}}})},scales:{x:{ticks:{color:'#9aa0a6',font:CHART_DEFAULTS.font,callback:function(v){return v>=1000000?(v/1000000).toFixed(1)+'M':v>=1000?Math.round(v/1000)+'k':v;}},grid:{color:CHART_DEFAULTS.gridSoft,drawBorder:false}},y:{ticks:{color:'#374151',font:CHART_DEFAULTS.font},grid:{display:false,drawBorder:false}}}}});
+
+  // ── 5. Mix par type de produit (donut) ──────────────────────────────────
+  var byType={};data.forEach(function(d){
+    if(d.arbClosed||!d.nom)return;
+    var t=d.produit_type||'Non classé';
+    var nomEUR=d.dev==='USD'?d.nom/(d.fx||1):d.nom;
+    byType[t]=(byType[t]||0)+nomEUR;
+  });
+  var typeEntries=Object.entries(byType).sort(function(a,b){return b[1]-a[1];});
+  var ptL=typeEntries.map(function(e){return e[0];}),ptV=typeEntries.map(function(e){return Math.round(e[1]);});
+  if(charts.pt)charts.pt.destroy();
+  if(ptL.length)charts.pt=new Chart(document.getElementById('cTypeProd'),{type:'doughnut',data:{labels:ptL,datasets:[{data:ptV,backgroundColor:PALETTE.slice(0,ptL.length),borderWidth:2,borderColor:'#fff',hoverOffset:8}]},options:{responsive:true,maintainAspectRatio:false,cutout:'62%',plugins:{legend:{display:false},tooltip:Object.assign({},CHART_DEFAULTS.tooltip,{callbacks:{label:function(c){return c.label+' : '+fE(c.raw);}}})}}});
+  document.getElementById('legTypeProd').innerHTML=ptL.length?ptL.map(function(l,i){return legendChip(PALETTE[i],l,fE(ptV[i]));}).join(''):'<span style="color:var(--text3);">Renseignez le type de produit dans les deals.</span>';
+
+  // ── 6. Audrey vs David (commissions cumulées année) ──────────────────────
+  var t=computeYearTotals(year);
+  var vData={Audrey:{uf:0,run:0,pf:0},David:{uf:0,run:0,pf:0}};
+  // UF/PF — direct from deals
+  data.forEach(function(d){
+    if(d.fSt!=='Payé'||!d.inv||!d.inv.startsWith(year))return;
+    var split=d.v==='Audrey & David'?0.5:1;
+    if(d.v==='Audrey'||d.v==='Audrey & David')vData.Audrey.uf+=(d.ufE||0)*split;
+    if(d.v==='David'||d.v==='Audrey & David')vData.David.uf+=(d.ufE||0)*split;
+    if(d.pf&&d.pf.amount){
+      if(d.v==='Audrey'||d.v==='Audrey & David')vData.Audrey.pf+=d.pf.amount*split;
+      if(d.v==='David'||d.v==='Audrey & David')vData.David.pf+=d.pf.amount*split;
+    }
+  });
+  // Running — attribute by share
+  rapprochement_db.forEach(function(r){
+    if(r.type!=='run'||!r.paid||!r.declared||!r.period||!r.period.endsWith('_'+year))return;
+    var fournDeals=deals.filter(function(x){return (x.ct==='RUN'||x.ct==='BOTH')&&x.fourn===r.fourn;});
+    var totalRunE=fournDeals.reduce(function(s,x){return s+(x.runE||0);},0);
+    if(!totalRunE)return;
+    ['Audrey','David'].forEach(function(v){
+      var vRunE=fournDeals.filter(function(x){return x.v===v||x.v==='Audrey & David';}).reduce(function(s,x){return s+(x.runE||0)*(x.v==='Audrey & David'?0.5:1);},0);
+      vData[v].run+=r.declared*(vRunE/totalRunE);
+    });
+  });
+  if(charts.ven)charts.ven.destroy();
+  charts.ven=new Chart(document.getElementById('cVendeurs'),{
+    type:'bar',
+    data:{
+      labels:['Audrey','David'],
+      datasets:[
+        {label:'UF',data:[Math.round(vData.Audrey.uf),Math.round(vData.David.uf)],backgroundColor:'#1d5fd4',borderRadius:6,maxBarThickness:60},
+        {label:'Running',data:[Math.round(vData.Audrey.run),Math.round(vData.David.run)],backgroundColor:'#1a8a4a',borderRadius:6,maxBarThickness:60},
+        {label:'Perf fees',data:[Math.round(vData.Audrey.pf),Math.round(vData.David.pf)],backgroundColor:'#6b4fc4',borderRadius:6,maxBarThickness:60}
+      ]
+    },
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{boxWidth:12,boxHeight:12,padding:14,font:CHART_DEFAULTS.font,color:'#374151'}},tooltip:Object.assign({},CHART_DEFAULTS.tooltip,{callbacks:{label:function(c){return c.dataset.label+' : '+fE(c.raw);}}})},scales:{x:{stacked:true,grid:{display:false,drawBorder:false},ticks:{color:'#374151',font:Object.assign({},CHART_DEFAULTS.font,{size:13,weight:'600'})}},y:{stacked:true,ticks:{color:'#9aa0a6',font:CHART_DEFAULTS.font,callback:function(v){return v>=1000?Math.round(v/1000)+'k':v;}},grid:{color:CHART_DEFAULTS.gridSoft,drawBorder:false},beginAtZero:true}}}
+  });
+
+  // ── 7. Pipeline en cours (par statut de facture) ─────────────────────────
+  var pipeData=data.filter(function(d){return d.fSt==='À émettre'||d.fSt==='Facturé';});
+  var pipeBySt={'À émettre':{uf:0,run:0,nom:0,nb:0},'Facturé':{uf:0,run:0,nom:0,nb:0}};
+  pipeData.forEach(function(d){
+    var s=pipeBySt[d.fSt];if(!s)return;
+    s.uf+=(d.ufE||0);s.run+=(d.runE||0);s.nb++;
+    s.nom+=(d.dev==='USD'?d.nom/(d.fx||1):d.nom);
+  });
+  if(charts.pipe)charts.pipe.destroy();
+  charts.pipe=new Chart(document.getElementById('cPipe'),{
+    type:'bar',
+    data:{
+      labels:['À émettre','Facturé'],
+      datasets:[
+        {label:'UF',data:[Math.round(pipeBySt['À émettre'].uf),Math.round(pipeBySt['Facturé'].uf)],backgroundColor:'#1d5fd4',borderRadius:6,maxBarThickness:60},
+        {label:'Running annuel',data:[Math.round(pipeBySt['À émettre'].run),Math.round(pipeBySt['Facturé'].run)],backgroundColor:'#1a8a4a',borderRadius:6,maxBarThickness:60}
+      ]
+    },
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{boxWidth:12,boxHeight:12,padding:14,font:CHART_DEFAULTS.font,color:'#374151'}},tooltip:Object.assign({},CHART_DEFAULTS.tooltip,{callbacks:{label:function(c){return c.dataset.label+' : '+fE(c.raw);}}})},scales:{x:{stacked:true,grid:{display:false,drawBorder:false},ticks:{color:'#374151',font:Object.assign({},CHART_DEFAULTS.font,{size:13,weight:'600'})}},y:{stacked:true,ticks:{color:'#9aa0a6',font:CHART_DEFAULTS.font,callback:function(v){return v>=1000?Math.round(v/1000)+'k':v;}},grid:{color:CHART_DEFAULTS.gridSoft,drawBorder:false},beginAtZero:true}}}
+  });
+  document.getElementById('legPipe').innerHTML=
+    '<span style="color:var(--text2);">À émettre : <b>'+pipeBySt['À émettre'].nb+'</b> deal(s) · nominal '+fE(pipeBySt['À émettre'].nom)+'</span>'+
+    '<span style="color:var(--text2);">Facturé : <b>'+pipeBySt['Facturé'].nb+'</b> deal(s) · nominal '+fE(pipeBySt['Facturé'].nom)+'</span>';
+
+  // ── 8. Statut facturation (donut nb deals) ──────────────────────────────
+  var bySt={};data.forEach(function(d){bySt[d.fSt]=(bySt[d.fSt]||0)+1;});
+  var stOrder=['Payé','Facturé','À émettre','Litige'];
+  var stL=stOrder.filter(function(k){return bySt[k];}),stV=stL.map(function(k){return bySt[k];});
+  var stC={'Payé':'#1a8a4a','Facturé':'#1d5fd4','À émettre':'#b07a10','Litige':'#c23b3b'};
   if(charts.fa)charts.fa.destroy();
-  charts.fa=new Chart(document.getElementById('cFact'),{type:'doughnut',data:{labels:stL,datasets:[{data:stV,backgroundColor:stL.map(l=>stC[l]||'#aaa'),borderWidth:0}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.label+': '+c.raw+' deal'+(c.raw>1?'s':'')}}}}});
-  document.getElementById('legFact').innerHTML=stL.map((l,i)=>'<span style="display:flex;align-items:center;gap:3px;"><span style="width:9px;height:9px;border-radius:2px;background:'+(stC[l]||'#aaa')+';display:inline-block;"></span>'+l+' ('+stV[i]+')</span>').join('');
-  var eur=data.filter(d=>d.dev==='EUR').reduce((s,d)=>s+d.nom,0),usd=data.filter(d=>d.dev==='USD').reduce((s,d)=>s+d.nom,0);
+  if(stL.length)charts.fa=new Chart(document.getElementById('cFact'),{type:'doughnut',data:{labels:stL,datasets:[{data:stV,backgroundColor:stL.map(function(l){return stC[l]||'#9aa0a6';}),borderWidth:2,borderColor:'#fff',hoverOffset:8}]},options:{responsive:true,maintainAspectRatio:false,cutout:'62%',plugins:{legend:{display:false},tooltip:Object.assign({},CHART_DEFAULTS.tooltip,{callbacks:{label:function(c){return c.label+' : '+c.raw+' deal'+(c.raw>1?'s':'');}}})}}});
+  document.getElementById('legFact').innerHTML=stL.map(function(l,i){return legendChip(stC[l]||'#9aa0a6',l,stV[i]);}).join('');
+
+  // ── 9. Devise (donut nominal) ───────────────────────────────────────────
+  var eur=data.filter(function(d){return d.dev==='EUR';}).reduce(function(s,d){return s+d.nom;},0);
+  var usd=data.filter(function(d){return d.dev==='USD';}).reduce(function(s,d){return s+d.nom;},0);
   if(charts.dv)charts.dv.destroy();
-  charts.dv=new Chart(document.getElementById('cDev'),{type:'doughnut',data:{labels:['EUR','USD'],datasets:[{data:[Math.round(eur),Math.round(usd)],backgroundColor:['#6b4fc4','#b07a10'],borderWidth:0}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.label+': '+f0(c.raw)}}}}});
-  document.getElementById('legDev').innerHTML='<span style="display:flex;align-items:center;gap:3px;"><span style="width:9px;height:9px;border-radius:2px;background:#6b4fc4;display:inline-block;"></span>EUR '+f0(eur)+'</span><span style="display:flex;align-items:center;gap:3px;"><span style="width:9px;height:9px;border-radius:2px;background:#b07a10;display:inline-block;"></span>USD '+f0(usd)+'</span>';
+  charts.dv=new Chart(document.getElementById('cDev'),{type:'doughnut',data:{labels:['EUR','USD'],datasets:[{data:[Math.round(eur),Math.round(usd)],backgroundColor:['#6b4fc4','#b07a10'],borderWidth:2,borderColor:'#fff',hoverOffset:8}]},options:{responsive:true,maintainAspectRatio:false,cutout:'62%',plugins:{legend:{display:false},tooltip:Object.assign({},CHART_DEFAULTS.tooltip,{callbacks:{label:function(c){return c.label+' : '+f0(c.raw);}}})}}});
+  document.getElementById('legDev').innerHTML=legendChip('#6b4fc4','EUR',f0(eur))+legendChip('#b07a10','USD',f0(usd));
+}
+
+// KPIs Pilotage : UF / Running / Perf fees / CA total
+function renderPilotageKpis(){
+  var el=document.getElementById('pilKpis');if(!el)return;
+  var year=String(new Date().getFullYear());
+  var t=computeYearTotals(year);
+  function card(label,value,sub,color){
+    return '<div class="card" style="padding:16px 18px;border-top:3px solid '+color+';">'+
+      '<div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;">'+label+'</div>'+
+      '<div style="font-size:24px;font-weight:600;color:var(--text);margin-top:6px;letter-spacing:-.4px;">'+value+'</div>'+
+      '<div style="font-size:11px;color:var(--text2);margin-top:4px;">'+sub+'</div>'+
+    '</div>';
+  }
+  el.innerHTML=
+    card('UF payés '+year,fE(t.uf),t.ufNb+' facture'+(t.ufNb!==1?'s':'')+' codifiées','#1d5fd4')+
+    card('Running payés '+year,fE(t.run),t.runNbFourn+' fournisseur'+(t.runNbFourn!==1?'s':''),'#1a8a4a')+
+    card('Perf fees '+year,fE(t.pf),t.pfNb+' deal'+(t.pfNb!==1?'s':''),'#6b4fc4')+
+    '<div class="card" style="background:linear-gradient(135deg,#1a3a6b 0%,#1d5fd4 100%);color:#fff;border:none;padding:16px 18px;display:flex;flex-direction:column;justify-content:center;">'+
+      '<div style="font-size:11px;color:rgba(255,255,255,0.75);text-transform:uppercase;letter-spacing:.5px;">CA total '+year+'</div>'+
+      '<div style="font-size:26px;font-weight:700;color:#fff;margin-top:6px;letter-spacing:-.5px;">'+fE(t.ca)+'</div>'+
+      '<div style="font-size:11px;color:rgba(255,255,255,.75);margin-top:4px;">UF + Running + Perf fees</div>'+
+    '</div>';
+}
 }
 
 function fournOptHtml(selected){

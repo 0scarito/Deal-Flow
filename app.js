@@ -4157,38 +4157,61 @@ function renderDrill(){
 
 // ── GÉNÉRATION FACTURE PDF ────────────────────────────────────────────────────
 function genInvoicePDF(fournName,type,period,amount,deals_list){
-  var fourn=fourn_db.find(x=>x.name===fournName)||{name:fournName};
+  var fourn=fourn_db.find(function(x){return x.name===fournName;})||{name:fournName};
+
+  // ── Validation : refuse de générer si des infos obligatoires manquent ──
+  var missing=[];
+  if(!fourn.name)missing.push('Nom du fournisseur');
+  if(!fourn.addr1)missing.push('Adresse postale (ligne 1)');
+  if(!fourn.email)missing.push('Email du fournisseur');
+  if(!amount||amount<=0)missing.push('Montant à facturer (positif)');
+  if(missing.length){
+    alert('Impossible de générer la facture — informations manquantes :\n\n• '+missing.join('\n• ')+'\n\nComplétez la fiche du fournisseur "'+fournName+'" puis réessayez.');
+    return;
+  }
+
   var today=new Date();
   var dateStr='Paris, le '+today.getDate()+' '+['January','February','March','April','May','June','July','August','September','October','November','December'][today.getMonth()]+' '+today.getFullYear();
   var trimLabel=period||'';
-  // Invoice number: e.g. TOB-RUN-2026T1-001
   var code=fournName.replace(/[^A-Z0-9]/gi,'').toUpperCase().substring(0,3);
   var invoiceNum=code+'-'+type+'-'+trimLabel.replace(/[^0-9T]/g,'')+'-001';
-  var productsDesc=deals_list.map(d=>d.produit).filter((v,i,a)=>a.indexOf(v)===i).join(' / ')||'Management Fees';
+  var productsDesc=deals_list.map(function(d){return d.produit;}).filter(function(v,i,a){return a.indexOf(v)===i;}).join(' / ')||'Management Fees';
+  // Logo en filigrane : URL absolue (window.open + document.write n'a pas de baseURI fiable)
+  var logoUrl=window.location.origin+window.location.pathname.replace(/[^/]+$/,'')+'logo.png';
 
   var html=`<!DOCTYPE html>
 <html><head><meta charset="UTF-8">
 <style>
   @page{margin:15mm 20mm 20mm 20mm;}
-  body{font-family:Arial,sans-serif;font-size:11px;color:#222;margin:0;padding:0;}
-  .header-bar{background:#1a3a5c;color:white;padding:10px 20px;display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;}
+  body{font-family:Arial,sans-serif;font-size:11px;color:#222;margin:0;padding:0;position:relative;}
+  /* Filigrane Chamfeuil : très peu opaque, en arrière-plan, fixe au centre, n'interfère pas avec le texte */
+  body::before{
+    content:'';position:fixed;top:50%;left:50%;width:65vw;height:65vw;max-width:520px;max-height:520px;
+    transform:translate(-50%,-50%);
+    background:url('${logoUrl}') no-repeat center/contain;
+    opacity:0.05;
+    z-index:-1;
+    pointer-events:none;
+    print-color-adjust:exact;-webkit-print-color-adjust:exact;
+  }
+  .header-bar{background:#234c3e;color:white;padding:10px 20px;display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;}
   .header-bar .company{font-size:16px;font-weight:bold;letter-spacing:1px;}
   .header-bar .invoice-num{font-size:13px;font-weight:bold;}
   .section{margin-bottom:16px;}
-  .label{font-weight:bold;font-size:11px;color:#1a3a5c;text-transform:uppercase;margin-bottom:4px;}
+  .label{font-weight:bold;font-size:11px;color:#234c3e;text-transform:uppercase;margin-bottom:4px;}
   .from-to{display:grid;grid-template-columns:1fr 1fr;gap:30px;margin-bottom:20px;}
-  .box{border-left:3px solid #1a3a5c;padding-left:10px;}
-  .amount-box{background:#f0f4f8;border:1px solid #1a3a5c;padding:12px 18px;margin:20px 0;display:flex;justify-content:space-between;align-items:center;}
-  .amount-box .amount{font-size:22px;font-weight:bold;color:#1a3a5c;}
+  .box{border-left:3px solid #234c3e;padding-left:10px;}
+  .amount-box{background:#eef4f0;border:1px solid #234c3e;padding:12px 18px;margin:20px 0;display:flex;justify-content:space-between;align-items:center;}
+  .amount-box .amount{font-size:22px;font-weight:bold;color:#234c3e;}
   .amount-box .label2{font-size:11px;color:#555;}
-  .detail-table{width:100%;border-collapse:collapse;margin:14px 0;}
-  .detail-table th{background:#1a3a5c;color:white;padding:7px 10px;text-align:left;font-size:10px;}
+  .detail-table{width:100%;border-collapse:collapse;margin:14px 0;background:rgba(255,255,255,0.85);}
+  .detail-table th{background:#234c3e;color:white;padding:7px 10px;text-align:left;font-size:10px;}
   .detail-table td{padding:6px 10px;border-bottom:1px solid #e0e0e0;font-size:10px;}
-  .detail-table tr:last-child td{border-bottom:2px solid #1a3a5c;font-weight:bold;}
+  .detail-table tr:last-child td{border-bottom:2px solid #234c3e;font-weight:bold;}
   .legal{font-size:9px;color:#555;line-height:1.5;border-top:1px solid #ccc;padding-top:10px;margin-top:16px;}
   .payment{background:#f9f9f9;border:1px solid #ddd;padding:12px 16px;margin-top:14px;}
-  .payment .title{font-weight:bold;color:#1a3a5c;margin-bottom:6px;font-size:11px;}
-  .footer-bar{background:#1a3a5c;color:white;padding:8px 20px;font-size:9px;text-align:center;margin-top:20px;}
+  .payment .title{font-weight:bold;color:#234c3e;margin-bottom:6px;font-size:11px;}
+  .footer-bar{background:#234c3e;color:white;padding:8px 20px;font-size:9px;text-align:center;margin-top:20px;}
   .exo{font-style:italic;color:#555;font-size:10px;margin-top:6px;}
 </style></head><body>
 

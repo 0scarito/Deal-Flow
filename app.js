@@ -3552,26 +3552,50 @@ async function _fetchAppHash(){
     return _hashStr(a)+'|'+_hashStr(b);
   }catch(e){return null;}
 }
+var _autoReloadPending=false;
 async function checkCodeUpdate(){
-  if(_updateBannerShown)return;
+  if(_autoReloadPending)return;
   var h=await _fetchAppHash();
   if(!h)return;
   if(_initialCodeHash===null){_initialCodeHash=h;return;}
-  if(h!==_initialCodeHash)showUpdateBanner();
+  if(h!==_initialCodeHash){_autoReloadPending=true;tryAutoReload();}
 }
-function showUpdateBanner(){
-  if(_updateBannerShown)return;_updateBannerShown=true;
+function _isUserBusy(){
+  // Modal currently open?
+  if(document.querySelector('.ov.on'))return true;
+  // User actively typing in an input that has unsaved content?
+  var ae=document.activeElement;
+  if(ae&&(ae.tagName==='INPUT'||ae.tagName==='TEXTAREA')&&ae.value)return true;
+  return false;
+}
+function tryAutoReload(){
+  if(!_autoReloadPending)return;
+  if(_isUserBusy()){
+    // Show a discreet "pending" indicator so user knows reload is queued
+    showPendingReloadToast();
+    setTimeout(tryAutoReload,3000);
+    return;
+  }
+  // Brief flash so the reload isn't jarring
+  showReloadingToast();
+  setTimeout(function(){location.reload(true);},700);
+}
+function showPendingReloadToast(){
+  if(document.getElementById('reloadPending'))return;
   var div=document.createElement('div');
-  div.id='codeUpdateBanner';
-  div.style.cssText='position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--text);color:var(--surface);padding:12px 18px;border-radius:8px;display:flex;align-items:center;gap:14px;box-shadow:0 6px 20px rgba(0,0,0,.25);z-index:99999;font-size:13px;';
-  div.innerHTML=
-    '<span>🔄 Une nouvelle version de l\'application est disponible.</span>'+
-    '<button onclick="location.reload(true)" style="background:var(--blue);color:#fff;border:none;padding:6px 14px;border-radius:5px;font-size:12px;cursor:pointer;font-weight:500;">Recharger</button>'+
-    '<button onclick="document.getElementById(\'codeUpdateBanner\').remove();" style="background:transparent;color:rgba(255,255,255,.6);border:none;padding:4px 8px;font-size:16px;cursor:pointer;">×</button>';
+  div.id='reloadPending';
+  div.style.cssText='position:fixed;bottom:24px;right:24px;background:var(--amber);color:#fff;padding:8px 14px;border-radius:6px;font-size:12px;z-index:99999;box-shadow:0 4px 12px rgba(0,0,0,.2);';
+  div.textContent='🔄 Mise à jour en attente — fermez le modal pour rafraîchir';
   document.body.appendChild(div);
 }
-// Poll every 30s. HEAD-only would be ideal but GitHub Pages CDN headers
-// aren't 100% reliable; full fetch with cache-bust is more robust.
+function showReloadingToast(){
+  var p=document.getElementById('reloadPending');if(p)p.remove();
+  var div=document.createElement('div');
+  div.style.cssText='position:fixed;bottom:24px;right:24px;background:var(--blue);color:#fff;padding:8px 14px;border-radius:6px;font-size:12px;z-index:99999;box-shadow:0 4px 12px rgba(0,0,0,.2);';
+  div.textContent='🔄 Mise à jour…';
+  document.body.appendChild(div);
+}
+// Poll every 30s. Cache-busted fetch so GitHub Pages CDN serves fresh content.
 function startCodeWatcher(){checkCodeUpdate();setInterval(checkCodeUpdate,30000);}
 
 checkAuth();

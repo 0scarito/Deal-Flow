@@ -434,8 +434,9 @@
         </div>
       </div>
 
-      <!-- SUIVI CONTRATS WEALINS -->
+      <!-- SUIVI CONTRATS -->
       <div class="page" id="p-contrats">
+        <div class="card" style="padding:14px 16px;margin-bottom:14px;" id="templatesPanel"></div>
         <div class="kpi-grid" id="contratsStats" style="margin-bottom:16px;"></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">
           <input type="text" id="ctSearch" placeholder="Rechercher client, n° contrat, ISIN, produit…" style="width:280px;" oninput="renderContrats()"/>
@@ -680,24 +681,46 @@
   </div>
 </div>
 <div class="ov" id="contractModal">
-  <div class="modal" style="max-width:520px;">
-    <div class="modal-hd"><span class="modal-title" id="contractModalTitle">Nouveau contrat Wealins</span><button class="close-btn" onclick="closeContractModal()">×</button></div>
+  <div class="modal" style="max-width:560px;">
+    <div class="modal-hd"><span class="modal-title" id="contractModalTitle">Nouveau contrat</span><button class="close-btn" onclick="closeContractModal()">×</button></div>
     <div class="modal-body">
       <input type="hidden" id="ctmId"/>
       <div class="fg2">
         <div class="fl"><label>Client (titulaire)</label><select id="ctmClient"></select></div>
-        <div class="fl"><label>N° de contrat Wealins</label><input type="text" id="ctmNum" placeholder="ex: WL-2025-003"/></div>
+        <div class="fl"><label>N° de contrat</label><input type="text" id="ctmNum" placeholder="ex: WL-2025-003"/></div>
       </div>
-      <div class="fl" style="margin-top:8px;"><label>Banque dépositaire</label><input type="text" id="ctmBanque" value="Indosuez Luxembourg"/></div>
+      <div class="fg2" style="margin-top:8px;">
+        <div class="fl"><label>Type de contrat <span style="color:var(--text3);font-weight:400;">(template de procédure)</span></label><select id="ctmTemplate" onchange="ctmTemplateChanged()"></select></div>
+        <div class="fl"><label>Banque dépositaire</label><input type="text" id="ctmBanque" value="Indosuez Luxembourg"/></div>
+      </div>
       <div class="fl" style="margin-top:8px;"><label>Notes (optionnel)</label><textarea id="ctmNotes" rows="2" placeholder="Remarques internes, échéances, contacts…"></textarea></div>
       <div class="form-sep" style="display:flex;align-items:center;gap:8px;">Étapes préliminaires<div style="flex:1;"></div>
         <button type="button" class="btn btn-sm" onclick="ctmAddStep()" style="font-size:11px;">+ Ajouter une étape</button>
-        <button type="button" class="btn btn-sm" onclick="ctmLoadDefaults()" style="font-size:11px;color:var(--text2);" title="Insérer les 4 étapes Wealins standard">Charger défauts</button>
+        <button type="button" class="btn btn-sm" onclick="ctmLoadDefaults()" style="font-size:11px;color:var(--text2);" title="Remplacer par les 4 étapes Wealins standard">Charger défauts Wealins</button>
       </div>
       <div id="ctmPrelim"></div>
-      <div style="font-size:11px;color:var(--text3);margin-top:6px;">Aucune étape proposée par défaut. Ajoutez-en autant que nécessaire — vous pourrez les modifier après création.</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:6px;">Sélectionnez un type de contrat ci-dessus pour pré-remplir les étapes depuis un template, ou ajoutez-les manuellement. Tout est modifiable après création.</div>
     </div>
     <div class="modal-ft"><button class="btn" onclick="closeContractModal()">Annuler</button><button class="btn" id="ctmDeleteBtn" style="color:var(--red);border-color:var(--red-bg);display:none;" onclick="deleteContractFromModal()">Supprimer</button><button class="btn btn-primary" onclick="saveContractFromModal()">Enregistrer</button></div>
+  </div>
+</div>
+<div class="ov" id="templateModal">
+  <div class="modal" style="max-width:680px;">
+    <div class="modal-hd"><span class="modal-title" id="tplModalTitle">Nouveau template de contrat</span><button class="close-btn" onclick="closeTemplateModal()">×</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="tplId"/>
+      <div class="fl"><label>Nom du template</label><input type="text" id="tplName" placeholder="ex: Wealins, PER, CTO Indosuez…"/></div>
+      <div class="form-sep" style="display:flex;align-items:center;gap:8px;">Étapes préliminaires (par défaut sur chaque contrat)<div style="flex:1;"></div>
+        <button type="button" class="btn btn-sm" onclick="tplAddPrelim()" style="font-size:11px;">+ Ajouter</button>
+      </div>
+      <div id="tplPrelim"></div>
+      <div class="form-sep" style="display:flex;align-items:center;gap:8px;">Étapes par défaut pour chaque investissement<div style="flex:1;"></div>
+        <button type="button" class="btn btn-sm" onclick="tplAddStep()" style="font-size:11px;">+ Ajouter</button>
+      </div>
+      <div id="tplSteps"></div>
+      <div style="font-size:11px;color:var(--text3);margin-top:8px;">Ces étapes seront copiées (pas liées) sur les contrats utilisant ce template. Modifier le template après coup ne change pas les contrats déjà créés.</div>
+    </div>
+    <div class="modal-ft"><button class="btn" onclick="closeTemplateModal()">Annuler</button><button class="btn" id="tplDeleteBtn" style="color:var(--red);border-color:var(--red-bg);display:none;" onclick="deleteTemplateFromModal()">Supprimer</button><button class="btn btn-primary" onclick="saveTemplateFromModal()">Enregistrer</button></div>
   </div>
 </div>
 <div class="ov" id="prodModal">
@@ -720,10 +743,10 @@
       <div class="fl" style="margin-top:8px;"><label>Notes (optionnel)</label><textarea id="prodPNotes" rows="2" placeholder="Échéance, conditions particulières…"></textarea></div>
       <div class="form-sep" style="display:flex;align-items:center;gap:8px;">Étapes de la checklist<div style="flex:1;"></div>
         <button type="button" class="btn btn-sm" onclick="prodAddStep()" style="font-size:11px;">+ Ajouter une étape</button>
-        <button type="button" class="btn btn-sm" onclick="prodLoadDefaults()" style="font-size:11px;color:var(--text2);" title="Insérer les étapes Wealins par défaut pour le type sélectionné">Charger défauts du type</button>
+        <button type="button" class="btn btn-sm" onclick="prodLoadDefaults()" style="font-size:11px;color:var(--text2);" title="Remplacer par les étapes Wealins standard pour le type sélectionné">Charger défauts Wealins</button>
       </div>
       <div id="prodPSteps"></div>
-      <div style="font-size:11px;color:var(--text3);margin-top:6px;">Aucune étape proposée par défaut. Ajoutez-en autant que nécessaire — vous pourrez les modifier après création.</div>
+      <div id="prodTplHint" style="font-size:11px;color:var(--text3);margin-top:6px;"></div>
     </div>
     <div class="modal-ft"><button class="btn" onclick="closeProdModal()">Annuler</button><button class="btn" id="prodDeleteBtn" style="color:var(--red);border-color:var(--red-bg);display:none;" onclick="deleteProdFromModal()">Supprimer</button><button class="btn btn-primary" onclick="saveProdFromModal()">Enregistrer</button></div>
   </div>

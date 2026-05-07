@@ -201,6 +201,7 @@ function rowToContract(r){
     num:r.num||'',
     banque:r.banque||'Indosuez Luxembourg',
     notes:r.notes||'',
+    template_name:r.template_name||'',
     prelim:Array.isArray(r.prelim)?r.prelim:defaultPrelim(),
     produits:Array.isArray(r.produits)?r.produits:[],
     created_at:r.created_at
@@ -218,6 +219,7 @@ async function saveContract(c){
     num:c.num||null,
     banque:c.banque||'Indosuez Luxembourg',
     notes:c.notes||null,
+    template_name:c.template_name||null,
     prelim:Array.isArray(c.prelim)?c.prelim:defaultPrelim(),
     produits:Array.isArray(c.produits)?c.produits:[]
   };
@@ -247,6 +249,117 @@ async function deleteContractDB(id){
 }
 function contractsForClient(clientName){
   return contracts_db.filter(function(c){return c.client===clientName;});
+}
+
+// ── CONTRACT TEMPLATES (procédures réutilisables) ───────────────────────────
+var templates_db=[];
+function rowToTemplate(r){
+  return{
+    _id:r.id,
+    name:r.name,
+    prelim:Array.isArray(r.prelim)?r.prelim:[],
+    steps:Array.isArray(r.steps)?r.steps:[],
+    created_at:r.created_at
+  };
+}
+async function loadTemplates(){
+  var res=await sb.from('contract_templates').select('*').order('name');
+  if(res.error)throw res.error;
+  templates_db=(res.data||[]).map(rowToTemplate);
+}
+async function saveTemplate(t){
+  var row={name:t.name,prelim:Array.isArray(t.prelim)?t.prelim:[],steps:Array.isArray(t.steps)?t.steps:[]};
+  if(t._id){
+    var res=await sb.from('contract_templates').update(row).eq('id',t._id).select();
+    if(res.error)throw res.error;
+    var existing=templates_db.find(function(x){return x._id===t._id;});
+    if(existing&&res.data&&res.data[0])Object.assign(existing,rowToTemplate(res.data[0]));
+    return existing;
+  } else {
+    var res=await sb.from('contract_templates').insert(row).select();
+    if(res.error)throw res.error;
+    if(res.data&&res.data[0]){var nt=rowToTemplate(res.data[0]);templates_db.push(nt);return nt;}
+  }
+}
+async function deleteTemplate(id){
+  var res=await sb.from('contract_templates').delete().eq('id',id);
+  if(res.error)throw res.error;
+  templates_db=templates_db.filter(function(t){return t._id!==id;});
+}
+async function seedDefaultTemplates(){
+  if(templates_db.length>0)return;
+  var wealins={
+    name:'Wealins',
+    prelim:PRELIM_DEFAULTS.map(function(s){return{id:newStepId(),label:s.label};}),
+    steps:STEPS_DEFAULTS['structuré'].map(function(s){var o={id:newStepId(),label:s.label};if(s.note)o.note=s.note;return o;})
+  };
+  try{await saveTemplate(wealins);}catch(e){console.warn('Seed Wealins template failed',e);}
+}
+function templateByName(name){return templates_db.find(function(t){return t.name===name;});}
+function templatePrelimCopy(name){
+  var t=templateByName(name);if(!t)return[];
+  return t.prelim.map(function(s){return{id:newStepId(),label:s.label,done:false};});
+}
+function templateStepsCopy(name){
+  var t=templateByName(name);if(!t)return[];
+  return t.steps.map(function(s){var o={id:newStepId(),label:s.label,done:false};if(s.note)o.note=s.note;return o;});
+}
+
+// Map deal.produit_type → investissement type used for badges
+function dealTypeToProdType(pt){
+  if(!pt)return'autre';
+  var x=pt.toLowerCase();
+  if(x.indexOf('struct')!==-1)return'structuré';
+  if(x.indexOf('ucits')!==-1||x.indexOf('opcvm')!==-1)return'ucits';
+  if(x.indexOf('alternat')!==-1)return'alternatif';
+  return'autre';
+}
+
+// On deal creation: find the client's existing contract (or auto-create one) and append an investissement
+async function autoLinkDealToContract(deal){
+  if(!deal||!deal.client)return;
+  var clientName=deal.client;
+  var contract=contracts_db.find(function(c){return c.client===clientName;});
+  if(!contract){
+    // Auto-create a minimal contract using the first available template (Wealins by default)
+    var defaultTemplate=templates_db[0];
+    var newC={
+      _id:null,
+      client:clientName,
+      num:'',
+      banque:deal.depositaire||'Indosuez Luxembourg',
+      notes:'',
+      template_name:defaultTemplate?defaultTemplate.name:null,
+      prelim:defaultTemplate?templatePrelimCopy(defaultTemplate.name):[],
+      produits:[]
+    };
+    contract=await saveContract(newC);
+    if(!contract)return;
+  }
+  // Build investissement
+  var montantStr=deal.nom?(new Intl.NumberFormat('fr-FR').format(deal.nom)+' '+(deal.dev||'EUR')):'';
+  var notesParts=[];
+  if(deal.depositaire)notesParts.push('Dépositaire: '+deal.depositaire);
+  if(deal.fourn)notesParts.push('Fournisseur: '+deal.fourn);
+  if(deal.contrat)notesParts.push('Contrat: '+deal.contrat);
+  var prod={
+    id:newStepId(),
+    name:deal.produit||'(produit non nommé)',
+    isin:deal.isin||'',
+    type:dealTypeToProdType(deal.produit_type),
+    montant:montantStr,
+    notes:notesParts.join(' · '),
+    steps:contract.template_name?templateStepsCopy(contract.template_name):[],
+    deal_id:deal._id||null  // backref so we don't duplicate on re-save
+  };
+  // Skip if already linked (defensive — re-running the same deal save)
+  if(deal._id&&(contract.produits||[]).some(function(p){return p.deal_id===deal._id;}))return;
+  contract.produits=contract.produits||[];
+  contract.produits.push(prod);
+  await saveContract(contract);
+  // Expand the contract card so user sees the new investissement when they go to the page
+  ctrExp[contract._id]=true;
+  prodExp[contract._id+'|'+prod.id]=true;
 }
 
 // ── AUTH ──────────────────────────────────────────────────────────────────────
@@ -425,7 +538,7 @@ function goTo(id,btn){
   ['synthese','deals','facturation','graphiques','clients','fournisseurs','brokers','contrats','commissions'].forEach(p=>document.getElementById('p-'+p).classList.toggle('on',p===id));
   document.querySelectorAll('.nbtn').forEach(b=>b.classList.remove('on'));
   if(btn)btn.classList.add('on');
-  document.getElementById('pageTitle').textContent={synthese:'Synthèse',deals:'Tous les deals',facturation:'Facturation',graphiques:'Graphiques',clients:'Clients',fournisseurs:'Fournisseurs',brokers:'Brokers',contrats:'Suivi Contrats Wealins',commissions:'Commissions'}[id]||'';
+  document.getElementById('pageTitle').textContent={synthese:'Synthèse',deals:'Tous les deals',facturation:'Facturation',graphiques:'Graphiques',clients:'Clients',fournisseurs:'Fournisseurs',brokers:'Brokers',contrats:'Suivi Contrats',commissions:'Commissions'}[id]||'';
   if(id==='synthese')setTimeout(function(){renderCAChart();},200);
   else if(id==='graphiques')setTimeout(renderCharts,80);
     else if(id==='facturation'){setTimeout(()=>{renderFact();renderUFRappr();renderUFInvTable();},50);}
@@ -1928,6 +2041,7 @@ async function saveDeal(){
   } else {
     var ufP3=(parseFloat(document.getElementById('mUFR').value)||0)/100;
     var runP3=(parseFloat(document.getElementById('mRunR').value)||0)/100;
+    var autoLinked=0;
     for(var ii=0;ii<items.length;ii++){
       var item=items[ii];
       var lineNom2=item.nom||nom;
@@ -1935,8 +2049,10 @@ async function saveDeal(){
       var res=await sbInsert('deals',d);
       if(res&&res[0])d._id=res[0].id;
       deals.push(d);
+      // Auto-create line in Suivi Contrats: append investissement to client's contract
+      try{await autoLinkDealToContract(d);autoLinked++;}catch(e){console.error('autoLinkDealToContract failed',e);}
     }
-    closeDM();renderAll();toast(items.length>1?items.length+' deals enregistrés.':'Nouveau deal enregistré.');
+    closeDM();renderAll();toast((items.length>1?items.length+' deals enregistrés':'Nouveau deal enregistré')+(autoLinked?' · '+autoLinked+' investissement'+(autoLinked>1?'s':'')+' ajouté'+(autoLinked>1?'s':'')+' au suivi.':'.'));
   }
  }catch(err){
   console.error('saveDeal failed',err);
@@ -2998,7 +3114,39 @@ function renderContratsStats(){
   if(el)el.innerHTML=html;
 }
 
+function renderTemplatesPanel(){
+  var el=document.getElementById('templatesPanel');if(!el)return;
+  var open=ctrTemplatesOpen;
+  if(!templates_db.length){
+    el.innerHTML='<div style="display:flex;align-items:center;gap:10px;padding:8px 0;"><span style="font-size:12px;color:var(--text2);">Aucun template défini.</span><div style="flex:1;"></div><button class="btn btn-sm btn-primary" onclick="openTemplateModal()">+ Créer un template</button></div>';
+    return;
+  }
+  var header='<div style="display:flex;align-items:center;gap:10px;cursor:pointer;" onclick="toggleTemplatesPanel()">'+
+    '<span style="font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;">Templates de contrats <span style="background:var(--surface2);padding:1px 8px;border-radius:999px;font-weight:500;">'+templates_db.length+'</span></span>'+
+    '<div style="flex:1;"></div>'+
+    '<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();openTemplateModal()">+ Nouveau template</button>'+
+    '<span class="chev'+(open?' open':'')+'" style="font-size:14px;color:var(--text2);">▾</span>'+
+  '</div>';
+  if(!open){el.innerHTML=header;return;}
+  el.innerHTML=header+
+    '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;margin-top:10px;">'+
+    templates_db.map(function(t){
+      return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--rs);padding:12px 14px;display:flex;flex-direction:column;gap:6px;">'+
+        '<div style="display:flex;align-items:center;gap:8px;">'+
+          '<span style="font-size:13px;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+escH(t.name)+'</span>'+
+          '<button class="btn btn-sm" style="padding:3px 8px;font-size:11px;" onclick="openTemplateModal(\''+t._id+'\')">✎</button>'+
+          '<button class="btn btn-sm" style="padding:3px 8px;font-size:11px;color:var(--red);border-color:var(--red-bg);" onclick="confirmDeleteTemplate(\''+t._id+'\')">×</button>'+
+        '</div>'+
+        '<div style="font-size:11px;color:var(--text2);">'+(t.prelim||[]).length+' étape'+((t.prelim||[]).length>1?'s':'')+' préliminaire'+((t.prelim||[]).length>1?'s':'')+' · '+(t.steps||[]).length+' étape'+((t.steps||[]).length>1?'s':'')+' d\'investissement</div>'+
+      '</div>';
+    }).join('')+
+    '</div>';
+}
+var ctrTemplatesOpen=true;
+function toggleTemplatesPanel(){ctrTemplatesOpen=!ctrTemplatesOpen;renderTemplatesPanel();}
+
 function renderContrats(){
+  renderTemplatesPanel();
   renderContratsStats();
   var search=(document.getElementById('ctSearch')?document.getElementById('ctSearch').value:'').toLowerCase();
   var stat=document.getElementById('ctStat')?document.getElementById('ctStat').value:'';
@@ -3245,9 +3393,16 @@ function addEditorStep(containerId,opts){
 }
 
 // ── CONTRACT MODAL ───────────────────────────────────────────────────────────
+function buildTemplateSelectHTML(selected){
+  var opts='<option value="">— Aucun (sur mesure) —</option>';
+  templates_db.slice().sort(function(a,b){return a.name.localeCompare(b.name);}).forEach(function(t){
+    opts+='<option value="'+t.name+'"'+(t.name===selected?' selected':'')+'>'+escH(t.name)+'</option>';
+  });
+  return opts;
+}
 function openContractModal(contractId,prefillClient){
   var c=contractId?contracts_db.find(function(x){return x._id===contractId;}):null;
-  document.getElementById('contractModalTitle').textContent=c?'Modifier le contrat Wealins':'Nouveau contrat Wealins';
+  document.getElementById('contractModalTitle').textContent=c?'Modifier le contrat':'Nouveau contrat';
   document.getElementById('ctmId').value=c?c._id:'';
   var sel=document.getElementById('ctmClient');
   var clients=clients_db.map(function(x){return x.name;}).sort(function(a,b){return a.localeCompare(b);});
@@ -3256,7 +3411,10 @@ function openContractModal(contractId,prefillClient){
   document.getElementById('ctmNum').value=c?c.num:'';
   document.getElementById('ctmBanque').value=c?c.banque:'Indosuez Luxembourg';
   document.getElementById('ctmNotes').value=c?(c.notes||''):'';
-  // Editable prelim list — empty by default
+  // Template picker
+  var tplSel=document.getElementById('ctmTemplate');
+  if(tplSel)tplSel.innerHTML=buildTemplateSelectHTML(c?(c.template_name||''):'');
+  // Editable prelim list — preserved if editing, empty by default for new
   var prelim=c?(c.prelim||[]):[];
   document.getElementById('ctmPrelim').innerHTML=renderStepEditorRows(prelim,{note:false});
   document.getElementById('ctmDeleteBtn').style.display=c?'':'none';
@@ -3264,10 +3422,19 @@ function openContractModal(contractId,prefillClient){
 }
 function closeContractModal(){document.getElementById('contractModal').classList.remove('on');}
 function ctmAddStep(){addEditorStep('ctmPrelim',{note:false});}
+function ctmTemplateChanged(){
+  var name=document.getElementById('ctmTemplate').value;
+  if(!name)return;
+  var existingRows=document.querySelectorAll('#ctmPrelim .step-edit-row').length;
+  if(existingRows>0&&!confirm('Remplacer les étapes actuelles par celles du template "'+name+'" ?'))return;
+  var rows=templatePrelimCopy(name);
+  document.getElementById('ctmPrelim').innerHTML=renderStepEditorRows(rows,{note:false});
+}
 function ctmLoadDefaults(){
-  if(!confirm('Charger les 4 étapes Wealins par défaut ? (les étapes existantes seront conservées)'))return;
-  var c=document.getElementById('ctmPrelim');
-  c.insertAdjacentHTML('beforeend',renderStepEditorRows(seedPrelimDefaults(),{note:false}));
+  // Replace (not append) with the Wealins built-in defaults — idempotent
+  var existingRows=document.querySelectorAll('#ctmPrelim .step-edit-row').length;
+  if(existingRows>0&&!confirm('Remplacer les étapes actuelles par les 4 étapes Wealins par défaut ?'))return;
+  document.getElementById('ctmPrelim').innerHTML=renderStepEditorRows(seedPrelimDefaults(),{note:false});
 }
 
 async function saveContractFromModal(){
@@ -3276,6 +3443,8 @@ async function saveContractFromModal(){
   var num=document.getElementById('ctmNum').value.trim();
   var banque=document.getElementById('ctmBanque').value.trim()||'Indosuez Luxembourg';
   var notes=document.getElementById('ctmNotes').value.trim();
+  var tplEl=document.getElementById('ctmTemplate');
+  var template_name=tplEl?(tplEl.value||null):null;
   if(!client){alert('Sélectionnez un client.');return;}
   var prelim=readStepEditorRows(document.getElementById('ctmPrelim'),{note:false});
   var existing=id?contracts_db.find(function(x){return x._id===id;}):null;
@@ -3285,6 +3454,7 @@ async function saveContractFromModal(){
     num:num,
     banque:banque,
     notes:notes,
+    template_name:template_name,
     prelim:prelim,
     produits:existing?existing.produits:[]
   };
@@ -3311,6 +3481,55 @@ async function deleteContractFromModal(){
   }catch(e){console.error(e);alert('Erreur: '+(e.message||e));}
 }
 
+// ── TEMPLATE MODAL ──────────────────────────────────────────────────────────
+function openTemplateModal(templateId){
+  var t=templateId?templates_db.find(function(x){return x._id===templateId;}):null;
+  document.getElementById('tplModalTitle').textContent=t?'Modifier le template':'Nouveau template de contrat';
+  document.getElementById('tplId').value=t?t._id:'';
+  document.getElementById('tplName').value=t?t.name:'';
+  document.getElementById('tplPrelim').innerHTML=renderStepEditorRows((t?t.prelim:[]).map(function(s){return{id:s.id,label:s.label,done:false};}),{note:false});
+  document.getElementById('tplSteps').innerHTML=renderStepEditorRows((t?t.steps:[]).map(function(s){var o={id:s.id,label:s.label,done:false};if(s.note)o.note=s.note;return o;}),{note:true});
+  document.getElementById('tplDeleteBtn').style.display=t?'':'none';
+  document.getElementById('templateModal').classList.add('on');
+  setTimeout(function(){document.getElementById('tplName').focus();},50);
+}
+function closeTemplateModal(){document.getElementById('templateModal').classList.remove('on');}
+function tplAddPrelim(){addEditorStep('tplPrelim',{note:false});}
+function tplAddStep(){addEditorStep('tplSteps',{note:true});}
+async function saveTemplateFromModal(){
+  var id=document.getElementById('tplId').value;
+  var name=document.getElementById('tplName').value.trim();
+  if(!name){alert('Nom du template requis.');return;}
+  // Names are unique — block duplicates on create
+  if(!id&&templates_db.some(function(t){return t.name.toLowerCase()===name.toLowerCase();})){alert('Un template "'+name+'" existe déjà.');return;}
+  var prelimRows=readStepEditorRows(document.getElementById('tplPrelim'),{note:false});
+  var stepRows=readStepEditorRows(document.getElementById('tplSteps'),{note:true});
+  // Strip "done" — templates don't carry state
+  var prelim=prelimRows.map(function(s){return{id:s.id,label:s.label};});
+  var steps=stepRows.map(function(s){var o={id:s.id,label:s.label};if(s.note)o.note=s.note;return o;});
+  try{
+    await saveTemplate({_id:id||null,name:name,prelim:prelim,steps:steps});
+    closeTemplateModal();
+    renderContrats();
+    toast(id?'Template mis à jour.':'Template créé.');
+  }catch(e){console.error(e);alert('Erreur: '+(e.message||e));}
+}
+async function deleteTemplateFromModal(){
+  var id=document.getElementById('tplId').value;if(!id)return;
+  if(!confirm('Supprimer ce template ? Les contrats existants ne sont pas affectés.'))return;
+  try{
+    await deleteTemplate(id);
+    closeTemplateModal();renderContrats();
+    toast('Template supprimé.');
+  }catch(e){console.error(e);alert('Erreur: '+(e.message||e));}
+}
+async function confirmDeleteTemplate(id){
+  var t=templates_db.find(function(x){return x._id===id;});if(!t)return;
+  if(!confirm('Supprimer le template "'+t.name+'" ? Les contrats existants ne sont pas affectés.'))return;
+  try{await deleteTemplate(id);renderContrats();toast('Template supprimé.');}
+  catch(e){console.error(e);alert('Erreur: '+(e.message||e));}
+}
+
 // ── INVESTMENT (PRODUIT) MODAL ───────────────────────────────────────────────
 var _prodEditCtxId=null,_prodEditCtxProdId=null;
 function openProdModal(contractId,prodId){
@@ -3325,9 +3544,19 @@ function openProdModal(contractId,prodId){
   document.getElementById('prodPMontant').value=p?p.montant:'';
   document.getElementById('prodPNotes').value=p?(p.notes||''):'';
   document.getElementById('prodPClientLbl').textContent=c.client;
-  // Editable steps list — empty by default
-  var steps=p?(p.steps||[]):[];
+  // Steps: edit → existing; create → seed from contract's template if any
+  var steps;
+  if(p)steps=p.steps||[];
+  else if(c.template_name)steps=templateStepsCopy(c.template_name);
+  else steps=[];
   document.getElementById('prodPSteps').innerHTML=renderStepEditorRows(steps,{note:true});
+  // Hint label
+  var hint=document.getElementById('prodTplHint');
+  if(hint){
+    if(!p&&c.template_name)hint.textContent='Étapes pré-remplies depuis le template "'+c.template_name+'". Vous pouvez les modifier librement.';
+    else if(!p)hint.textContent='Aucun template appliqué — ajoutez vos étapes manuellement ou utilisez "Charger défauts du type".';
+    else hint.textContent='';
+  }
   document.getElementById('prodDeleteBtn').style.display=p?'':'none';
   document.getElementById('prodModal').classList.add('on');
   setTimeout(function(){document.getElementById('prodPName').focus();},50);
@@ -3335,12 +3564,13 @@ function openProdModal(contractId,prodId){
 function closeProdModal(){document.getElementById('prodModal').classList.remove('on');_prodEditCtxId=null;_prodEditCtxProdId=null;}
 function prodAddStep(){addEditorStep('prodPSteps',{note:true});}
 function prodLoadDefaults(){
+  // Replace (idempotent) with the Wealins-built-in defaults for the selected type
   var type=document.getElementById('prodPType').value;
   var defs=seedStepsForType(type);
   if(!defs.length){alert('Aucune étape par défaut pour ce type.');return;}
-  if(!confirm('Charger les '+defs.length+' étapes par défaut pour le type "'+(WTYPE_LBL[type]||type)+'" ? (les étapes existantes seront conservées)'))return;
-  var c=document.getElementById('prodPSteps');
-  c.insertAdjacentHTML('beforeend',renderStepEditorRows(defs,{note:true}));
+  var existingRows=document.querySelectorAll('#prodPSteps .step-edit-row').length;
+  if(existingRows>0&&!confirm('Remplacer les étapes actuelles par les '+defs.length+' étapes par défaut du type "'+(WTYPE_LBL[type]||type)+'" ?'))return;
+  document.getElementById('prodPSteps').innerHTML=renderStepEditorRows(defs,{note:true});
 }
 
 async function saveProdFromModal(){
@@ -3392,7 +3622,8 @@ async function initApp(){
       sbGetAll('fournisseurs'),
       sbGetAll('brokers'),
       sb.from('rapprochement').select('*'),
-      sb.from('contracts').select('*')
+      sb.from('contracts').select('*'),
+      sb.from('contract_templates').select('*').order('name')
     ]);
     deals=results[0]||[];
     clients_db=results[1]||[];
@@ -3403,13 +3634,23 @@ async function initApp(){
     if(results[5].error){
       var msg=String(results[5].error.message||'').toLowerCase();
       if(msg.indexOf('does not exist')!==-1||msg.indexOf('relation')!==-1){
-        console.warn('Contracts table missing — Wealins layer disabled. Run the SQL in Supabase to enable it.');
+        console.warn('Contracts table missing — run the SQL in Supabase to enable it.');
       } else {
         console.error('Contracts fetch failed',results[5].error);
       }
       contracts_db=[];
     } else {
       contracts_db=((results[5].data)||[]).map(rowToContract);
+    }
+    if(results[6].error){
+      var tmsg=String(results[6].error.message||'').toLowerCase();
+      if(tmsg.indexOf('does not exist')!==-1||tmsg.indexOf('relation')!==-1){
+        console.warn('contract_templates table missing — run the templates SQL.');
+      } else console.error('Templates fetch failed',results[6].error);
+      templates_db=[];
+    } else {
+      templates_db=((results[6].data)||[]).map(rowToTemplate);
+      await seedDefaultTemplates();
     }
     if(!fourn_db.length)await seedFournisseurs();
     else await mergeFournDefaults();
@@ -3525,6 +3766,18 @@ function setupRealtime(){
         }
         rerenderForTable('contracts');
       }catch(e){console.error('Realtime contracts error',e);}
+    })
+    .on('postgres_changes',{event:'*',schema:'public',table:'contract_templates'},function(p){
+      try{
+        if(p.eventType==='DELETE'){templates_db=templates_db.filter(function(t){return t._id!==p.old.id;});}
+        else{
+          var t=rowToTemplate(p.new);
+          var idx=templates_db.findIndex(function(x){return x._id===t._id;});
+          if(idx>=0)templates_db[idx]=t;else templates_db.push(t);
+        }
+        if(document.getElementById('p-contrats')&&document.getElementById('p-contrats').classList.contains('on'))renderContrats();
+        setLiveStatus('live');
+      }catch(e){console.error('Realtime templates error',e);}
     })
     .subscribe(function(status){
       if(status==='SUBSCRIBED')setLiveStatus('live');

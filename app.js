@@ -207,18 +207,19 @@ function prodProgress(p){
   var done=steps.filter(function(s){return s.done;}).length;
   return{done:done,total:steps.length,pct:Math.round(done/steps.length*100)};
 }
+// Status d'un contrat — basé sur le pourcentage global pour rester cohérent.
+// Règle simple : si globalPct === 100% et qu'il y a au moins un investissement
+// (sinon on n'a rien à suivre), c'est 'done'. Si rien n'est coché du tout, 'new'.
+// Sinon 'in-progress'. Cette logique est volontairement alignée avec globalPct
+// pour qu'on ne puisse plus avoir 100% affiché ET "En cours" en même temps.
 function contratStatus(c){
   var pp=prelimProgress(c);
   var produits=c.produits||[];
-  if(pp.done===0&&produits.every(function(p){return prodProgress(p).done===0;}))return'new';
-  // "Done" = prelim fully ticked (or empty = nothing to do) AND at least one investissement
-  // AND every investissement is fully ticked (or empty = nothing to do).
-  var prelimOK=pp.total===0||pp.done===pp.total;
-  var produitsOK=produits.length>0&&produits.every(function(p){
-    var pr=prodProgress(p);
-    return pr.total===0||pr.done===pr.total;
-  });
-  return (prelimOK&&produitsOK)?'done':'in-progress';
+  var allEmpty=pp.done===0&&produits.every(function(p){return prodProgress(p).done===0;});
+  if(allEmpty)return'new';
+  var pct=globalPct(c);
+  if(pct>=100&&produits.length>0)return'done';
+  return'in-progress';
 }
 function globalPct(c){
   var pp=prelimProgress(c);
@@ -2541,11 +2542,28 @@ function renderAlertesPage(){
   });
 }
 
+// Encours d'un client = somme des nominaux (en EUR) de ses deals actifs.
+// Un deal est "actif" si nom > 0 (les deals fully arbed-out ont nom=0 automatiquement).
+function encoursForClient(clientName){
+  if(!clientName)return 0;
+  return deals.filter(function(d){return d.client===clientName&&(d.nom||0)>0;}).reduce(function(s,d){
+    var nomEUR=d.dev==='USD'?d.nom/(d.fx||1):d.nom;
+    return s+nomEUR;
+  },0);
+}
+function encoursTotalGlobal(){
+  return deals.filter(function(d){return (d.nom||0)>0;}).reduce(function(s,d){
+    var nomEUR=d.dev==='USD'?d.nom/(d.fx||1):d.nom;
+    return s+nomEUR;
+  },0);
+}
 function renderEncoursGlobaux(){
-  var total=clients_db.reduce(function(s,c){return s+(c.encours||0);},0);
-  var nbClients=clients_db.filter(function(c){return (c.encours||0)>0;}).length;
+  var total=encoursTotalGlobal();
+  var clientSet={};
+  deals.forEach(function(d){if((d.nom||0)>0&&d.client)clientSet[d.client]=true;});
+  var nbClients=Object.keys(clientSet).length;
   document.getElementById('encoursGlobaux').textContent='€ '+f0(total);
-  document.getElementById('encoursGlobauxSub').textContent=nbClients+' client'+(nbClients>1?'s':'')+' renseigné'+(nbClients>1?'s':'');
+  document.getElementById('encoursGlobauxSub').textContent=nbClients+' client'+(nbClients>1?'s':'')+' avec position'+(nbClients>1?'s':'')+' active'+(nbClients>1?'s':'');
 }
 
 // Palette catégorielle harmonisée (cohérente avec le design system)
@@ -2961,7 +2979,7 @@ function renderClients(){
     var lastDate=dDeals.length?dDeals.sort((a,b)=>b.date.localeCompare(a.date))[0].date:'—';
     var typeBadge=c.type==='PP'?'<span class="badge bb">Pers. physique</span>':'<span class="badge bp">Pers. morale</span>';
     var r=t.insertRow();
-    var encours=c.encours||0;
+    var encours=encoursForClient(c.name);
     r.innerHTML='<td style="font-weight:500;cursor:pointer;" title="Double-cliquer pour modifier" ondblclick="openAddClientModal(\''+c.name.replace(/'/g,"\\'")+'\')">'+c.name+'</td><td>'+typeBadge+'</td><td style="color:var(--text2);">'+(c.vendeur||'—')+'</td><td style="text-align:right;font-weight:600;color:var(--blue);" class="mono">'+(encours>0?fE(encours):'—')+'</td><td style="text-align:center;">'+nbD+'</td><td style="text-align:right;" class="mono">'+(totalNom>0?fE(totalNom):'—')+'</td><td style="text-align:right;color:var(--blue);font-weight:500;">'+(totalUF>0?fE(totalUF):'—')+'</td><td style="text-align:right;color:var(--green);font-weight:500;">'+(totalRun>0?fE(totalRun):'—')+'</td><td class="mono" style="color:var(--text2);">'+lastDate+'</td>';
   });
 }
@@ -2974,13 +2992,13 @@ function openAddClientModal(name){
     document.getElementById('cType').value=c.type||'PP';
     document.getElementById('cVendeur').value=c.vendeur||'';
     document.getElementById('cEmail').value=c.email||'';
-    document.getElementById('cEncours').value=c.encours||'';
+    var ecDisp=document.getElementById('cEncoursDisplay');if(ecDisp){var ec=encoursForClient(c.name);ecDisp.textContent=ec>0?fE(ec):'— (aucun deal actif)';}
     document.getElementById('cNotes').value=c.notes||'';
   } else {
     document.getElementById('cType').value='PP';
     document.getElementById('cVendeur').value='';
     document.getElementById('cEmail').value='';
-    document.getElementById('cEncours').value='';
+    var ecDisp2=document.getElementById('cEncoursDisplay');if(ecDisp2)ecDisp2.textContent='— (aucun deal pour l\'instant)';
     document.getElementById('cNotes').value='';
   }
   document.getElementById('clientDeleteBtn').style.display=name?'':'none';
@@ -3182,7 +3200,7 @@ async function saveClient(){
   var name=document.getElementById('cName').value.trim();
   var original=document.getElementById('cName').dataset.original||'';
   if(!name){alert('Nom requis.');return;}
-  var entry={name,type:document.getElementById('cType').value,vendeur:document.getElementById('cVendeur').value,email:document.getElementById('cEmail').value,encours:parseFloat(document.getElementById('cEncours').value)||0,notes:document.getElementById('cNotes').value};
+  var entry={name,type:document.getElementById('cType').value,vendeur:document.getElementById('cVendeur').value,email:document.getElementById('cEmail').value,notes:document.getElementById('cNotes').value};
   if(original&&original!==name){
     var c=clients_db.find(x=>x.name===original);
     if(c){entry._id=c._id;await sbUpdate('clients',c._id,entry);Object.assign(c,entry);}

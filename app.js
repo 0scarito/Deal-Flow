@@ -620,6 +620,7 @@ function renderSynthPaye(){
 function renderSynthPipe(){
   var d=filt();
   var pipe=d.filter(x=>x.fSt==='À émettre'||x.fSt==='Facturé');
+  var recent=pipe.slice().sort(function(a,b){return (b.date||'').localeCompare(a.date||'');}).slice(0,5);
   var totalNom=pipe.reduce((s,x)=>s+(x.dev==='USD'?x.nom/(x.fx||1):x.nom),0);
   var totalUF=pipe.filter(x=>x.ct==='UF'||x.ct==='BOTH').reduce((s,x)=>s+(x.ufE||0),0);
   var totalRun=pipe.filter(x=>x.ct==='RUN'||x.ct==='BOTH').reduce((s,x)=>s+(x.runE||0),0);

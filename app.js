@@ -4,7 +4,7 @@ var SUPABASE_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsI
 var sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
 
 // JS camelCase <-> DB snake_case mapping for deals
-var DATE_FIELDS=['date','issue','inv_s','inv','end_date','terme','runStart','run_start'];
+var DATE_FIELDS=['date','issue','inv_s','inv','end_date','terme','maturite','runStart','run_start'];
 // Columns we'll strip out at insert/update time when the DB schema cache says
 // they don't exist. Populated on demand from PostgREST error messages.
 var _missingDealCols={};

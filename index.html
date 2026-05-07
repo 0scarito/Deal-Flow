@@ -787,7 +787,23 @@
     <div class="modal-hd"><span class="modal-title" id="dmTitle">Nouveau deal</span><button class="close-btn" onclick="closeDM()">×</button></div>
     <div class="modal-body">
 
-      <!-- Ligne 0 : Codification produit / Date de terme -->
+      <!-- Ligne 1 : Vendeur / Trade date / Statut / Devise -->
+      <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 16px;margin-bottom:12px;">
+        <div class="fl"><label>Vendeur</label><select id="mV"><option>Audrey</option><option>David</option><option>Audrey & David</option></select></div>
+        <div class="fl"><label>Trade date</label><input type="date" id="mDate"/></div>
+        <div class="fl"><label>Statut</label><select id="mStat"><option>Deal réalisé</option><option>Deal pipe</option></select></div>
+        <div class="fl"><label>Devise</label><select id="mDev" onchange="calcM()"><option>EUR</option><option>USD</option></select></div>
+      </div>
+
+      <!-- Ligne 2 : Fournisseur / Produit / ISIN / Broker -->
+      <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 16px;margin-bottom:12px;">
+        <div class="fl"><label>Fournisseur</label><select id="mFourn"><option value="">— Choisir —</option></select></div>
+        <div class="fl"><label>Produit / Support</label><input type="text" id="mProduit"/></div>
+        <div class="fl"><label>ISIN</label><input type="text" id="mISIN"/></div>
+        <div class="fl"><label>Broker</label><select id="mBroker"><option value="">— Aucun —</option><option>KCS</option><option>Silex</option><option>Direct</option><option>Indosuez</option><option>Natixis</option><option>Société Générale</option><option>BNP Paribas CIB</option><option>Oddo BHF</option><option>Caceis</option><option>Autre</option></select></div>
+      </div>
+
+      <!-- Codification produit / Date de terme (juste au-dessus des clients) -->
       <div style="background:var(--blue-bg);border-radius:var(--rs);padding:12px 14px;margin-bottom:14px;border:1px solid rgba(29,95,212,.15);">
         <div style="font-size:11px;font-weight:600;color:var(--blue-t);margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px;">Codification &amp; Échéance</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px 16px;">
@@ -807,22 +823,6 @@
           </div>
           <div class="fl"><label>Date de terme <span style="color:var(--text3);font-weight:400;">(alerte à T-6 mois)</span></label><input type="date" id="mTerme"/></div>
         </div>
-      </div>
-
-      <!-- Ligne 1 : Vendeur / Trade date / Statut / Devise -->
-      <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 16px;margin-bottom:12px;">
-        <div class="fl"><label>Vendeur</label><select id="mV"><option>Audrey</option><option>David</option><option>Audrey & David</option></select></div>
-        <div class="fl"><label>Trade date</label><input type="date" id="mDate"/></div>
-        <div class="fl"><label>Statut</label><select id="mStat"><option>Deal réalisé</option><option>Deal pipe</option></select></div>
-        <div class="fl"><label>Devise</label><select id="mDev" onchange="calcM()"><option>EUR</option><option>USD</option></select></div>
-      </div>
-
-      <!-- Ligne 2 : Fournisseur / Produit / ISIN / Broker -->
-      <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 16px;margin-bottom:12px;">
-        <div class="fl"><label>Fournisseur</label><select id="mFourn"><option value="">— Choisir —</option></select></div>
-        <div class="fl"><label>Produit / Support</label><input type="text" id="mProduit"/></div>
-        <div class="fl"><label>ISIN</label><input type="text" id="mISIN"/></div>
-        <div class="fl"><label>Broker</label><select id="mBroker"><option value="">— Aucun —</option><option>KCS</option><option>Silex</option><option>Direct</option><option>Indosuez</option><option>Natixis</option><option>Société Générale</option><option>BNP Paribas CIB</option><option>Oddo BHF</option><option>Caceis</option><option>Autre</option></select></div>
       </div>
 
       <!-- Section clients pleine largeur -->

@@ -586,7 +586,6 @@ async function checkAuth(){
   if(session){document.getElementById('loginOverlay').style.display='none';initApp();}
   else{document.getElementById('loadingOverlay').style.display='none';document.getElementById('loginOverlay').style.display='flex';}
 }
-var TEAM_PASSWORD='Chamfeuil2026';
 var ALLOWED_DOMAIN='@chamfeuilcapital.com';
 async function doLogin(){
   var email=document.getElementById('loginEmail').value.trim().toLowerCase();
@@ -595,22 +594,11 @@ async function doLogin(){
   var err=document.getElementById('loginErr');
   btn.disabled=true;btn.textContent='Connexion…';err.textContent='';
   if(!email.endsWith(ALLOWED_DOMAIN)){err.textContent='Email '+ALLOWED_DOMAIN+' requis.';btn.disabled=false;btn.textContent='Se connecter';return;}
-  if(pw!==TEAM_PASSWORD){err.textContent='Mot de passe incorrect.';btn.disabled=false;btn.textContent='Se connecter';return;}
-  // Try sign-in; on "Invalid credentials", auto-register and retry
+  // Sign-in only — accounts must be pre-provisioned by admin (no auto-signup).
   var res=await sb.auth.signInWithPassword({email:email,password:pw});
   if(res.error){
-    var msg=(res.error.message||'').toLowerCase();
-    if(msg.indexOf('invalid')!==-1||msg.indexOf('not found')!==-1||msg.indexOf('user')!==-1){
-      // First-time login: register then sign in
-      btn.textContent='Création du compte…';
-      var su=await sb.auth.signUp({email:email,password:pw});
-      if(su.error){err.textContent=su.error.message;btn.disabled=false;btn.textContent='Se connecter';return;}
-      // Try sign-in again (works if email confirmation is disabled in Supabase)
-      var res2=await sb.auth.signInWithPassword({email:email,password:pw});
-      if(res2.error){err.textContent='Compte créé mais connexion impossible. Vérifiez que la confirmation email est désactivée dans Supabase Auth → Providers → Email.';btn.disabled=false;btn.textContent='Se connecter';return;}
-      document.getElementById('loginOverlay').style.display='none';initApp();return;
-    }
-    err.textContent=res.error.message||'Email ou mot de passe incorrect.';btn.disabled=false;btn.textContent='Se connecter';
+    err.textContent='Email ou mot de passe incorrect. Contacte l\'admin si tu n\'as pas de compte.';
+    btn.disabled=false;btn.textContent='Se connecter';
   } else {
     document.getElementById('loginOverlay').style.display='none';initApp();
   }

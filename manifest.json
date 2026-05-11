@@ -1,6 +1,6 @@
 {
-  "name": "Deal Flow — Chamfeuil Capital",
-  "short_name": "Deal Flow",
+  "name": "DealFlow — Chamfeuil Capital",
+  "short_name": "DealFlow",
   "description": "Suivi des commissions, deals, facturation et rapprochements — Chamfeuil Capital",
   "lang": "fr",
   "dir": "ltr",
@@ -8,7 +8,7 @@
   "scope": "./",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#f7f6f3",
+  "background_color": "#ffffff",
   "theme_color": "#1a8a4a",
   "categories": ["finance", "business", "productivity"],
   "icons": [

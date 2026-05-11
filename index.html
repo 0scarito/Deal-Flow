@@ -3,7 +3,17 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Deal Tracker</title>
+  <title>Deal Flow</title>
+
+  <!-- PWA — Installable as a desktop app on Windows / macOS / iOS / Android -->
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1a8a4a" />
+  <meta name="application-name" content="Deal Flow" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Deal Flow" />
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
 
   <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -1212,5 +1222,16 @@
 
   <!-- App script -->
   <script src="app.js"></script>
+
+  <!-- PWA — Service Worker registration (offline + installable) -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker.register('sw.js')
+          .then(function (reg) { console.log('[PWA] Service worker registered, scope:', reg.scope); })
+          .catch(function (err) { console.warn('[PWA] Service worker registration failed:', err); });
+      });
+    }
+  </script>
 </body>
 </html>

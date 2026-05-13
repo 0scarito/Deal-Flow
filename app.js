@@ -3533,6 +3533,7 @@ function rebuildFournSelect(){
 }
 function openFournModal(name){
   document.getElementById('fournModalTitle').textContent=name?'Modifier le fournisseur':'Nouveau fournisseur';
+  var existingProducts=[];
   if(name){
     var f=loadFourn().find(x=>x.name===name)||{};
     document.getElementById('fName').value=name;
@@ -3542,6 +3543,7 @@ function openFournModal(name){
     document.getElementById('fContact').value=f.contact||'';
     document.getElementById('fEmail').value=f.email||'';
     document.getElementById('fName').dataset.original=name;
+    existingProducts=Array.isArray(f.products)?f.products:[];
   } else {
     document.getElementById('fName').value='';
     document.getElementById('fFamille').value='SDG';
@@ -3551,6 +3553,11 @@ function openFournModal(name){
     document.getElementById('fEmail').value='';
     document.getElementById('fName').dataset.original='';
   }
+  // Hydrate the products list (visibility toggled by onFournFamilleChange)
+  document.getElementById('fProducts').innerHTML='';
+  existingProducts.forEach(function(p){addFournProductLine(p);});
+  document.getElementById('fProductsEmpty').style.display=existingProducts.length?'none':'';
+  onFournFamilleChange();
   document.getElementById('fournDeleteBtn').style.display=name?'':'none';
   document.getElementById('fournModal').classList.add('on');
   setTimeout(()=>document.getElementById('fName').focus(),50);
@@ -3571,10 +3578,12 @@ async function saveFourn(){
   var email=document.getElementById('fEmail').value.trim();
   var original=document.getElementById('fName').dataset.original||'';
   if(!name){alert('Nom requis.');return;}
-  var payload={name,famille,addr1,addr2,contact,email};
+  // Products only carried for SDG family — defensive empty array for others.
+  var products=famille==='SDG'?getFournProductsFromModal():[];
+  var payload={name,famille,addr1,addr2,contact,email,products};
   if(original&&original!==name){
     var f=fourn_db.find(x=>x.name===original);
-    if(f){Object.assign(f,payload);await sbUpdate('fournisseurs',f._id,payload);}
+    if(f){Object.assign(f,payload);await sbUpdateFournSafe(f._id,payload,f);}
     for(var di=0;di<deals.length;di++){var dd=deals[di];if(dd.fourn===original){dd.fourn=name;if(dd._id)await sbUpdate('deals',dd._id,dd);}}
     // Cascade to rapprochement (in-memory cache + DB)
     var rapprToUpdate=rapprochement_db.filter(function(r){return r.fourn===original;});
@@ -3586,10 +3595,140 @@ async function saveFourn(){
     }
   } else {
     var existing=fourn_db.find(x=>x.name===name);
-    if(existing){Object.assign(existing,payload);await sbUpdate('fournisseurs',existing._id,payload);}
-    else{var res=await sbInsert('fournisseurs',payload);if(res&&res[0])fourn_db.push({...payload,_id:res[0].id});}
+    if(existing){Object.assign(existing,payload);await sbUpdateFournSafe(existing._id,payload,existing);}
+    else{
+      var res=await sbInsertFournSafe(payload);
+      if(res&&res[0])fourn_db.push({...payload,_id:res[0].id});
+    }
   }
   closeFournModal();renderFourn();renderDeals();toast(original?'Fournisseur mis à jour.':'Fournisseur ajouté.');
+}
+
+// ── Phase 1A — Fournisseur Products (catalogue ISIN per SDG row) ────────────
+// Defensive insert/update: if Supabase column `products` not yet migrated,
+// strip it and retry once. Warns the user via toast so the migration gets run.
+var _warnedNoProductsCol=false;
+function _isMissingProductsColErr(err){
+  var m=String((err&&err.message)||err||'').toLowerCase();
+  return m.indexOf("'products'")!==-1||m.indexOf('"products"')!==-1||(m.indexOf('products')!==-1&&m.indexOf('column')!==-1);
+}
+function _warnNoProductsCol(){
+  if(_warnedNoProductsCol)return;
+  _warnedNoProductsCol=true;
+  toast('Colonne "products" absente — sauvegardé sans. Lance 05_fournisseur_products.sql sur Supabase.');
+  console.warn('[Schema] fournisseurs.products missing. Apply: alter table fournisseurs add column products jsonb default \'[]\'::jsonb;');
+}
+async function sbInsertFournSafe(payload){
+  var res=await sb.from('fournisseurs').insert(payload).select();
+  if(res.error&&_isMissingProductsColErr(res.error)){
+    _warnNoProductsCol();
+    var stripped=Object.assign({},payload);delete stripped.products;
+    res=await sb.from('fournisseurs').insert(stripped).select();
+  }
+  if(res.error){console.error('Fournisseur insert failed',res.error);throw res.error;}
+  return res.data||[];
+}
+async function sbUpdateFournSafe(id,payload,memRow){
+  var data=Object.assign({},payload);delete data.id;delete data._id;delete data.created_at;
+  var res=await sb.from('fournisseurs').update(data).eq('id',id).select();
+  if(res.error&&_isMissingProductsColErr(res.error)){
+    _warnNoProductsCol();
+    var stripped=Object.assign({},data);delete stripped.products;
+    res=await sb.from('fournisseurs').update(stripped).eq('id',id).select();
+    // Reflect: in-memory row still has products[] (so UI works this session),
+    // but the DB row doesn't (until migration applied).
+  }
+  if(res.error){console.error('Fournisseur update failed',res.error);throw res.error;}
+  return res.data||[];
+}
+
+function onFournFamilleChange(){
+  var fam=document.getElementById('fFamille').value;
+  document.getElementById('fProductsSection').style.display=fam==='SDG'?'':'none';
+}
+
+function addFournProductLine(prod){
+  prod=prod||{isin:'',part:'',currency:'EUR',fees:[{kind:'',pct:''}]};
+  var c=document.getElementById('fProducts');
+  var card=document.createElement('div');
+  card.className='fourn-product-card';
+  card.style.cssText='background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:6px;';
+  // Header row : ISIN, Part, Currency, × remove product
+  var curOpts=['EUR','USD','GBP','CHF','JPY'].map(function(c){return '<option'+(c===(prod.currency||'EUR')?' selected':'')+'>'+c+'</option>';}).join('');
+  card.innerHTML=
+    '<div style="display:grid;grid-template-columns:1.3fr 1.2fr 70px 24px;gap:6px;margin-bottom:6px;align-items:center;">'+
+      '<input type="text" class="fpIsin" value="'+escH(prod.isin||'')+'" placeholder="ISIN (FR00...)" style="font-family:monospace;font-size:11px;"/>'+
+      '<input type="text" class="fpPart" value="'+escH(prod.part||'')+'" placeholder="Part / Share"/>'+
+      '<select class="fpCurrency">'+curOpts+'</select>'+
+      '<button type="button" onclick="removeFournProductLine(this)" title="Supprimer ce produit" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:18px;padding:0;line-height:1;">×</button>'+
+    '</div>'+
+    '<div class="fp-fees-wrap" style="padding-left:8px;border-left:2px solid var(--border);"></div>';
+  c.appendChild(card);
+  var feesWrap=card.querySelector('.fp-fees-wrap');
+  var feesArr=(prod.fees&&prod.fees.length)?prod.fees:[{kind:'',pct:''}];
+  feesArr.forEach(function(fee){_appendFpFeeRow(feesWrap,fee);});
+  var addFeeBtn=document.createElement('button');
+  addFeeBtn.type='button';addFeeBtn.className='fp-add-fee-btn';
+  addFeeBtn.style.cssText='background:none;border:1px dashed var(--border);color:var(--text2);cursor:pointer;font-size:10px;padding:2px 8px;border-radius:3px;margin-top:2px;';
+  addFeeBtn.textContent='+ frais';
+  addFeeBtn.onclick=function(){_appendFpFeeRow(feesWrap,{kind:'',pct:''},addFeeBtn);};
+  feesWrap.appendChild(addFeeBtn);
+  // Hide "empty" placeholder text once a product exists
+  document.getElementById('fProductsEmpty').style.display='none';
+}
+
+function _appendFpFeeRow(container,fee,beforeNode){
+  var row=document.createElement('div');
+  row.className='fp-fee-row';
+  row.style.cssText='display:grid;grid-template-columns:1fr 70px 24px;gap:4px;margin-bottom:3px;align-items:center;';
+  row.innerHTML=
+    '<input type="text" class="ffKind" value="'+escH(fee.kind||'')+'" placeholder="Type (gestion, perf, entrée…)" style="font-size:11px;"/>'+
+    '<input type="number" class="ffPct" value="'+escH(String(fee.pct==null||fee.pct===''?'':fee.pct))+'" placeholder="%" step="0.01" min="0" style="font-size:11px;"/>'+
+    '<button type="button" onclick="removeFpFeeRow(this)" title="Retirer ce frais" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:14px;padding:0;line-height:1;">×</button>';
+  if(beforeNode)container.insertBefore(row,beforeNode);else container.appendChild(row);
+}
+
+function removeFpFeeRow(btn){
+  var row=btn.closest('.fp-fee-row');
+  var container=row.parentElement;
+  if(container.querySelectorAll('.fp-fee-row').length>1)row.remove();
+}
+
+function removeFournProductLine(btn){
+  var card=btn.closest('.fourn-product-card');
+  card.remove();
+  if(!document.querySelectorAll('#fProducts .fourn-product-card').length){
+    document.getElementById('fProductsEmpty').style.display='';
+  }
+}
+
+function getFournProductsFromModal(){
+  var prods=[];
+  document.querySelectorAll('#fProducts .fourn-product-card').forEach(function(card){
+    var isin=(card.querySelector('.fpIsin').value||'').trim();
+    var part=(card.querySelector('.fpPart').value||'').trim();
+    var currency=card.querySelector('.fpCurrency').value||'EUR';
+    var fees=[];
+    card.querySelectorAll('.fp-fee-row').forEach(function(row){
+      var kind=(row.querySelector('.ffKind').value||'').trim();
+      var pctRaw=row.querySelector('.ffPct').value;
+      var pct=parseFloat(pctRaw);
+      if(kind||!isNaN(pct))fees.push({kind:kind,pct:isNaN(pct)?0:pct});
+    });
+    // Skip totally-empty cards (user clicked + then nothing)
+    if(isin||part||fees.length)prods.push({isin:isin,part:part,currency:currency,fees:fees});
+  });
+  return prods;
+}
+
+// Helpers consumed by Phase 2 (codif line cascade + fee snapshot)
+function getFournProducts(name){
+  var f=fourn_db.find(function(x){return x.name===name;});
+  return f&&Array.isArray(f.products)?f.products:[];
+}
+function getFournProductByIsin(name,isin){
+  if(!isin)return null;
+  return getFournProducts(name).find(function(p){return p.isin===isin;})||null;
 }
 async function deleteFourn(name){
   if(!confirm('Supprimer "'+name+'" ? Cette action est irréversible.'))return;
@@ -5122,6 +5261,9 @@ async function initApp(){
     clients_db=results[1]||[];
     fourn_db=results[2]||[];
     brokers_db=results[3]||[];
+    // Phase 1A backfill: ensure every fournisseur has a products[] (in-memory only;
+    // DB-side default comes from the jsonb DEFAULT in migration 05).
+    fourn_db.forEach(function(f){if(!Array.isArray(f.products))f.products=[];});
     if(results[4].error){console.error('Rapprochement fetch failed',results[4].error);toast('Erreur chargement rapprochement — facturation peut être incomplète.');rapprochement_db=[];}
     else rapprochement_db=((results[4].data)||[]).map(rapprRowToObj);
     if(results[5].error){

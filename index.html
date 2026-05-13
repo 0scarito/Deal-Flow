@@ -785,7 +785,7 @@
     <div class="modal-body">
       <div class="fg2">
         <div class="fl"><label>Nom du fournisseur</label><input type="text" id="fName" placeholder="ex: Amundi AM"/></div>
-        <div class="fl"><label>Famille</label><select id="fFamille"><option value="SDG">Société de gestion</option><option value="Banque">Banque</option><option value="Assureur">Assureur</option></select></div>
+        <div class="fl"><label>Famille</label><select id="fFamille" onchange="onFournFamilleChange()"><option value="SDG">Société de gestion</option><option value="Banque">Banque</option><option value="Assureur">Assureur</option></select></div>
       </div>
       <div class="form-sep">Coordonnées (pour facturation)</div>
       <div class="fg2" style="margin-top:0;">
@@ -795,6 +795,11 @@
       <div class="fg2" style="margin-top:8px;">
         <div class="fl"><label>Contact (Attention)</label><input type="text" id="fContact" placeholder="ex: Nadine Zrek"/></div>
         <div class="fl"><label>Email</label><input type="text" id="fEmail" placeholder="ex: contact@fournisseur.com"/></div>
+      </div>
+      <div id="fProductsSection" style="display:none;">
+        <div class="form-sep" style="display:flex;align-items:center;gap:8px;">Produits / Parts <span style="color:var(--text3);font-weight:400;font-size:11px;">(catalogue ISIN — utilisé en Nv deal)</span><div style="flex:1;"></div><button type="button" class="btn btn-sm" onclick="addFournProductLine()" style="font-size:11px;padding:3px 8px;">+ Produit</button></div>
+        <div id="fProducts"></div>
+        <div id="fProductsEmpty" style="font-size:11px;color:var(--text3);font-style:italic;padding:6px 0;">Aucun produit. Ajoute les parts (ISIN + frais) pour les retrouver à la création d'un deal.</div>
       </div>
     </div>
     <div class="modal-ft"><button class="btn" onclick="closeFournModal()">Annuler</button><button class="btn" id="fournDeleteBtn" style="color:var(--red);border-color:var(--red-bg);display:none;" onclick="deleteFournFromModal()">Supprimer</button><button class="btn btn-primary" onclick="saveFourn()">Enregistrer</button></div>

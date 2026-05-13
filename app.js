@@ -877,9 +877,20 @@ function goTo(id,btn){
 function setV(v,btn){curV=v;document.querySelectorAll('.vbtn').forEach(b=>b.classList.remove('on'));btn.classList.add('on');renderAll();}
 function onSearch(){var q=document.getElementById('gSearch').value;if(q)goTo('deals',document.querySelectorAll('.nbtn')[1]);document.getElementById('srch').value=q;renderDeals();}
 function renderAll(){
+  // Batch D.1.#6 — re-render the currently active page's content too, so vendor
+  // filter switches (Audrey/David/Tous) behave as a live filter on every page,
+  // not just on Synthèse. Previously only renderKpis was called → the deals
+  // table, contrats list, facturation page, etc. stayed stale until navigation.
   renderKpis();renderRecent();updateAlertBadge();updateContratsBadge();
-  if(document.getElementById('p-facturation')&&document.getElementById('p-facturation').classList.contains('on'))renderFact();
-  if(document.getElementById('p-alertes')&&document.getElementById('p-alertes').classList.contains('on'))renderAlertesPage();
+  var isOn=function(id){var el=document.getElementById(id);return el&&el.classList.contains('on');};
+  if(isOn('p-deals')&&typeof renderDeals==='function')renderDeals();
+  if(isOn('p-facturation')&&typeof renderFact==='function')renderFact();
+  if(isOn('p-alertes')&&typeof renderAlertesPage==='function')renderAlertesPage();
+  if(isOn('p-clients')&&typeof renderClients==='function')renderClients();
+  if(isOn('p-fournisseurs')&&typeof renderFourn==='function')renderFourn();
+  if(isOn('p-contrats')&&typeof renderContrats==='function')renderContrats();
+  if(isOn('p-commissions')&&typeof renderCommissions==='function')renderCommissions();
+  if(isOn('p-graphiques')&&typeof renderCharts==='function')renderCharts();
 }
 
 // Compute the year's three commission totals + CA total. Used by Synthèse (CA only)
@@ -1480,14 +1491,19 @@ function arbFournSelectHTML(selected){
 }
 
 function addArbDestLine(){
+  // Outer wrapper holds main grid row + optional parts/cours sub-row
+  var wrap=document.createElement('div');
+  wrap.className='arb-dest-row';
+  wrap.style.cssText='margin-bottom:8px;';
+  // Main grid row (existing layout)
   var div=document.createElement('div');
-  div.style.cssText='display:grid;grid-template-columns:1fr 1fr 120px 120px 80px 80px 80px auto;gap:6px;align-items:center;margin-bottom:6px;';
+  div.style.cssText='display:grid;grid-template-columns:1fr 1fr 120px 120px 80px 80px 80px auto;gap:6px;align-items:center;';
   div.innerHTML=
     '<select class="arbFournSel" style="min-width:0;" onchange="updateArbSummary()">'+arbFournSelectHTML('')+'</select>'+
     '<input type="text" class="arbProduitSel" placeholder="Produit" style="min-width:0;"/>'+
     '<select class="arbContratSel" style="min-width:0;">'+contratSelectHTML('Assurance Vie Lux')+'</select>'+
     '<select class="arbDepSel" style="min-width:0;">'+depositaireSelectHTML('')+'</select>'+
-    '<input type="number" class="arbMontantSel" placeholder="Nominal" style="min-width:0;" oninput="updateArbSummary()"/>'+
+    '<input type="number" class="arbMontantSel" placeholder="Nominal" style="min-width:0;" oninput="_onArbMontantChange(this)"/>'+
     '<select class="arbTypeSel" style="min-width:0;" onchange="updateArbTypeRow(this)">'+
       '<option value="RUN">Running</option>'+
       '<option value="UF">UF</option>'+
@@ -1495,8 +1511,35 @@ function addArbDestLine(){
       '<option value="PF">Perf fees</option>'+
     '</select>'+
     '<input type="number" class="arbTauxSel" placeholder="%" step="0.01" style="min-width:0;" title="Taux UF ou Running (%)" oninput="updateArbSummary()"/>'+
-    '<button type="button" class="btn btn-sm" onclick="this.closest(\'div\').remove();updateArbSummary();" style="color:var(--red);border-color:var(--red-bg);">\u2715</button>';
-  document.getElementById('arbDestLines').appendChild(div);
+    '<button type="button" class="btn btn-sm" onclick="this.closest(\'.arb-dest-row\').remove();updateArbSummary();" style="color:var(--red);border-color:var(--red-bg);">\u2715</button>';
+  // Batch D.3 \u2014 parts \u00d7 cours sub-row (auto-computes montant when both filled)
+  var subRow=document.createElement('div');
+  subRow.style.cssText='display:grid;grid-template-columns:1fr 1fr 120px 120px 80px 80px 80px auto;gap:6px;align-items:center;margin-top:3px;padding-top:3px;border-top:1px dashed var(--border);font-size:10px;color:var(--text3);';
+  subRow.innerHTML=
+    '<span></span><span></span><span></span>'+
+    '<span style="text-align:right;color:var(--text3);">Nb parts \u00d7 cours :</span>'+
+    '<input type="number" class="arbNbPartsSel" placeholder="Nb" step="0.0001" style="min-width:0;font-size:10px;padding:3px 6px;" oninput="_onArbPartsChange(this)"/>'+
+    '<span style="text-align:center;color:var(--text3);">\u00d7</span>'+
+    '<input type="number" class="arbCoursSel" placeholder="Cours" step="0.0001" style="min-width:0;font-size:10px;padding:3px 6px;" oninput="_onArbPartsChange(this)"/>'+
+    '<span></span>';
+  wrap.appendChild(div);
+  wrap.appendChild(subRow);
+  document.getElementById('arbDestLines').appendChild(wrap);
+  updateArbSummary();
+}
+// Batch D.3 \u2014 arb dest line: auto-compute montant from nb \u00d7 cours when both > 0
+function _onArbPartsChange(inputEl){
+  var wrap=inputEl.closest('.arb-dest-row');
+  if(!wrap)return;
+  var nb=parseFloat(wrap.querySelector('.arbNbPartsSel').value);
+  var cs=parseFloat(wrap.querySelector('.arbCoursSel').value);
+  if(!isNaN(nb)&&!isNaN(cs)&&nb>0&&cs>0){
+    wrap.querySelector('.arbMontantSel').value=(nb*cs).toFixed(2);
+  }
+  updateArbSummary();
+}
+function _onArbMontantChange(inputEl){
+  // Manual montant input \u2014 wins over parts \u00d7 cours (which we keep stored as informational).
   updateArbSummary();
 }
 
@@ -1589,7 +1632,12 @@ async function confirmArbitrage(){
     var montant=parseFloat(line.querySelector('.arbMontantSel').value)||0;
     var type=line.querySelector('.arbTypeSel').value;
     var taux=parseFloat(line.querySelector('.arbTauxSel').value)||0;
-    if(fourn&&montant>0)destinations.push({fourn:fourn,produit:produit,contrat:contrat,depositaire:dep,nom:montant,ct:type,taux:taux});
+    // Batch D.3 — optional parts × cours capture (informational; montant is the source of truth)
+    var nbPartsEl=line.querySelector('.arbNbPartsSel');
+    var coursEl=line.querySelector('.arbCoursSel');
+    var nbParts=nbPartsEl?(parseFloat(nbPartsEl.value)||null):null;
+    var cours=coursEl?(parseFloat(coursEl.value)||null):null;
+    if(fourn&&montant>0)destinations.push({fourn:fourn,produit:produit,contrat:contrat,depositaire:dep,nom:montant,ct:type,taux:taux,nbParts:nbParts,cours:cours});
   });
   if(!destinations.length){alert('Veuillez ajouter au moins un fournisseur cible.');return;}
   var totalArb=destinations.reduce(function(s,x){return s+x.nom;},0);
@@ -1729,6 +1777,8 @@ function openRetrait(idx){
   document.getElementById('retrNomDispo').textContent=fE(d.nom||0);
   document.getElementById('retrDate').value=today();
   document.getElementById('retrMontant').value='';
+  var rnp=document.getElementById('retrNbParts');if(rnp)rnp.value='';
+  var rcs=document.getElementById('retrCours');if(rcs)rcs.value='';
   document.getElementById('retrNote').value='';
   document.getElementById('retrTotal').textContent='\u2014';
   document.getElementById('retrSolde').textContent='\u2014';
@@ -1783,11 +1833,33 @@ function updateRetraitPreview(){
   preview.style.display='';
 }
 
+// Batch D.3 — retraits: dual input mode (montant direct OR parts × cours)
+// User can type either Montant, OR (NbParts, Cours) — the unfilled one is auto-derived.
+function _onRetrPartsChange(){
+  var nb=parseFloat(document.getElementById('retrNbParts').value);
+  var c=parseFloat(document.getElementById('retrCours').value);
+  if(!isNaN(nb)&&!isNaN(c)&&nb>0&&c>0){
+    document.getElementById('retrMontant').value=(nb*c).toFixed(2);
+  }
+  updateRetraitPreview();
+}
+function _onRetrMontantInput(){
+  // If user is editing montant directly while NbParts+Cours are also set,
+  // clear the cours to break the ambiguity (montant becomes the source of truth again).
+  var np=document.getElementById('retrNbParts');
+  var cs=document.getElementById('retrCours');
+  if(np&&cs&&(parseFloat(np.value)>0||parseFloat(cs.value)>0)){
+    // Keep them for record but don't recompute; the manual montant wins until they're re-touched
+  }
+  updateRetraitPreview();
+}
 async function confirmRetrait(){
  try{
   if(retraitSrcDeal==null)return;
   var d=deals[retraitSrcDeal];if(!d)return;
   var montant=parseFloat(document.getElementById('retrMontant').value)||0;
+  var nbParts=parseFloat((document.getElementById('retrNbParts')||{}).value)||null;
+  var cours=parseFloat((document.getElementById('retrCours')||{}).value)||null;
   var date=document.getElementById('retrDate').value;
   var note=(document.getElementById('retrNote').value||'').trim();
   if(!date){alert('Veuillez indiquer la date du retrait.');return;}
@@ -1839,7 +1911,7 @@ async function confirmRetrait(){
       var srcProd=clientContract.produits.find(function(p){return p.deal_id===d._id;});
       if(srcProd){
         srcProd.retraits=srcProd.retraits||[];
-        srcProd.retraits.push({retraitId:retraitId,date:date,montant:montant,prorata_run:prorataRun,note:note,closed:willClose});
+        srcProd.retraits.push({retraitId:retraitId,date:date,montant:montant,prorata_run:prorataRun,note:note,closed:willClose,nbParts:nbParts,cours:cours});
         var formatMontant=function(n,dev){return new Intl.NumberFormat('fr-FR').format(n)+' '+(dev||'EUR');};
         srcProd.montant=d.nom>0?formatMontant(d.nom,d.dev):'0 '+(d.dev||'EUR')+' (retrait total)';
         srcProd.notes=(srcProd.notes||'')+(srcProd.notes?' \u00b7 ':'')+'Retrait '+fE(montant)+' le '+date;
@@ -2954,6 +3026,35 @@ function updateAlertBadge(){
 
 function renderAlertes(){updateAlertBadge();}
 
+// Batch D.2 — collapse state per category and per (category+deal) sub-group, persisted in localStorage
+var _ALERT_COLLAPSE_KEY='dealflow-alert-collapse-v1';
+var _alertCollapseState=null;
+function _loadAlertCollapse(){
+  if(_alertCollapseState)return _alertCollapseState;
+  try{_alertCollapseState=JSON.parse(localStorage.getItem(_ALERT_COLLAPSE_KEY)||'{"cat":{},"deal":{}}');}catch(e){_alertCollapseState={cat:{},deal:{}};}
+  if(!_alertCollapseState.cat)_alertCollapseState.cat={};
+  if(!_alertCollapseState.deal)_alertCollapseState.deal={};
+  return _alertCollapseState;
+}
+function _saveAlertCollapse(){try{localStorage.setItem(_ALERT_COLLAPSE_KEY,JSON.stringify(_loadAlertCollapse()));}catch(e){}}
+function _toggleAlertCat(cat){var s=_loadAlertCollapse();s.cat[cat]=!s.cat[cat];_saveAlertCollapse();renderAlertesPage();}
+function _toggleAlertDealGroup(cat,dealId){var s=_loadAlertCollapse();var k=cat+'|'+dealId;s.deal[k]=!s.deal[k];_saveAlertCollapse();renderAlertesPage();}
+function _expandAllAlerts(){var s=_loadAlertCollapse();s.cat={};s.deal={};_saveAlertCollapse();renderAlertesPage();}
+function _collapseAllAlerts(){var s=_loadAlertCollapse();Object.keys(ALERT_CATEGORIES).forEach(function(k){s.cat[k]=true;});_saveAlertCollapse();renderAlertesPage();}
+function _renderAlertItemRow(a){
+  var sv=ALERT_SEVERITY[a.severity];
+  var clickable=alertActionHandler(a)?'cursor:pointer;':'';
+  var dismissBtn=a.dismissable?'<button type="button" class="alert-dismiss-btn" data-dismiss="'+escH(a.id)+'" title="Marquer comme vérifié" style="background:none;border:1px solid var(--border);color:var(--text2);cursor:pointer;font-size:10px;padding:3px 8px;border-radius:3px;margin-left:8px;">✓ Vérifié</button>':'';
+  return '<div class="alert-item" style="'+clickable+'" data-alertid="'+escH(a.id)+'">'+
+    '<span class="adot" style="background:'+sv.color+';"></span>'+
+    '<div style="flex:1;min-width:0;">'+
+      '<div style="font-size:13px;font-weight:500;color:var(--text);">'+escH(a.title)+'</div>'+
+      '<div style="font-size:11px;color:var(--text2);margin-top:1px;">'+escH(a.detail||'')+'</div>'+
+    '</div>'+
+    '<span class="badge '+sv.cls+'">'+sv.lbl+'</span>'+
+    dismissBtn+
+  '</div>';
+}
 function renderAlertesPage(){
   if(!document.getElementById('p-alertes'))return;
   var alerts=buildAlerts();
@@ -2968,7 +3069,9 @@ function renderAlertesPage(){
     summary.innerHTML=alerts.length+' alerte'+(alerts.length>1?'s':'')+
       (byS.urgent>0?' · <span style="color:var(--red);font-weight:600;">'+byS.urgent+' urgent'+(byS.urgent>1?'s':'')+'</span>':'')+
       (byS.warning>0?' · <span style="color:var(--amber-t);font-weight:600;">'+byS.warning+' attention</span>':'')+
-      (byS.info>0?' · <span style="color:var(--text2);">'+byS.info+' info</span>':'');
+      (byS.info>0?' · <span style="color:var(--text2);">'+byS.info+' info</span>':'')+
+      ' &nbsp;·&nbsp; <a onclick="_expandAllAlerts()" style="cursor:pointer;text-decoration:underline;color:var(--text3);font-size:10px;">tout déplier</a>'+
+      ' / <a onclick="_collapseAllAlerts()" style="cursor:pointer;text-decoration:underline;color:var(--text3);font-size:10px;">tout replier</a>';
   }
   var listEl=document.getElementById('alertesList');
   var emptyEl=document.getElementById('alertesEmpty');
@@ -2976,29 +3079,64 @@ function renderAlertesPage(){
   emptyEl.style.display='none';
 
   var groups={};alerts.forEach(function(a){(groups[a.category]=groups[a.category]||[]).push(a);});
+  var collapse=_loadAlertCollapse();
   var html='';
   Object.keys(ALERT_CATEGORIES).forEach(function(catKey){
     var list=groups[catKey];if(!list||!list.length)return;
     var cat=ALERT_CATEGORIES[catKey];
-    html+='<div class="card" style="border-left:4px solid '+cat.color+';padding:12px 16px;margin-bottom:12px;">'+
-      '<div style="font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;display:flex;align-items:center;gap:8px;">'+
-        '<span>'+cat.label+'</span>'+
-        '<span style="background:var(--surface2);padding:1px 8px;border-radius:999px;font-weight:500;color:var(--text);">'+list.length+'</span>'+
-      '</div>';
+    var catCollapsed=!!collapse.cat[catKey];
+    // Sub-group by deal_id (when alert has action.type='deal'); rest goes into "ungrouped"
+    var byDeal={};
+    var ungrouped=[];
     list.forEach(function(a){
-      var sv=ALERT_SEVERITY[a.severity];
-      var clickable=alertActionHandler(a)?'cursor:pointer;':'';
-      var dismissBtn=a.dismissable?'<button type="button" class="alert-dismiss-btn" data-dismiss="'+escH(a.id)+'" title="Marquer comme vérifié" style="background:none;border:1px solid var(--border);color:var(--text2);cursor:pointer;font-size:10px;padding:3px 8px;border-radius:3px;margin-left:8px;">✓ Vérifié</button>':'';
-      html+='<div class="alert-item" style="'+clickable+'" data-alertid="'+escH(a.id)+'">'+
-        '<span class="adot" style="background:'+sv.color+';"></span>'+
-        '<div style="flex:1;min-width:0;">'+
-          '<div style="font-size:13px;font-weight:500;color:var(--text);">'+escH(a.title)+'</div>'+
-          '<div style="font-size:11px;color:var(--text2);margin-top:1px;">'+escH(a.detail||'')+'</div>'+
-        '</div>'+
-        '<span class="badge '+sv.cls+'">'+sv.lbl+'</span>'+
-        dismissBtn+
-      '</div>';
+      var dealId=(a.action&&a.action.type==='deal'&&a.action.payload)?a.action.payload:null;
+      if(dealId){(byDeal[dealId]=byDeal[dealId]||[]).push(a);}
+      else ungrouped.push(a);
     });
+    // Severity breakdown for the header chip
+    var sBreak={urgent:0,warning:0,info:0};list.forEach(function(a){sBreak[a.severity]++;});
+    var sevChips='';
+    if(sBreak.urgent)sevChips+='<span style="color:var(--red);font-weight:600;font-size:10px;">'+sBreak.urgent+'⚠</span> ';
+    if(sBreak.warning)sevChips+='<span style="color:var(--amber-t);font-weight:600;font-size:10px;">'+sBreak.warning+'!</span> ';
+    if(sBreak.info)sevChips+='<span style="color:var(--text3);font-size:10px;">'+sBreak.info+'i</span>';
+    html+='<div class="card" style="border-left:4px solid '+cat.color+';padding:0;margin-bottom:8px;overflow:hidden;">'+
+      '<div onclick="_toggleAlertCat(\''+escH(catKey)+'\')" style="cursor:pointer;padding:9px 14px;display:flex;align-items:center;gap:8px;background:var(--surface2);user-select:none;">'+
+        '<span class="chev'+(catCollapsed?'':' open')+'" style="color:var(--text2);">▾</span>'+
+        '<span style="font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;">'+escH(cat.label)+'</span>'+
+        '<span style="background:var(--surface);padding:1px 8px;border-radius:999px;font-weight:500;color:var(--text);font-size:11px;">'+list.length+'</span>'+
+        '<div style="flex:1;"></div>'+
+        '<span style="display:flex;gap:6px;align-items:center;">'+sevChips+'</span>'+
+      '</div>';
+    if(!catCollapsed){
+      html+='<div style="padding:6px 12px 10px;">';
+      // Ungrouped alerts first (no deal context)
+      ungrouped.forEach(function(a){html+=_renderAlertItemRow(a);});
+      // Then per-deal sub-groups
+      Object.keys(byDeal).forEach(function(dealId){
+        var dealAlerts=byDeal[dealId];
+        if(dealAlerts.length===1){
+          // Single alert per deal — render inline, no sub-group needed
+          html+=_renderAlertItemRow(dealAlerts[0]);
+        } else {
+          var deal=deals.find(function(x){return x._id===dealId;});
+          var dealLbl=deal?(escH(deal.client||'?')+' · '+escH(deal.fourn||'')+(deal.produit?' / '+escH(deal.produit):'')):'Deal '+escH(dealId);
+          var dealCollapsed=!!collapse.deal[catKey+'|'+dealId];
+          html+='<div style="margin:6px 0;border:1px dashed var(--border);border-radius:5px;overflow:hidden;">'+
+            '<div onclick="_toggleAlertDealGroup(\''+escH(catKey)+'\',\''+escH(dealId)+'\')" style="cursor:pointer;padding:6px 10px;display:flex;align-items:center;gap:6px;background:var(--surface);font-size:11px;color:var(--text2);user-select:none;">'+
+              '<span class="chev'+(dealCollapsed?'':' open')+'" style="font-size:10px;">▾</span>'+
+              '<span style="font-weight:500;">'+dealLbl+'</span>'+
+              '<span style="background:var(--surface2);padding:0 6px;border-radius:999px;font-size:10px;font-weight:500;">'+dealAlerts.length+'</span>'+
+            '</div>';
+          if(!dealCollapsed){
+            html+='<div style="padding:4px 8px;">';
+            dealAlerts.forEach(function(a){html+=_renderAlertItemRow(a);});
+            html+='</div>';
+          }
+          html+='</div>';
+        }
+      });
+      html+='</div>';
+    }
     html+='</div>';
   });
   listEl.innerHTML=html;
@@ -4136,6 +4274,9 @@ function onDealIsinChange(input){
   if(product){
     var prodInput=fournBlock.querySelector('.dfProduit');
     if(prodInput&&!prodInput.value&&product.part)prodInput.value=product.part;
+    // Batch D.1.#2 — auto-fill Type from product catalogue if it carries one and the user hasn't picked anything yet
+    var typeSel=fournBlock.querySelector('.dfType');
+    if(typeSel&&!typeSel.value&&product.type)typeSel.value=product.type;
   }
   var contract=input.closest('.deal-contract-block');
   if(contract)_updateContractSum(contract);
@@ -5031,17 +5172,18 @@ function onFournFamilleChange(){
 }
 
 function addFournProductLine(prod){
-  prod=prod||{isin:'',part:'',currency:'EUR',fees:[{kind:'',pct:''}]};
+  prod=prod||{isin:'',part:'',type:'',currency:'EUR',fees:[{kind:'',pct:''}]};
   var c=document.getElementById('fProducts');
   var card=document.createElement('div');
   card.className='fourn-product-card';
   card.style.cssText='background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:6px;';
-  // Header row : ISIN, Part, Currency, × remove product
+  // Header row : ISIN, Part, Type, Currency, × remove product
   var curOpts=['EUR','USD','GBP','CHF','JPY'].map(function(c){return '<option'+(c===(prod.currency||'EUR')?' selected':'')+'>'+c+'</option>';}).join('');
   card.innerHTML=
-    '<div style="display:grid;grid-template-columns:1.3fr 1.2fr 70px 24px;gap:6px;margin-bottom:6px;align-items:center;">'+
+    '<div style="display:grid;grid-template-columns:1.3fr 1.1fr 110px 65px 24px;gap:6px;margin-bottom:6px;align-items:center;">'+
       '<input type="text" class="fpIsin" value="'+escH(prod.isin||'')+'" placeholder="ISIN (FR00...)" style="font-family:monospace;font-size:11px;"/>'+
       '<input type="text" class="fpPart" value="'+escH(prod.part||'')+'" placeholder="Part / Share"/>'+
+      '<select class="fpType">'+produitTypeOptHtml(prod.type)+'</select>'+
       '<select class="fpCurrency">'+curOpts+'</select>'+
       '<button type="button" onclick="removeFournProductLine(this)" title="Supprimer ce produit" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:18px;padding:0;line-height:1;">×</button>'+
     '</div>'+
@@ -5090,6 +5232,8 @@ function getFournProductsFromModal(){
   document.querySelectorAll('#fProducts .fourn-product-card').forEach(function(card){
     var isin=(card.querySelector('.fpIsin').value||'').trim();
     var part=(card.querySelector('.fpPart').value||'').trim();
+    var typeEl=card.querySelector('.fpType');
+    var type=typeEl?typeEl.value:'';
     var currency=card.querySelector('.fpCurrency').value||'EUR';
     var fees=[];
     card.querySelectorAll('.fp-fee-row').forEach(function(row){
@@ -5099,7 +5243,7 @@ function getFournProductsFromModal(){
       if(kind||!isNaN(pct))fees.push({kind:kind,pct:isNaN(pct)?0:pct});
     });
     // Skip totally-empty cards (user clicked + then nothing)
-    if(isin||part||fees.length)prods.push({isin:isin,part:part,currency:currency,fees:fees});
+    if(isin||part||type||fees.length)prods.push({isin:isin,part:part,type:type,currency:currency,fees:fees});
   });
   return prods;
 }

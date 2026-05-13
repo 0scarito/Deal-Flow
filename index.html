@@ -102,50 +102,57 @@
     <div class="content">
 
       <!-- SYNTHESE -->
-      <div class="page on" id="p-synthese" style="display:flex;flex-direction:column;gap:10px;height:calc(100vh - 72px);overflow:hidden;">
+      <div class="page on" id="p-synthese" style="height:100%;">
+        <!-- Wrapper interne pour le layout flex/no-scroll — l'inline style sur .page écrasait
+             la règle CSS .page:not(.on){display:none} et laissait la synthèse visible par-dessus
+             toutes les autres pages. Le wrapper utilise height:100% pour remplir la content-box
+             du .content parent (padding pris en compte automatiquement) et overflow:hidden pour
+             garantir 0 scroll possible. -->
+        <div style="display:flex;flex-direction:column;gap:10px;height:100%;overflow:hidden;">
 
-        <!-- KPIs top — densifiés -->
-        <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;flex-shrink:0;" id="kpiGrid"></div>
+          <!-- KPIs top — densifiés -->
+          <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;flex-shrink:0;" id="kpiGrid"></div>
 
-        <!-- Cards row — densifiées -->
-        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;flex-shrink:0;">
-          <div class="card" style="border-top:3px solid var(--green);padding:10px 14px;">
-            <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="var(--green)" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 4v4l3 2"/></svg>
-              <span style="font-size:11px;font-weight:600;color:var(--green);text-transform:uppercase;letter-spacing:.4px;">Deal pipe</span>
+          <!-- Cards row — densifiées -->
+          <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;flex-shrink:0;">
+            <div class="card" style="border-top:3px solid var(--green);padding:10px 14px;">
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="var(--green)" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 4v4l3 2"/></svg>
+                <span style="font-size:11px;font-weight:600;color:var(--green);text-transform:uppercase;letter-spacing:.4px;">Deal pipe</span>
+              </div>
+              <div id="synthPipe"></div>
             </div>
-            <div id="synthPipe"></div>
-          </div>
-          <div class="card" style="border-top:3px solid var(--purple,#7c3aed);padding:10px 14px;">
-            <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="var(--purple,#7c3aed)" stroke-width="1.5"><path d="M13 5l-5 5-3-3-3 3"/><path d="M10 5h3v3"/></svg>
-              <span style="font-size:11px;font-weight:600;color:var(--purple,#7c3aed);text-transform:uppercase;letter-spacing:.4px;">Deal réalisé</span>
+            <div class="card" style="border-top:3px solid var(--purple,#7c3aed);padding:10px 14px;">
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="var(--purple,#7c3aed)" stroke-width="1.5"><path d="M13 5l-5 5-3-3-3 3"/><path d="M10 5h3v3"/></svg>
+                <span style="font-size:11px;font-weight:600;color:var(--purple,#7c3aed);text-transform:uppercase;letter-spacing:.4px;">Deal réalisé</span>
+              </div>
+              <div id="synthRealise"></div>
             </div>
-            <div id="synthRealise"></div>
-          </div>
-          <div class="card" style="border-top:3px solid var(--blue);padding:10px 14px;">
-            <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="var(--blue)" stroke-width="1.5"><path d="M2 12V5l4-3 4 3 4-3v10H2z"/><path d="M6 12V9h4v3"/></svg>
-              <span style="font-size:11px;font-weight:600;color:var(--blue);text-transform:uppercase;letter-spacing:.4px;">Deals payés</span>
+            <div class="card" style="border-top:3px solid var(--blue);padding:10px 14px;">
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="var(--blue)" stroke-width="1.5"><path d="M2 12V5l4-3 4 3 4-3v10H2z"/><path d="M6 12V9h4v3"/></svg>
+                <span style="font-size:11px;font-weight:600;color:var(--blue);text-transform:uppercase;letter-spacing:.4px;">Deals payés</span>
+              </div>
+              <div id="synthPaye"></div>
             </div>
-            <div id="synthPaye"></div>
           </div>
+
+          <!-- Graphique CA annuel — fills remaining vertical space, no fixed height -->
+          <div class="card" style="padding:10px 16px;flex:1;display:flex;flex-direction:column;min-height:0;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-shrink:0;">
+              <div>
+                <div style="font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;">Évolution du CA <span id="caChartYear" style="color:var(--blue);"></span></div>
+                <div style="font-size:10px;color:var(--text3);margin-top:1px;">Cumul mensuel — UF + Running payés</div>
+              </div>
+              <div style="font-size:10px;color:var(--text2);display:flex;align-items:center;gap:6px;">
+                <span style="display:inline-block;width:24px;height:3px;background:#1d5fd4;border-radius:2px;"></span> CA cumulé
+              </div>
+            </div>
+            <div style="position:relative;flex:1;min-height:0;"><canvas id="cCA"></canvas></div>
+          </div>
+
         </div>
-
-        <!-- Graphique CA annuel — fills remaining vertical space, no fixed height -->
-        <div class="card" style="padding:10px 16px;flex:1;display:flex;flex-direction:column;min-height:0;">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-shrink:0;">
-            <div>
-              <div style="font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;">Évolution du CA <span id="caChartYear" style="color:var(--blue);"></span></div>
-              <div style="font-size:10px;color:var(--text3);margin-top:1px;">Cumul mensuel — UF + Running payés</div>
-            </div>
-            <div style="font-size:10px;color:var(--text2);display:flex;align-items:center;gap:6px;">
-              <span style="display:inline-block;width:24px;height:3px;background:#1d5fd4;border-radius:2px;"></span> CA cumulé
-            </div>
-          </div>
-          <div style="position:relative;flex:1;min-height:0;"><canvas id="cCA"></canvas></div>
-        </div>
-
       </div>
 
       <!-- ALERTES -->

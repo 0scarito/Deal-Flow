@@ -2361,6 +2361,7 @@ async function genPFRapprFacture(){
 
 function renderPFInvTable(){
   var all=deals.filter(d=>d.pf&&d.pf.mode!=='none'&&d.pf.amount>0);
+  if(all.some(_isPaidStandby))_kickFactStandbyTimer();
   var filtered=_filterInvByTab(all,pfInvTabCurrent);
   if(pfInvTabCurrent==='archives'){
     filtered.sort(function(a,b){return (b.paidAt||'').localeCompare(a.paidAt||'');});
@@ -2602,6 +2603,8 @@ function _kickFactStandbyTimer(){
 
 function renderUFInvTable(){
   var all=deals.filter(d=>(d.ct==='UF'||d.ct==='BOTH')&&d.ufE>0);
+  // Audit fix — restart standby timer if rows are still in the 60s window (e.g. after page reload)
+  if(all.some(_isPaidStandby))_kickFactStandbyTimer();
   var filtered=_filterInvByTab(all,ufInvTab);
   // Archives tab: search box filters by client/fourn/produit
   if(ufInvTab==='archives'){
@@ -2844,8 +2847,16 @@ function fCard(d){
 async function cycleFS(idx){
   var o=['À émettre','Facturé','Payé','Litige'],d=deals[idx],i=o.indexOf(d.fSt),n=o[(i+1)%o.length];
   d.hist.push({ts:nowS(),a:'Statut → '+n,by:d.v});d.fSt=n;
+  // Audit fix — cycleFS must trigger the same stand-by/archive flow as markUFInvPaid.
+  // Going INTO 'Payé' starts the 60s countdown; going OUT clears it.
+  if(n==='Payé'){d.paidAt=new Date().toISOString();d.stat='Deal payé';}
+  else if(d.paidAt){d.paidAt=null;if(d.stat==='Deal payé')d.stat='Deal réalisé';}
   if(d._id)await sbUpdate('deals',d._id,d);
-  renderFact();renderKpis();updateAlertBadge();toast('Statut → '+n);
+  renderFact();renderKpis();updateAlertBadge();
+  if(typeof renderUFInvTable==='function')renderUFInvTable();
+  if(typeof renderPFInvTable==='function')renderPFInvTable();
+  if(n==='Payé'&&typeof _kickFactStandbyTimer==='function')_kickFactStandbyTimer();
+  toast('Statut → '+n+(n==='Payé'?' — archivée dans 60s.':''));
 }
 function setFT(t,btn){ftab=t;document.querySelectorAll('#factTabs .stab').forEach(b=>b.classList.remove('on'));btn.classList.add('on');renderFact();}
 
@@ -3415,12 +3426,20 @@ function renderCharts(){
     return '<span style="color:var(--text2);">'+s+' : <b>'+pipeBySt[s].nb+'</b> deal'+(pipeBySt[s].nb>1?'s':'')+' · nominal '+fE(pipeBySt[s].nom)+'</span>';
   }).join('');
 
-  // ── 8. Devise (donut nominal) ───────────────────────────────────────────
-  var eur=data.filter(function(d){return d.dev==='EUR';}).reduce(function(s,d){return s+d.nom;},0);
-  var usd=data.filter(function(d){return d.dev==='USD';}).reduce(function(s,d){return s+d.nom;},0);
+  // ── 8. Devise (donut nominal en EUR) — audit fix : convert chaque devise via d.fx
+  // pour que GBP/CHF/JPY soient aussi correctement affichés. d.fx = native_per_EUR.
+  var byDev={};
+  data.forEach(function(d){
+    var dev=d.dev||'EUR';
+    var eurEq=dev==='EUR'?(d.nom||0):((d.nom||0)/(d.fx||1));
+    byDev[dev]=(byDev[dev]||0)+eurEq;
+  });
+  var devKeys=Object.keys(byDev).sort();
+  var devPalette={EUR:'#6b4fc4',USD:'#b07a10',GBP:'#1d5fd4',CHF:'#dc2626',JPY:'#0ea5e9'};
+  var devColors=devKeys.map(function(k){return devPalette[k]||'#888';});
   if(charts.dv)charts.dv.destroy();
-  charts.dv=new Chart(document.getElementById('cDev'),{type:'doughnut',data:{labels:['EUR','USD'],datasets:[{data:[Math.round(eur),Math.round(usd)],backgroundColor:['#6b4fc4','#b07a10'],borderWidth:2,borderColor:'#fff',hoverOffset:8}]},options:{responsive:true,maintainAspectRatio:false,cutout:'62%',plugins:{legend:{display:false},tooltip:Object.assign({},CHART_DEFAULTS.tooltip,{callbacks:{label:function(c){return c.label+' : '+f0(c.raw);}}})}}});
-  document.getElementById('legDev').innerHTML=legendChip('#6b4fc4','EUR',f0(eur))+legendChip('#b07a10','USD',f0(usd));
+  charts.dv=new Chart(document.getElementById('cDev'),{type:'doughnut',data:{labels:devKeys,datasets:[{data:devKeys.map(function(k){return Math.round(byDev[k]);}),backgroundColor:devColors,borderWidth:2,borderColor:'#fff',hoverOffset:8}]},options:{responsive:true,maintainAspectRatio:false,cutout:'62%',plugins:{legend:{display:false},tooltip:Object.assign({},CHART_DEFAULTS.tooltip,{callbacks:{label:function(c){return c.label+' (eq. EUR) : '+f0(c.raw);}}})}}});
+  document.getElementById('legDev').innerHTML=devKeys.map(function(k,i){return legendChip(devColors[i],k,f0(byDev[k]));}).join('');
 }
 
 // KPIs Pilotage : UF / Running / Perf fees / CA total
@@ -3857,6 +3876,21 @@ async function saveDeal(){
       var rowPayload=_buildDealRowFromContract(pair,vendor,date,stat,notes,groupId,fxByDev);
       rowPayload._id=origId;
       rowPayload.hist=prevHist.concat([{ts:nowS(),a:'Deal modifié',by:vendor}]);
+      // Audit fix — preserve workflow / lifecycle fields that the modal doesn't manage,
+      // so editing the deal's commercial data doesn't wipe its facturation state,
+      // arbitrage links, archive flag, or FX snapshot timestamp.
+      rowPayload.fSt=origRow.fSt||'À émettre';
+      rowPayload.inv=origRow.inv||'';
+      rowPayload.invS=origRow.invS||'';
+      rowPayload.fRef=origRow.fRef||'';
+      rowPayload.paidAt=origRow.paidAt||null;
+      rowPayload.archived=!!origRow.archived;
+      rowPayload.arbId=origRow.arbId||null;
+      rowPayload.arbSrc=origRow.arbSrc||null;
+      rowPayload.arbClosed=!!origRow.arbClosed;
+      rowPayload.end=origRow.end||null;
+      // Keep FX snapshot date if nothing changed currency-wise on this edit
+      if(!rowPayload.fxDate&&origRow.fxDate)rowPayload.fxDate=origRow.fxDate;
       await sbUpdate('deals',origId,rowPayload);
       // Update in-memory
       var idxInDeals=deals.findIndex(function(x){return x._id===origId;});
@@ -4680,7 +4714,8 @@ function _isEventPaid(ev){
   if(ev.kind!=='deal'&&ev.kind!=='arb')return false;
   var d=ev.deal;
   if(!d)return false;
-  return d.stat==='Deal payé'||d.fSt==='Facture payée';
+  // Audit fix — fSt values are 'À émettre' | 'Facturé' | 'Payé' | 'Litige' (NOT 'Facture payée'); previous string never matched
+  return d.stat==='Deal payé'||d.fSt==='Payé';
 }
 function _renderHistDealRow(ev){
   var d=ev.deal;

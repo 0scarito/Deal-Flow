@@ -2964,22 +2964,84 @@ function onCodifIsinChange(input){
     snap.innerHTML=html;
     snap.style.display=html?'':'none';
   }
-  // Auto-fill Produit (= part label) only if empty so we don't stomp user input
+  // Auto-fill from product (Produit + Currency) — only if user hasn't set them
   if(product){
     var prodInput=row.querySelector('.codifProduit');
     if(prodInput&&!prodInput.value&&product.part)prodInput.value=product.part;
+    var curSel=row.querySelector('.codifCurrency');
+    if(curSel&&product.currency&&curSel.dataset.userSet!=='true')curSel.value=product.currency;
   }
+  // Phase 2: cascade to Σ indicator
+  if(typeof _updateCodifSum==='function')_updateCodifSum();
+}
+
+// ── Phase 2 — Assureur/Banque/Nominal/Currency per codif line + Σ indicator
+function assureurSelectHTML(selected){
+  var items=fourn_db.filter(function(f){return f.famille==='Assureur';}).sort(function(a,b){return a.name.localeCompare(b.name);});
+  return '<option value="">— Assureur —</option>'+items.map(function(f){return '<option value="'+escH(f.name)+'"'+(f.name===selected?' selected':'')+'>'+escH(f.name)+'</option>';}).join('');
+}
+function banqueSelectHTML(selected){
+  var items=fourn_db.filter(function(f){return f.famille==='Banque';}).sort(function(a,b){return a.name.localeCompare(b.name);});
+  return '<option value="">— Banque —</option>'+items.map(function(f){return '<option value="'+escH(f.name)+'"'+(f.name===selected?' selected':'')+'>'+escH(f.name)+'</option>';}).join('');
+}
+var CODIF_CURRENCIES=['EUR','USD','GBP','CHF','JPY'];
+function currencySelectHTML(selected){
+  return CODIF_CURRENCIES.map(function(c){return '<option'+(c===(selected||'EUR')?' selected':'')+'>'+c+'</option>';}).join('');
+}
+function _curSymbol(c){return c==='EUR'?'€':c==='USD'?'$':c==='GBP'?'£':c==='JPY'?'¥':c==='CHF'?'Fr':c;}
+function _updateCodifSum(){
+  var indicator=document.getElementById('codifSumIndicator');
+  if(!indicator)return;
+  // Σ codif nominals grouped by currency
+  var byCurrency={};
+  document.querySelectorAll('#codifLines .codif-line').forEach(function(row){
+    var nomInput=row.querySelector('.codifNominal');
+    var curSel=row.querySelector('.codifCurrency');
+    if(!nomInput||!curSel)return;
+    var n=parseFloat(nomInput.value);
+    if(isNaN(n)||n<=0)return;
+    var c=curSel.value||'EUR';
+    byCurrency[c]=(byCurrency[c]||0)+n;
+  });
+  // Deal total = Σ client-line nominals (in deal currency mDev)
+  var dealTotal=0;
+  document.querySelectorAll('.mNomSel').forEach(function(s){dealTotal+=parseFloat(s.value)||0;});
+  var dealCurEl=document.getElementById('mDev');
+  var dealCur=dealCurEl?dealCurEl.value:'EUR';
+  var keys=Object.keys(byCurrency);
+  if(!keys.length&&!dealTotal){indicator.style.display='none';return;}
+  // Compose the line
+  var sumPart=keys.length?'<b>Σ codifs</b> : '+keys.map(function(c){return f0(byCurrency[c])+' '+_curSymbol(c);}).join(' + '):'<b>Σ codifs</b> : —';
+  var totalPart='<b>Total clients</b> : '+f0(dealTotal)+' '+_curSymbol(dealCur);
+  var warning='';
+  if(keys.length===1&&keys[0]===dealCur&&dealTotal){
+    var diff=byCurrency[dealCur]-dealTotal;
+    if(Math.abs(diff)<0.5)warning=' <span style="color:var(--green);">✓ équilibré</span>';
+    else warning=' <span style="color:var(--red);">⚠ écart '+f0(Math.abs(diff))+' '+_curSymbol(dealCur)+'</span>';
+  } else if(keys.length>1){
+    warning=' <span style="color:var(--amber);">(devises mixtes — FX requis pour comparer)</span>';
+  } else if(keys.length===1&&dealTotal&&keys[0]!==dealCur){
+    warning=' <span style="color:var(--amber);">(codif en '+_curSymbol(keys[0])+', total en '+_curSymbol(dealCur)+' — FX requis)</span>';
+  }
+  indicator.innerHTML=sumPart+' &nbsp;·&nbsp; '+totalPart+warning;
+  indicator.style.display='';
 }
 function addCodifLine(codif){
-  codif=codif||{fourn:'',produit:'',type:'',isin:'',broker:'',maturite:'',feeSnapshot:[]};
+  codif=Object.assign({fourn:'',produit:'',type:'',isin:'',broker:'',maturite:'',feeSnapshot:[],assureur:'',banque:'',nominal:'',currency:''},codif||{});
+  // Default currency for fresh lines = deal-level mDev (so single-currency case is no-friction)
+  if(!codif.currency){
+    var mDevEl=document.getElementById('mDev');
+    codif.currency=(mDevEl&&mDevEl.value)||'EUR';
+  }
   var container=document.getElementById('codifLines');
   var listId='codifIsinList-'+(++_codifLineCounter);
   var row=document.createElement('div');
   row.className='codif-line';
-  row.style.cssText='margin-bottom:6px;';
+  row.style.cssText='margin-bottom:8px;padding-bottom:6px;border-bottom:1px dashed var(--border);';
   row.dataset.isinListId=listId;
   row.dataset.feeSnapshot=JSON.stringify(codif.feeSnapshot||[]);
   row.innerHTML=
+    // Row 1 — existing fields (Fournisseur SDG, Produit, Type, ISIN, Broker, Maturité, ×)
     '<div style="display:grid;grid-template-columns:1.3fr 1.3fr 130px 100px 1fr 120px 28px;gap:6px;align-items:center;">'+
       '<select class="codifFourn" onchange="onCodifFournChange(this)">'+fournOptHtml(codif.fourn)+'</select>'+
       '<input type="text" class="codifProduit" value="'+(codif.produit||'')+'" placeholder="Produit / Support"/>'+
@@ -2989,9 +3051,23 @@ function addCodifLine(codif){
       '<input type="date" class="codifMaturite" value="'+(codif.maturite||'')+'"/>'+
       '<button type="button" onclick="removeCodifLine(this)" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:18px;padding:0;line-height:1;">×</button>'+
     '</div>'+
+    // Row 2 — Phase 2 new fields (Assureur, Banque, Nominal, Currency)
+    '<div style="display:grid;grid-template-columns:1.3fr 1.3fr 130px 100px 1fr 120px 28px;gap:6px;align-items:center;margin-top:4px;">'+
+      '<select class="codifAssureur" onchange="_updateCodifSum()">'+assureurSelectHTML(codif.assureur)+'</select>'+
+      '<select class="codifBanque" onchange="_updateCodifSum()">'+banqueSelectHTML(codif.banque)+'</select>'+
+      '<input type="number" class="codifNominal" value="'+(codif.nominal||'')+'" placeholder="Nominal" step="0.01" min="0" oninput="_updateCodifSum()"/>'+
+      '<select class="codifCurrency" onchange="this.dataset.userSet=\'true\';_updateCodifSum();">'+currencySelectHTML(codif.currency)+'</select>'+
+      '<span></span><span></span><span></span>'+
+    '</div>'+
+    // Datalist (ISIN suggestions) + Fee snapshot inline display
     '<datalist id="'+listId+'">'+_isinDatalistInnerHtml(codif.fourn||'')+'</datalist>'+
-    '<div class="codif-snapshot" style="font-size:10px;color:var(--text2);padding-left:4px;margin-top:2px;display:none;"></div>';
+    '<div class="codif-snapshot" style="font-size:10px;color:var(--text2);padding-left:4px;margin-top:4px;display:none;"></div>';
   container.appendChild(row);
+  // Mark currency as "user-set" if the codif came in with an explicit currency (edit mode)
+  if(codif.currency&&codif.currency!=='EUR'){
+    var curSel=row.querySelector('.codifCurrency');
+    if(curSel)curSel.dataset.userSet='true';
+  }
   // Snapshot pattern (Q1A — immutable). On render :
   //  1) If the codif carries a stored snapshot, display it as-is (don't re-derive from
   //     the live product — fees may have changed since deal creation, and the historical
@@ -3005,21 +3081,28 @@ function addCodifLine(codif){
     var isinInput=row.querySelector('.codifISIN');
     onCodifIsinChange(isinInput);
   }
+  if(typeof _updateCodifSum==='function')_updateCodifSum();
 }
 function removeCodifLine(btn){
   var row=btn.closest('.codif-line');
-  if(document.querySelectorAll('#codifLines .codif-line').length>1)row.remove();
+  if(document.querySelectorAll('#codifLines .codif-line').length>1){
+    row.remove();
+    if(typeof _updateCodifSum==='function')_updateCodifSum();
+  }
 }
 function renderCodifLines(codifs){
   var c=document.getElementById('codifLines');c.innerHTML='';
   if(!codifs||!codifs.length)codifs=[{fourn:'',produit:'',isin:'',broker:''}];
   codifs.forEach(function(x){addCodifLine(x);});
+  if(typeof _updateCodifSum==='function')_updateCodifSum();
 }
 function getCodifLines(){
   var result=[];
   document.querySelectorAll('#codifLines .codif-line').forEach(function(row){
     var feeSnapshot=[];
     try{feeSnapshot=JSON.parse(row.dataset.feeSnapshot||'[]')||[];}catch(e){feeSnapshot=[];}
+    var nomRaw=row.querySelector('.codifNominal');
+    var nomVal=nomRaw?parseFloat(nomRaw.value):NaN;
     result.push({
       fourn:row.querySelector('.codifFourn').value,
       produit:row.querySelector('.codifProduit').value,
@@ -3027,7 +3110,12 @@ function getCodifLines(){
       isin:row.querySelector('.codifISIN').value,
       broker:row.querySelector('.codifBroker').value,
       maturite:row.querySelector('.codifMaturite').value,
-      feeSnapshot:feeSnapshot
+      feeSnapshot:feeSnapshot,
+      // Phase 2 fields
+      assureur:row.querySelector('.codifAssureur')?row.querySelector('.codifAssureur').value:'',
+      banque:row.querySelector('.codifBanque')?row.querySelector('.codifBanque').value:'',
+      nominal:isNaN(nomVal)?0:nomVal,
+      currency:row.querySelector('.codifCurrency')?row.querySelector('.codifCurrency').value:'EUR'
     });
   });
   return result;
@@ -3095,6 +3183,9 @@ function calcM(){
     }
     document.getElementById('pfSummFreq').textContent=freq;
   }
+  // Phase 2 — re-evaluate Σ codifs vs Σ clientLines whenever a deal-level
+  // input (client nominals, deal currency, fees) changes
+  if(typeof _updateCodifSum==='function')_updateCodifSum();
 }
 
 async function saveDeal(){

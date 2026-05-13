@@ -438,18 +438,17 @@ function dealTypeToProdType(pt){
   return'autre';
 }
 
-// On deal creation: find the client's existing contract (or auto-create one) and append an investissement
+// Batch C.1 — On deal creation: find (or create) the client's contract and append
+// ONE produit PER codification (= per fournisseur in the new model). Legacy deals
+// without codifications[] fall back to a single produit using top-level fields.
 async function autoLinkDealToContract(deal){
   if(!deal||!deal.client)return;
   var clientName=deal.client;
   var contract=contracts_db.find(function(c){return c.client===clientName;});
   if(!contract){
-    // Auto-create a minimal contract using the first available template (Wealins by default)
     var defaultTemplate=templates_db[0];
     var newC={
-      _id:null,
-      client:clientName,
-      num:'',
+      _id:null,client:clientName,num:'',
       banque:deal.depositaire||'Indosuez Luxembourg',
       notes:'',
       template_name:defaultTemplate?defaultTemplate.name:null,
@@ -459,37 +458,89 @@ async function autoLinkDealToContract(deal){
     contract=await saveContract(newC);
     if(!contract)return;
   }
-  // Build investissement
-  var montantStr=deal.nom?(new Intl.NumberFormat('fr-FR').format(deal.nom)+' '+(deal.dev||'EUR')):'';
-  var notesParts=[];
-  if(deal.depositaire)notesParts.push('Dépositaire: '+deal.depositaire);
-  if(deal.fourn)notesParts.push('Fournisseur: '+deal.fourn);
-  if(deal.contrat)notesParts.push('Contrat: '+deal.contrat);
-  // Pick the best-matching pack from the contract's template
-  var pickedPack=null,steps=[];
-  if(contract.template_name){
-    pickedPack=templatePackForType(contract.template_name,deal.produit_type);
-    if(pickedPack)steps=templatePackCopy(contract.template_name,pickedPack.id);
-  }
-  var prod={
-    id:newStepId(),
-    name:deal.produit||'(produit non nommé)',
-    isin:deal.isin||'',
-    type:dealTypeToProdType(deal.produit_type),
-    pack_name:pickedPack?pickedPack.name:'',
-    montant:montantStr,
-    notes:notesParts.join(' · '),
-    steps:steps,
-    deal_id:deal._id||null
-  };
-  // Skip if already linked (defensive — re-running the same deal save)
-  if(deal._id&&(contract.produits||[]).some(function(p){return p.deal_id===deal._id;}))return;
   contract.produits=contract.produits||[];
-  contract.produits.push(prod);
+  // Build the list of items to add — one per codification (preferred) or one fallback legacy
+  var sourceItems=[];
+  if(Array.isArray(deal.codifications)&&deal.codifications.length){
+    sourceItems=deal.codifications.map(function(c,i){return{
+      idx:i,
+      name:c.produit||deal.produit||'(produit non nommé)',
+      isin:c.isin||'',
+      type:dealTypeToProdType(c.type||deal.produit_type),
+      nominal:c.nominal||0,
+      currency:c.currency||deal.dev||'EUR',
+      fourn:c.fourn||'',
+      assureur:c.assureur||'',
+      banque:c.banque||'',
+      broker:c.broker||'',
+      maturite:c.maturite||null,
+      feeSnapshot:c.feeSnapshot||[],
+      billingMode:c.billingMode||'fast'
+    };});
+  } else {
+    // Legacy fallback (deals predating Phase 2 with no codifications[])
+    sourceItems=[{
+      idx:0,
+      name:deal.produit||'(produit non nommé)',
+      isin:deal.isin||'',
+      type:dealTypeToProdType(deal.produit_type),
+      nominal:deal.nom||0,
+      currency:deal.dev||'EUR',
+      fourn:deal.fourn||'',assureur:'',banque:'',broker:deal.broker||'',
+      maturite:deal.maturite||deal.terme||null,
+      feeSnapshot:[],billingMode:'fast'
+    }];
+  }
+  var addedCount=0,lastAddedProd=null;
+  sourceItems.forEach(function(item){
+    // Dedup: a (deal_id, codif_idx) tuple must not already exist as a produit in this contract.
+    if(deal._id&&contract.produits.some(function(p){
+      var sameDeal=p.deal_id===deal._id;
+      if(!sameDeal)return false;
+      var pidx=p.codif_idx;
+      // Legacy produits without codif_idx are treated as the codif #0 slot
+      var pidxNorm=(pidx==null)?0:pidx;
+      return pidxNorm===item.idx;
+    }))return;
+    var montantStr=item.nominal?(new Intl.NumberFormat('fr-FR').format(item.nominal)+' '+item.currency):'';
+    var notesParts=[];
+    if(item.fourn)notesParts.push('Fournisseur: '+item.fourn);
+    if(item.assureur)notesParts.push('Assureur: '+item.assureur);
+    if(item.banque)notesParts.push('Banque: '+item.banque);
+    if(item.broker)notesParts.push('Broker: '+item.broker);
+    if(deal.contrat)notesParts.push('Contrat: '+deal.contrat);
+    if(item.maturite)notesParts.push('Maturité: '+item.maturite);
+    var pickedPack=null,steps=[];
+    if(contract.template_name){
+      pickedPack=templatePackForType(contract.template_name,item.type);
+      if(pickedPack)steps=templatePackCopy(contract.template_name,pickedPack.id);
+    }
+    var prod={
+      id:newStepId(),
+      name:item.name,
+      isin:item.isin,
+      type:item.type,
+      pack_name:pickedPack?pickedPack.name:'',
+      montant:montantStr,
+      notes:notesParts.join(' · '),
+      steps:steps,
+      deal_id:deal._id||null,
+      codif_idx:item.idx,
+      // Snapshot the counterparty trio + billing mode on the produit so the Suivi
+      // Contrats view doesn't have to dig back into the deal's codifications jsonb.
+      fourn:item.fourn,
+      assureur:item.assureur,
+      banque:item.banque,
+      billingMode:item.billingMode
+    };
+    contract.produits.push(prod);
+    lastAddedProd=prod;
+    addedCount++;
+  });
+  if(addedCount===0)return; // everything was already linked — re-save protection
   await saveContract(contract);
-  // Expand the contract card so user sees the new investissement when they go to the page
   ctrExp[contract._id]=true;
-  prodExp[contract._id+'|'+prod.id]=true;
+  if(lastAddedProd)prodExp[contract._id+'|'+lastAddedProd.id]=true;
 }
 
 // ── TEAM MEMBERS (gestion équipe + rôles) ───────────────────────────────────
@@ -4243,6 +4294,7 @@ function openAddClientModal(name){
     document.getElementById('cEmail').value=c.email||'';
     var ecDisp=document.getElementById('cEncoursDisplay');if(ecDisp){var ec=encoursForClient(c.name);ecDisp.textContent=ec>0?fE(ec):'— (aucun deal actif)';}
     document.getElementById('cNotes').value=c.notes||'';
+    _loadClientProfileIntoModal(c.profile||{});
   } else {
     document.getElementById('cType').value='PP';
     var clEl2=document.getElementById('cClassif');if(clEl2)clEl2.value='';
@@ -4250,6 +4302,7 @@ function openAddClientModal(name){
     document.getElementById('cEmail').value='';
     var ecDisp2=document.getElementById('cEncoursDisplay');if(ecDisp2)ecDisp2.textContent='— (aucun deal pour l\'instant)';
     document.getElementById('cNotes').value='';
+    _loadClientProfileIntoModal({});
   }
   document.getElementById('clientDeleteBtn').style.display=name?'':'none';
   var placeholder=document.getElementById('clientNewPlaceholder');
@@ -4594,7 +4647,8 @@ async function saveClient(){
   if(!name){alert('Nom requis.');return;}
   var classifEl=document.getElementById('cClassif');
   var classification=classifEl?classifEl.value:'';
-  var entry={name,type:document.getElementById('cType').value,classification:classification||null,vendeur:document.getElementById('cVendeur').value,email:document.getElementById('cEmail').value,notes:document.getElementById('cNotes').value};
+  var profile=_readClientProfileFromModal();
+  var entry={name,type:document.getElementById('cType').value,classification:classification||null,profile:profile,vendeur:document.getElementById('cVendeur').value,email:document.getElementById('cEmail').value,notes:document.getElementById('cNotes').value};
   if(original&&original!==name){
     var c=clients_db.find(x=>x.name===original);
     if(c){entry._id=c._id;await _sbClientUpsertSafe('update',c._id,entry);Object.assign(c,entry);}
@@ -4612,25 +4666,202 @@ async function saveClient(){
   }
   closeClientModal();renderClients();renderDeals();toast(original?'Client mis à jour.':'Client ajouté.');
 }
-// Defensive client upsert — strips `classification` and retries if the column
-// isn't yet migrated on Supabase (apply 08_client_classification.sql).
+// Defensive client upsert — strips columns not yet on Supabase (classification, profile)
+// and retries. Toast points to the matching migration.
 var _warnedNoClassifCol=false;
+var _warnedNoProfileCol=false;
 async function _sbClientUpsertSafe(op,id,entry){
   var payload=Object.assign({},entry);
   delete payload._id; delete payload.id;
-  try{
-    if(op==='update')return await sb.from('clients').update(payload).eq('id',id).select().then(function(r){if(r.error)throw r.error;return r.data;});
-    return await sb.from('clients').insert(payload).select().then(function(r){if(r.error)throw r.error;return r.data;});
-  }catch(err){
+  async function exec(p){
+    if(op==='update'){var ru=await sb.from('clients').update(p).eq('id',id).select();if(ru.error)throw ru.error;return ru.data;}
+    var ri=await sb.from('clients').insert(p).select();if(ri.error)throw ri.error;return ri.data;
+  }
+  async function retryStripped(failingField){
+    var stripped=Object.assign({},payload);delete stripped[failingField];
+    return exec(stripped);
+  }
+  try{return await exec(payload);}catch(err){
     var msg=String((err&&err.message)||err||'').toLowerCase();
-    if(msg.indexOf('classification')!==-1||msg.indexOf("'classification'")!==-1){
-      if(!_warnedNoClassifCol){_warnedNoClassifCol=true;toast('Colonne "classification" absente — sauvegardé sans. Lance 08_client_classification.sql.');}
-      var stripped=Object.assign({},payload);delete stripped.classification;
-      if(op==='update'){var ru=await sb.from('clients').update(stripped).eq('id',id).select();if(ru.error)throw ru.error;return ru.data;}
-      var ri=await sb.from('clients').insert(stripped).select();if(ri.error)throw ri.error;return ri.data;
+    if(msg.indexOf("'classification'")!==-1||(msg.indexOf('classification')!==-1&&msg.indexOf('column')!==-1)){
+      if(!_warnedNoClassifCol){_warnedNoClassifCol=true;toast('Colonne "classification" absente — lance 08_client_classification.sql.');}
+      delete payload.classification;
+      try{return await exec(payload);}catch(err2){
+        var msg2=String((err2&&err2.message)||err2||'').toLowerCase();
+        if(msg2.indexOf("'profile'")!==-1||(msg2.indexOf('profile')!==-1&&msg2.indexOf('column')!==-1)){
+          if(!_warnedNoProfileCol){_warnedNoProfileCol=true;toast('Colonne "profile" absente — lance 09_client_profile.sql.');}
+          delete payload.profile;return exec(payload);
+        }
+        throw err2;
+      }
+    }
+    if(msg.indexOf("'profile'")!==-1||(msg.indexOf('profile')!==-1&&msg.indexOf('column')!==-1)){
+      if(!_warnedNoProfileCol){_warnedNoProfileCol=true;toast('Colonne "profile" absente — lance 09_client_profile.sql.');}
+      return retryStripped('profile');
     }
     throw err;
   }
+}
+
+// ── Batch C.2 — Client profile + adequacy report ─────────────────────────────
+function _loadClientProfileIntoModal(p){
+  p=p||{};
+  var ta=p.target_allocation||{};
+  var setV=function(id,v){var el=document.getElementById(id);if(el)el.value=(v||v===0)?v:'';};
+  setV('cProfileRisk',p.risk||'');
+  setV('cProfileHorizon',p.horizon||'');
+  setV('cTargetAction',ta.action||'');
+  setV('cTargetObligation',ta.obligation||'');
+  setV('cTargetStructure',ta.structure||'');
+  setV('cTargetAlternatif',ta.alternatif||'');
+  setV('cTargetAutre',ta.autre||'');
+  setV('cProfileConstraints',p.constraints||'');
+  var lr=document.getElementById('cProfileLastReview');
+  if(lr)lr.textContent='Dernière revue : '+(p.last_review||'—');
+  _recomputeTargetSum();
+}
+function _readClientProfileFromModal(){
+  var num=function(id){var el=document.getElementById(id);if(!el)return null;var v=parseFloat(el.value);return isNaN(v)?null:v;};
+  var profile={
+    risk:(document.getElementById('cProfileRisk')||{}).value||null,
+    horizon:(document.getElementById('cProfileHorizon')||{}).value||null,
+    target_allocation:{
+      action:num('cTargetAction'),
+      obligation:num('cTargetObligation'),
+      structure:num('cTargetStructure'),
+      alternatif:num('cTargetAlternatif'),
+      autre:num('cTargetAutre')
+    },
+    constraints:((document.getElementById('cProfileConstraints')||{}).value||'').trim()||null,
+    last_review:_existingProfileLastReview()
+  };
+  // Clean up nulls in target_allocation
+  Object.keys(profile.target_allocation).forEach(function(k){if(profile.target_allocation[k]==null)delete profile.target_allocation[k];});
+  return profile;
+}
+function _existingProfileLastReview(){
+  // Preserve the existing last_review unless markAdequacyReviewed has just set it
+  var original=document.getElementById('cName').dataset.original;
+  if(!original)return null;
+  var c=clients_db.find(function(x){return x.name===original;});
+  return c&&c.profile?c.profile.last_review||null:null;
+}
+function _recomputeTargetSum(){
+  var ids=['cTargetAction','cTargetObligation','cTargetStructure','cTargetAlternatif','cTargetAutre'];
+  var sum=ids.reduce(function(s,id){var el=document.getElementById(id);return s+(el?(parseFloat(el.value)||0):0);},0);
+  var out=document.getElementById('cTargetSum');
+  if(out){
+    out.textContent=sum+'%';
+    out.style.color=(sum===0||sum===100)?'var(--text)':(sum>100?'var(--red)':'var(--amber-t)');
+  }
+}
+function _profileCategoryOf(rawType){
+  if(!rawType)return 'autre';
+  var x=String(rawType).toLowerCase();
+  if(x.indexOf('action')!==-1||x==='etf')return 'action';
+  if(x.indexOf('oblig')!==-1)return 'obligation';
+  if(x.indexOf('struct')!==-1)return 'structure';
+  if(x.indexOf('altern')!==-1||x.indexOf('private')!==-1||x==='pe')return 'alternatif';
+  return 'autre';
+}
+function _computeActualAllocation(clientName){
+  var sumByCat={action:0,obligation:0,structure:0,alternatif:0,autre:0};
+  var totalEur=0;
+  deals.filter(function(d){return d.client===clientName&&(d.nom||0)>0&&!d.archived;}).forEach(function(d){
+    if(Array.isArray(d.codifications)&&d.codifications.length){
+      d.codifications.forEach(function(c){
+        var n=parseFloat(c.nominal)||0;
+        if(n<=0)return;
+        var nEur=d.dev==='EUR'?n:(n/(d.fx||1));
+        var cat=_profileCategoryOf(c.type||d.produit_type);
+        sumByCat[cat]+=nEur;totalEur+=nEur;
+      });
+    } else {
+      var nomEur=d.dev==='EUR'?(d.nom||0):((d.nom||0)/(d.fx||1));
+      var cat=_profileCategoryOf(d.produit_type);
+      sumByCat[cat]+=nomEur;totalEur+=nomEur;
+    }
+  });
+  var pctByCat={};
+  Object.keys(sumByCat).forEach(function(k){pctByCat[k]=totalEur>0?Math.round(sumByCat[k]/totalEur*1000)/10:0;});
+  return{sumByCat:sumByCat,pctByCat:pctByCat,totalEur:totalEur};
+}
+var _currentAdequacyClient=null;
+function openAdequacyReport(){
+  // Identify which client we're reporting on — the one currently in the client modal
+  var name=document.getElementById('cName').dataset.original||document.getElementById('cName').value.trim();
+  if(!name){alert('Sélectionnez un client avant de générer le rapport.');return;}
+  var c=clients_db.find(function(x){return x.name===name;});
+  if(!c){alert('Client introuvable.');return;}
+  _currentAdequacyClient=name;
+  var profile=c.profile||{};
+  var target=profile.target_allocation||{};
+  var actual=_computeActualAllocation(name);
+  document.getElementById('adequacyTitle').textContent='Rapport d\'adéquation — '+name;
+  var categories=[
+    {key:'action',label:'Actions'},
+    {key:'obligation',label:'Obligations'},
+    {key:'structure',label:'Produits structurés'},
+    {key:'alternatif',label:'Alternatif / PE'},
+    {key:'autre',label:'Autre'}
+  ];
+  var hasTarget=Object.keys(target).some(function(k){return target[k]>0;});
+  var riskLbl={conservateur:'Conservateur',modere:'Modéré',dynamique:'Dynamique','tres-dynamique':'Très dynamique'}[profile.risk]||'— non défini —';
+  var horizonLbl={court:'Court (< 3 ans)',moyen:'Moyen (3-7 ans)',long:'Long (> 7 ans)'}[profile.horizon]||'— non défini —';
+  var rowsHtml=categories.map(function(cat){
+    var t=target[cat.key]||0;
+    var a=actual.pctByCat[cat.key]||0;
+    var deviation=a-t;
+    var absDev=Math.abs(deviation);
+    var flag='';
+    if(hasTarget){
+      if(absDev>10)flag='<span style="color:var(--red);font-weight:600;">⚠ '+(deviation>0?'+':'')+deviation.toFixed(1)+'%</span>';
+      else if(absDev>5)flag='<span style="color:var(--amber-t);font-weight:500;">'+(deviation>0?'+':'')+deviation.toFixed(1)+'%</span>';
+      else flag='<span style="color:var(--green);">✓ '+(deviation>0?'+':'')+deviation.toFixed(1)+'%</span>';
+    } else flag='<span style="color:var(--text3);">—</span>';
+    return '<tr>'+
+      '<td style="padding:6px 8px;border-bottom:1px solid var(--border);">'+cat.label+'</td>'+
+      '<td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right;color:var(--text2);">'+t+'%</td>'+
+      '<td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right;font-weight:600;">'+a.toFixed(1)+'%</td>'+
+      '<td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right;">'+flag+'</td>'+
+      '<td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right;color:var(--text2);">'+(actual.sumByCat[cat.key]?fE(actual.sumByCat[cat.key]):'—')+'</td>'+
+    '</tr>';
+  }).join('');
+  var globalFlag='';
+  if(hasTarget){
+    var maxDev=Math.max.apply(null,categories.map(function(cat){return Math.abs((actual.pctByCat[cat.key]||0)-(target[cat.key]||0));}));
+    if(maxDev>10)globalFlag='<div style="background:rgba(194,59,59,.1);border:1px solid rgba(194,59,59,.3);border-radius:var(--rs);padding:10px 14px;margin-bottom:12px;color:var(--red);font-size:12px;font-weight:500;">⚠ Déviation significative détectée (max '+maxDev.toFixed(1)+'%) — revue conseillée.</div>';
+    else if(maxDev>5)globalFlag='<div style="background:rgba(176,122,16,.1);border:1px solid rgba(176,122,16,.3);border-radius:var(--rs);padding:10px 14px;margin-bottom:12px;color:var(--amber-t);font-size:12px;">⚠ Léger écart (max '+maxDev.toFixed(1)+'%) — surveillance recommandée.</div>';
+    else globalFlag='<div style="background:rgba(34,139,69,.1);border:1px solid rgba(34,139,69,.3);border-radius:var(--rs);padding:10px 14px;margin-bottom:12px;color:#1e7f3a;font-size:12px;font-weight:500;">✓ Portefeuille aligné sur la cible (max '+maxDev.toFixed(1)+'%).</div>';
+  } else {
+    globalFlag='<div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--rs);padding:10px 14px;margin-bottom:12px;color:var(--text2);font-size:12px;">Aucune allocation cible définie dans le profil. Renseignez les % cibles pour activer l\'analyse d\'écart.</div>';
+  }
+  document.getElementById('adequacyBody').innerHTML=
+    globalFlag+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;font-size:12px;">'+
+      '<div style="background:var(--surface2);padding:8px 12px;border-radius:5px;"><div style="font-size:10px;color:var(--text3);">Profil de risque</div><div style="font-weight:600;margin-top:2px;">'+escH(riskLbl)+'</div></div>'+
+      '<div style="background:var(--surface2);padding:8px 12px;border-radius:5px;"><div style="font-size:10px;color:var(--text3);">Horizon</div><div style="font-weight:600;margin-top:2px;">'+escH(horizonLbl)+'</div></div>'+
+      '<div style="background:var(--surface2);padding:8px 12px;border-radius:5px;"><div style="font-size:10px;color:var(--text3);">Encours total</div><div style="font-weight:600;margin-top:2px;color:var(--blue);">'+fE(Math.round(actual.totalEur))+'</div></div>'+
+      '<div style="background:var(--surface2);padding:8px 12px;border-radius:5px;"><div style="font-size:10px;color:var(--text3);">Dernière revue</div><div style="font-weight:600;margin-top:2px;">'+escH(profile.last_review||'—')+'</div></div>'+
+    '</div>'+
+    '<table style="width:100%;border-collapse:collapse;font-size:12px;">'+
+      '<thead><tr style="background:var(--surface2);"><th style="padding:6px 8px;text-align:left;font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.3px;">Type</th><th style="padding:6px 8px;text-align:right;font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.3px;">Cible</th><th style="padding:6px 8px;text-align:right;font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.3px;">Réel</th><th style="padding:6px 8px;text-align:right;font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.3px;">Écart</th><th style="padding:6px 8px;text-align:right;font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.3px;">Encours</th></tr></thead>'+
+      '<tbody>'+rowsHtml+'</tbody>'+
+    '</table>'+
+    (profile.constraints?'<div style="margin-top:14px;padding:10px 14px;background:var(--surface2);border-radius:var(--rs);font-size:12px;color:var(--text2);"><b>Contraintes :</b> '+escH(profile.constraints)+'</div>':'');
+  document.getElementById('adequacyModal').classList.add('on');
+}
+function closeAdequacyReport(){document.getElementById('adequacyModal').classList.remove('on');_currentAdequacyClient=null;}
+async function markAdequacyReviewed(){
+  if(!_currentAdequacyClient){closeAdequacyReport();return;}
+  var c=clients_db.find(function(x){return x.name===_currentAdequacyClient;});
+  if(!c){closeAdequacyReport();return;}
+  c.profile=Object.assign({},c.profile||{},{last_review:today()});
+  try{await _sbClientUpsertSafe('update',c._id,c);toast('Revue datée du '+today()+'.');}catch(e){console.error(e);alert('Erreur sauvegarde : '+(e.message||e));}
+  closeAdequacyReport();
+  // If the parent client modal is open, refresh the last_review hint
+  var lr=document.getElementById('cProfileLastReview');
+  if(lr)lr.textContent='Dernière revue : '+today();
 }
 
 // ── FOURNISSEURS ─────────────────────────────────────────────────────────────
@@ -5804,6 +6035,23 @@ function renderContrats(){
         '</div>';
       }
 
+      // Batch C.1 — sub-row: fourn · assureur · banque · billing mode badge
+      var cpartyChips=[];
+      if(p.fourn)cpartyChips.push('<span style="color:var(--text3);">SDG</span> <b style="color:var(--text2);">'+escH(p.fourn)+'</b>');
+      if(p.assureur)cpartyChips.push('<span style="color:var(--text3);">Assureur</span> <b style="color:var(--text2);">'+escH(p.assureur)+'</b>');
+      if(p.banque)cpartyChips.push('<span style="color:var(--text3);">Banque</span> <b style="color:var(--text2);">'+escH(p.banque)+'</b>');
+      var billingBadge='';
+      if(p.billingMode){
+        var bm=p.billingMode;
+        billingBadge='<span style="font-size:9px;padding:1px 5px;border-radius:3px;font-weight:600;margin-left:4px;'+
+          (bm==='feed'?'background:rgba(176,122,16,.15);color:#b07a10;':'background:rgba(29,95,212,.12);color:#1d5fd4;')+
+          '">'+(bm==='feed'?'FEED':'FAST')+'</span>';
+      }
+      var subRow=(cpartyChips.length||billingBadge)?
+        '<div style="display:flex;gap:10px;align-items:center;font-size:10px;color:var(--text2);padding:4px 12px 0;flex-wrap:wrap;">'+
+          cpartyChips.join('<span style="color:var(--text3);">·</span>')+
+          billingBadge+
+        '</div>':'';
       return '<div class="ctr-deal-card">'+
         '<div class="ctr-deal-hd" onclick="toggleProdExp(\''+pKey+'\')">'+
           typeBadge+
@@ -5817,6 +6065,7 @@ function renderContrats(){
           '<button class="btn btn-sm" style="color:var(--red);border-color:var(--red-bg);" onclick="event.stopPropagation();deleteProd(\''+c._id+'\',\''+p.id+'\')">×</button>'+
           '<span class="chev'+(pOpen?' open':'')+'">▾</span>'+
         '</div>'+
+        subRow+
         '<div class="ctr-bar"><div class="ctr-bar-fill'+(pr.pct===100?' full':'')+'" style="width:'+pr.pct+'%;"></div></div>'+
         (pOpen?'<div style="padding-top:8px;">'+arbDetail+(p.notes?'<div style="font-size:12px;color:var(--text2);font-style:italic;margin-bottom:8px;padding:6px 10px;background:var(--surface);border-radius:4px;border-left:2px solid var(--amber);">'+escH(p.notes)+'</div>':'')+stepsHTML+'</div>':'')+
       '</div>';

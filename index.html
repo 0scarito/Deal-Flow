@@ -779,6 +779,17 @@
   </div>
 </div>
 
+<!-- MODAL RAPPORT D'ADÉQUATION (Batch C.2) -->
+<div class="ov" id="adequacyModal">
+  <div class="modal" style="max-width:680px;">
+    <div class="modal-hd"><span class="modal-title" id="adequacyTitle">Rapport d'adéquation</span><button class="close-btn" onclick="closeAdequacyReport()">×</button></div>
+    <div class="modal-body" id="adequacyBody">
+      <!-- Rendered dynamically -->
+    </div>
+    <div class="modal-ft"><button class="btn" onclick="closeAdequacyReport()">Fermer</button><button class="btn btn-primary" onclick="markAdequacyReviewed()">Marquer comme revu (date d'aujourd'hui)</button></div>
+  </div>
+</div>
+
 <!-- MODAL FOURNISSEUR -->
 <div class="ov" id="fournModal">
   <div class="modal" style="max-width:520px;">
@@ -935,6 +946,47 @@
             <div class="fl" style="margin-top:8px;"><label>Email</label><input type="text" id="cEmail" placeholder="jean.dupont@email.com"/></div>
             <div class="fl" style="margin-top:8px;"><label>Encours <span style="color:var(--text3);font-weight:400;">(calculé automatiquement)</span></label><div id="cEncoursDisplay" class="mono" style="padding:7px 10px;background:var(--surface2);border-radius:var(--rs);font-size:13px;color:var(--blue);font-weight:600;">—</div></div>
             <div class="fl" style="margin-top:8px;"><label>Notes</label><textarea id="cNotes" rows="3" style="width:100%;resize:vertical;"></textarea></div>
+          </div>
+
+          <!-- Profil client (Batch C.2) -->
+          <div id="clientProfileBlock">
+            <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;font-weight:600;display:flex;align-items:center;gap:6px;">
+              Profil &amp; Adéquation
+              <div style="flex:1;"></div>
+              <button class="btn btn-sm" type="button" onclick="openAdequacyReport()" style="font-size:10px;padding:3px 8px;" id="cAdequacyBtn">Rapport</button>
+            </div>
+            <div class="fl"><label>Profil de risque</label>
+              <select id="cProfileRisk">
+                <option value="">— Non défini —</option>
+                <option value="conservateur">Conservateur</option>
+                <option value="modere">Modéré</option>
+                <option value="dynamique">Dynamique</option>
+                <option value="tres-dynamique">Très dynamique</option>
+              </select>
+            </div>
+            <div class="fl" style="margin-top:8px;"><label>Horizon d'investissement</label>
+              <select id="cProfileHorizon">
+                <option value="">— Non défini —</option>
+                <option value="court">Court (&lt; 3 ans)</option>
+                <option value="moyen">Moyen (3-7 ans)</option>
+                <option value="long">Long (&gt; 7 ans)</option>
+              </select>
+            </div>
+            <div style="margin-top:8px;">
+              <label style="font-size:11px;color:var(--text2);font-weight:500;">Allocation cible (%)</label>
+              <div style="display:grid;grid-template-columns:1fr 60px;gap:4px 8px;margin-top:4px;align-items:center;">
+                <span style="font-size:11px;color:var(--text2);">Action</span><input type="number" id="cTargetAction" step="1" min="0" max="100" placeholder="0" oninput="_recomputeTargetSum()" style="font-size:11px;text-align:right;"/>
+                <span style="font-size:11px;color:var(--text2);">Obligation</span><input type="number" id="cTargetObligation" step="1" min="0" max="100" placeholder="0" oninput="_recomputeTargetSum()" style="font-size:11px;text-align:right;"/>
+                <span style="font-size:11px;color:var(--text2);">Structuré</span><input type="number" id="cTargetStructure" step="1" min="0" max="100" placeholder="0" oninput="_recomputeTargetSum()" style="font-size:11px;text-align:right;"/>
+                <span style="font-size:11px;color:var(--text2);">Alternatif / PE</span><input type="number" id="cTargetAlternatif" step="1" min="0" max="100" placeholder="0" oninput="_recomputeTargetSum()" style="font-size:11px;text-align:right;"/>
+                <span style="font-size:11px;color:var(--text2);">Autre</span><input type="number" id="cTargetAutre" step="1" min="0" max="100" placeholder="0" oninput="_recomputeTargetSum()" style="font-size:11px;text-align:right;"/>
+                <span style="font-size:11px;font-weight:600;color:var(--text2);">Total</span><span id="cTargetSum" style="font-size:11px;text-align:right;font-weight:600;color:var(--text);">0%</span>
+              </div>
+            </div>
+            <div class="fl" style="margin-top:8px;"><label>Contraintes / exclusions</label>
+              <textarea id="cProfileConstraints" rows="2" placeholder="ex: ESG, exclusion défense, liquidité requise…" style="width:100%;resize:vertical;font-size:11px;"></textarea>
+            </div>
+            <div style="font-size:10px;color:var(--text3);margin-top:4px;" id="cProfileLastReview">Dernière revue : —</div>
           </div>
 
           <!-- KPIs client -->

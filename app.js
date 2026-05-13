@@ -3189,8 +3189,11 @@ function _dealRowToContractData(row){
   // Map row-level perf-fees down into the first codification if codifications don't carry per-fourn pf yet
   var codifs=(row.codifications&&row.codifications.length)?row.codifications.slice():[{
     fourn:row.fourn||'',produit:row.produit||'',type:row.produit_type||'',isin:row.isin||'',broker:row.broker||'',
-    maturite:row.maturite||row.terme||'',feeSnapshot:[],assureur:'',banque:'',nominal:row.nom||0,currency:row.dev||'EUR'
+    maturite:row.maturite||row.terme||'',feeSnapshot:[],feesMode:'auto',
+    assureur:'',banque:'',nominal:row.nom||0
   }];
+  // Default feesMode = 'auto' for legacy codifs that don't carry it
+  codifs.forEach(function(c){if(!c.feesMode)c.feesMode=c.feeSnapshot&&c.feeSnapshot.length?'auto':'auto';});
   if(row.pf&&row.pf.mode&&row.pf.mode!=='none'&&codifs.length){
     // Legacy deals had pf at deal level. Promote it to the first codification if that codif has no pf yet.
     if(!codifs[0].pf||!codifs[0].pf.mode||codifs[0].pf.mode==='none')codifs[0].pf=Object.assign({},row.pf);
@@ -3379,14 +3382,27 @@ function _collectContractBlock(ctb){
   var nom=parseFloat(ctb.querySelector('.contractTotal').value)||0;
   var dev=ctb.querySelector('.contractDev').value;
   var depo=ctb.querySelector('.contractDepo').value;
-  var ct=ctb.querySelector('.contractCT').value;
-  var ufR=parseFloat(ctb.querySelector('.contractUFR').value)||0;
-  var runR=parseFloat(ctb.querySelector('.contractRunR').value)||0;
-  var tva=parseFloat(ctb.querySelector('.contractTVA').value)||0;
+  // Commission structure may be hidden (collapsed) — query may return null; default sensibly.
+  var ctEl=ctb.querySelector('.contractCT');
+  var ufREl=ctb.querySelector('.contractUFR');
+  var runREl=ctb.querySelector('.contractRunR');
+  var tvaEl=ctb.querySelector('.contractTVA');
+  var commVisible=ctb.querySelector('.contract-commission')&&ctb.querySelector('.contract-commission').style.display!=='none';
+  var ct=commVisible&&ctEl?ctEl.value:'UF';
+  var ufR=commVisible?parseFloat(ufREl.value)||0:0;
+  var runR=commVisible?parseFloat(runREl.value)||0:0;
+  var tva=commVisible?parseFloat(tvaEl.value)||0:0;
   var codifications=[];
   ctb.querySelectorAll('.deal-fourn-block').forEach(function(fb){
+    // Fees: depends on mode
+    var feesModeEl=fb.querySelector('.dfFeesMode');
+    var feesMode=feesModeEl?feesModeEl.value:'auto';
     var feeSnapshot=[];
-    try{feeSnapshot=JSON.parse(fb.dataset.feeSnapshot||'[]')||[];}catch(e){feeSnapshot=[];}
+    if(feesMode==='custom'){
+      feeSnapshot=_readDfCustomFees(fb);
+    } else if(feesMode==='auto'){
+      try{feeSnapshot=JSON.parse(fb.dataset.feeSnapshot||'[]')||[];}catch(e){feeSnapshot=[];}
+    } else /* none */ {feeSnapshot=[];}
     var nominal=parseFloat(fb.querySelector('.dfNominal').value)||0;
     var pfMode=fb.querySelector('.dfPfMode').value;
     var pf={mode:pfMode};
@@ -3408,10 +3424,11 @@ function _collectContractBlock(ctb){
       broker:fb.querySelector('.dfBroker').value,
       maturite:fb.querySelector('.dfMaturite').value,
       feeSnapshot:feeSnapshot,
+      feesMode:feesMode,
       assureur:fb.querySelector('.dfAssureur').value,
       banque:fb.querySelector('.dfBanque').value,
       nominal:nominal,
-      currency:fb.querySelector('.dfCurrency').value,
+      currency:dev, // Per Oscar : currency lives at contract level only
       pf:pf
     });
   });
@@ -3442,7 +3459,6 @@ function addDealClientBlock(clientName,autoFirstContract){
     '<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">'+
       '<span class="client-label" style="font-size:11px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.4px;">Client #'+(blockIdx+1)+'</span>'+
       '<select class="dealClientSel" style="flex:1;max-width:340px;">'+clientSelectHTML(clientName)+'</select>'+
-      '<button type="button" class="btn btn-sm" onclick="showAddClient()" title="Nouveau client" style="padding:4px 8px;">+ nouveau</button>'+
       '<button type="button" class="btn btn-sm btn-add-contract" onclick="addContractToClientBlock(this)">+ contrat</button>'+
       '<div style="flex:1;"></div>'+
       '<button type="button" class="btn btn-sm btn-remove-client" onclick="removeDealClientBlock(this)" style="color:var(--red);border-color:var(--red-bg);">× client</button>'+
@@ -3479,30 +3495,41 @@ function addDealContractBlock(clientBlock,data){
   block.className='deal-contract-block';
   block.style.cssText='background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:11px 12px;margin-bottom:8px;';
   if(data._id)block.dataset.origDealId=data._id;
+  // Auto-expand commission block if data already carries non-zero rates (edit mode of existing deal)
+  var hasCommData=(parseFloat(data.ufR)>0)||(parseFloat(data.runR)>0)||(parseFloat(data.tva)>0)||(data.ct&&data.ct!=='UF');
   block.innerHTML=
     '<div style="display:flex;gap:8px;align-items:center;margin-bottom:7px;">'+
       '<span class="contract-label" style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.3px;">Contrat #'+(idx+1)+'</span>'+
       '<div style="flex:1;"></div>'+
+      '<button type="button" class="btn-toggle-commission" onclick="toggleContractCommission(this)" style="background:none;border:1px dashed var(--border);color:var(--text2);cursor:pointer;font-size:10px;padding:3px 8px;border-radius:3px;'+(hasCommData?'display:none;':'')+'">+ Frais de structure</button>'+
       '<button type="button" class="btn btn-sm btn-remove-contract" onclick="removeDealContractBlock(this)" style="color:var(--red);border-color:var(--red-bg);font-size:10px;padding:3px 8px;">× contrat</button>'+
     '</div>'+
+    // Labels row 1
+    '<div style="display:grid;grid-template-columns:1.3fr 130px 90px 1.5fr;gap:6px;margin-bottom:2px;font-size:9px;color:var(--text3);font-weight:600;letter-spacing:.3px;text-transform:uppercase;">'+
+      '<span>Type de contrat</span><span>Total contrat</span><span>Devise</span><span>Dépositaire</span>'+
+    '</div>'+
     // Row : type / total / devise / dépositaire
-    '<div style="display:grid;grid-template-columns:1.3fr 130px 90px 1.5fr;gap:6px;margin-bottom:7px;align-items:center;">'+
+    '<div style="display:grid;grid-template-columns:1.3fr 130px 90px 1.5fr;gap:6px;margin-bottom:8px;align-items:center;">'+
       '<select class="contractType">'+contratSelectHTML(data.contrat)+'</select>'+
       '<input type="number" class="contractTotal" value="'+(data.nom||'')+'" placeholder="Total contrat" step="0.01" min="0" oninput="_updateContractSum(this)"/>'+
-      '<select class="contractDev" onchange="_updateContractSum(this)">'+currencySelectHTML(data.dev)+'</select>'+
+      '<select class="contractDev" onchange="_onContractDevChange(this)">'+currencySelectHTML(data.dev)+'</select>'+
       '<select class="contractDepo">'+depositaireSelectHTML(data.depositaire)+'</select>'+
     '</div>'+
-    // Row : commission structure compact
-    '<div style="display:flex;gap:6px;align-items:center;background:var(--surface2);padding:6px 9px;border-radius:4px;margin-bottom:8px;flex-wrap:wrap;">'+
-      '<span style="font-size:10px;color:var(--text3);font-weight:600;letter-spacing:.3px;">COMM.</span>'+
-      '<select class="contractCT" style="font-size:11px;">'+
-        '<option value="UF"'+(data.ct==='UF'?' selected':'')+'>Up-Front</option>'+
-        '<option value="RUN"'+(data.ct==='RUN'?' selected':'')+'>Running</option>'+
-        '<option value="BOTH"'+(data.ct==='BOTH'?' selected':'')+'>UF + Run</option>'+
-      '</select>'+
-      '<span style="font-size:10px;color:var(--text3);">UF%</span><input type="number" class="contractUFR" value="'+(data.ufR||'')+'" step="0.01" placeholder="0" style="width:70px;font-size:11px;"/>'+
-      '<span style="font-size:10px;color:var(--text3);">Run%</span><input type="number" class="contractRunR" value="'+(data.runR||'')+'" step="0.001" placeholder="0" style="width:70px;font-size:11px;"/>'+
-      '<span style="font-size:10px;color:var(--text3);">TVA%</span><input type="number" class="contractTVA" value="'+(data.tva||0)+'" step="0.1" placeholder="0" style="width:60px;font-size:11px;"/>'+
+    // Commission structure block — collapsible
+    '<div class="contract-commission" style="'+(hasCommData?'':'display:none;')+'background:var(--surface2);padding:8px 10px;border-radius:4px;margin-bottom:8px;">'+
+      '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'+
+        '<span style="font-size:10px;color:var(--text3);font-weight:600;letter-spacing:.3px;">FRAIS DE STRUCTURE</span>'+
+        '<select class="contractCT" style="font-size:11px;">'+
+          '<option value="UF"'+(data.ct==='UF'?' selected':'')+'>Up-Front</option>'+
+          '<option value="RUN"'+(data.ct==='RUN'?' selected':'')+'>Running</option>'+
+          '<option value="BOTH"'+(data.ct==='BOTH'?' selected':'')+'>UF + Run</option>'+
+        '</select>'+
+        '<span style="font-size:10px;color:var(--text3);">UF%</span><input type="number" class="contractUFR" value="'+(data.ufR||'')+'" step="0.01" placeholder="0" style="width:70px;font-size:11px;"/>'+
+        '<span style="font-size:10px;color:var(--text3);">Run%</span><input type="number" class="contractRunR" value="'+(data.runR||'')+'" step="0.001" placeholder="0" style="width:70px;font-size:11px;"/>'+
+        '<span style="font-size:10px;color:var(--text3);">TVA%</span><input type="number" class="contractTVA" value="'+(data.tva||0)+'" step="0.1" placeholder="0" style="width:60px;font-size:11px;"/>'+
+        '<div style="flex:1;"></div>'+
+        '<button type="button" onclick="hideContractCommission(this)" title="Masquer" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:14px;line-height:1;padding:0 4px;">×</button>'+
+      '</div>'+
     '</div>'+
     '<div style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.3px;margin-bottom:5px;">Fournisseurs du contrat</div>'+
     '<div class="contract-fourns"></div>'+
@@ -3537,13 +3564,10 @@ function addFournToContractBlock(btn){
 function _appendDealFournBlock(contractBlock,data){
   data=Object.assign({
     fourn:'',produit:'',type:'',isin:'',broker:'',maturite:'',
-    feeSnapshot:[],assureur:'',banque:'',nominal:'',currency:'',
+    feeSnapshot:[],assureur:'',banque:'',nominal:'',
+    feesMode:'auto',
     pf:{mode:'none'}
   },data||{});
-  if(!data.currency){
-    var devSel=contractBlock.querySelector('.contractDev');
-    data.currency=devSel?devSel.value:'EUR';
-  }
   var fournsContainer=contractBlock.querySelector('.contract-fourns');
   var listId='dealIsinList-'+(++_codifLineCounter);
   var fournBlock=document.createElement('div');
@@ -3556,31 +3580,55 @@ function _appendDealFournBlock(contractBlock,data){
   var showRate=pfMode==='pct';
   var showFixed=pfMode==='fixed';
   var showFreq=pfMode!=='none'&&pfMode;
+  var feesMode=data.feesMode||'auto';
+  // Labels — small caption rows above each input row
+  var lbl='font-size:9px;color:var(--text3);font-weight:600;letter-spacing:.3px;text-transform:uppercase;';
   fournBlock.innerHTML=
-    // Row 1 : SDG / Produit / Type / ISIN / Broker / Maturité / ×
-    '<div style="display:grid;grid-template-columns:1.3fr 1.3fr 130px 100px 1fr 120px 28px;gap:6px;align-items:center;margin-bottom:4px;">'+
+    // Row 1 labels
+    '<div style="display:grid;grid-template-columns:1.3fr 1.3fr 130px 110px 1fr 130px 28px;gap:6px;margin-bottom:2px;'+lbl+'">'+
+      '<span>Fournisseur (SDG)</span><span>Produit / Support</span><span>Type</span><span>ISIN</span><span>Broker</span><span>Maturité</span><span></span>'+
+    '</div>'+
+    // Row 1 inputs
+    '<div style="display:grid;grid-template-columns:1.3fr 1.3fr 130px 110px 1fr 130px 28px;gap:6px;align-items:center;margin-bottom:6px;">'+
       '<select class="dfFourn" onchange="onDealFournChange(this)">'+fournOptHtml(data.fourn)+'</select>'+
-      '<input type="text" class="dfProduit" value="'+(data.produit||'')+'" placeholder="Produit"/>'+
+      '<input type="text" class="dfProduit" value="'+(data.produit||'')+'" placeholder="ex: A acc EUR"/>'+
       '<select class="dfType">'+produitTypeOptHtml(data.type)+'</select>'+
-      '<input list="'+listId+'" type="text" class="dfISIN" value="'+(data.isin||'')+'" placeholder="ISIN" style="font-family:monospace;font-size:11px;" onchange="onDealIsinChange(this)" oninput="onDealIsinChange(this)"/>'+
+      '<input list="'+listId+'" type="text" class="dfISIN" value="'+(data.isin||'')+'" placeholder="FR00…" style="font-family:monospace;font-size:11px;" onchange="onDealIsinChange(this)" oninput="onDealIsinChange(this)"/>'+
       '<select class="dfBroker">'+brokerOptHtml(data.broker)+'</select>'+
       '<input type="date" class="dfMaturite" value="'+(data.maturite||'')+'"/>'+
-      '<button type="button" onclick="removeDealFournBlock(this)" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:18px;padding:0;line-height:1;">×</button>'+
+      '<button type="button" onclick="removeDealFournBlock(this)" title="Retirer ce fournisseur" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:18px;padding:0;line-height:1;">×</button>'+
     '</div>'+
-    // Row 2 : Assureur / Banque / Nominal / Devise
-    '<div style="display:grid;grid-template-columns:1.5fr 1.5fr 130px 80px;gap:6px;align-items:center;margin-bottom:4px;">'+
+    // Row 2 labels (no currency — handled at contract level)
+    '<div style="display:grid;grid-template-columns:1.5fr 1.5fr 150px;gap:6px;margin-bottom:2px;'+lbl+'">'+
+      '<span>Assureur</span><span>Banque</span><span>Nominal</span>'+
+    '</div>'+
+    // Row 2 inputs
+    '<div style="display:grid;grid-template-columns:1.5fr 1.5fr 150px;gap:6px;align-items:center;margin-bottom:4px;">'+
       '<select class="dfAssureur">'+assureurSelectHTML(data.assureur)+'</select>'+
       '<select class="dfBanque">'+banqueSelectHTML(data.banque)+'</select>'+
       '<input type="number" class="dfNominal" value="'+(data.nominal||'')+'" placeholder="Nominal" step="0.01" min="0" oninput="_updateContractSum(this)"/>'+
-      '<select class="dfCurrency" onchange="this.dataset.userSet=\'true\';_updateContractSum(this);">'+currencySelectHTML(data.currency)+'</select>'+
     '</div>'+
     '<datalist id="'+listId+'">'+_isinDatalistInnerHtml(data.fourn||'')+'</datalist>'+
-    '<div class="dfSnapshot" style="font-size:10px;color:var(--text2);padding:2px 4px;'+
-      ((data.feeSnapshot&&data.feeSnapshot.length)?'':'display:none;')+'">'+
-      _renderFeeSnapshotInline(data.feeSnapshot||[])+
+    // ── Fees block (auto from ISIN / personnaliser / aucun) ──
+    '<div class="dfFeesBlock" style="margin-top:6px;padding:5px 8px;background:var(--surface);border-radius:4px;border-top:1px dashed var(--border);">'+
+      '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'+
+        '<span style="font-size:10px;color:var(--text3);font-weight:600;letter-spacing:.3px;">FRAIS</span>'+
+        '<select class="dfFeesMode" onchange="_onDfFeesModeChange(this)" style="font-size:11px;">'+
+          '<option value="auto"'+(feesMode==='auto'?' selected':'')+'>Auto (depuis ISIN)</option>'+
+          '<option value="custom"'+(feesMode==='custom'?' selected':'')+'>Personnaliser</option>'+
+          '<option value="none"'+(feesMode==='none'?' selected':'')+'>Aucun</option>'+
+        '</select>'+
+        '<div class="dfFeesAutoDisplay" style="font-size:10px;color:var(--text2);flex:1;display:'+(feesMode==='auto'?'':'none')+';">'+
+          ((data.feeSnapshot&&data.feeSnapshot.length)?_renderFeeSnapshotInline(data.feeSnapshot):'<span style="color:var(--text3);font-style:italic;">— choisis un ISIN pour récupérer les frais —</span>')+
+        '</div>'+
+      '</div>'+
+      '<div class="dfFeesCustomWrap" style="margin-top:6px;display:'+(feesMode==='custom'?'':'none')+';">'+
+        '<div class="dfFeesCustomRows"></div>'+
+        '<button type="button" class="btn btn-sm" onclick="_addDfCustomFeeRow(this)" style="font-size:10px;padding:2px 8px;margin-top:2px;">+ frais</button>'+
+      '</div>'+
     '</div>'+
-    // Perf fees per fourn
-    '<div style="margin-top:4px;padding:5px 8px;background:var(--surface);border-radius:4px;border-top:1px dashed var(--border);display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'+
+    // ── Perf fees per fourn ──
+    '<div class="dfPfBlock" style="margin-top:4px;padding:5px 8px;background:var(--surface);border-radius:4px;border-top:1px dashed var(--border);display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'+
       '<span style="font-size:10px;color:var(--text3);font-weight:600;letter-spacing:.3px;">PERF FEES</span>'+
       '<select class="dfPfMode" onchange="_onDfPfModeChange(this)" style="font-size:11px;">'+
         '<option value="none"'+(pfMode==='none'?' selected':'')+'>Aucun</option>'+
@@ -3602,15 +3650,95 @@ function _appendDealFournBlock(contractBlock,data){
       '</select>'+
     '</div>';
   fournsContainer.appendChild(fournBlock);
-  if(data.currency&&data.currency!=='EUR'){
-    var curSel=fournBlock.querySelector('.dfCurrency');
-    if(curSel)curSel.dataset.userSet='true';
+  // Custom fees mode — populate rows from feeSnapshot
+  if(feesMode==='custom'){
+    var customWrap=fournBlock.querySelector('.dfFeesCustomRows');
+    if(customWrap){
+      var initial=(data.feeSnapshot&&data.feeSnapshot.length)?data.feeSnapshot:[{kind:'',pct:''}];
+      initial.forEach(function(f){_appendDfCustomFeeRow(customWrap,f);});
+    }
   }
   // Opportunistic snapshot derivation for legacy codifs (no stored snapshot but ISIN set)
-  if((!Array.isArray(data.feeSnapshot)||!data.feeSnapshot.length)&&data.isin){
+  if((!Array.isArray(data.feeSnapshot)||!data.feeSnapshot.length)&&data.isin&&feesMode==='auto'){
     var isinInput=fournBlock.querySelector('.dfISIN');
     if(isinInput)onDealIsinChange(isinInput);
   }
+}
+
+// ── Phase 2 v2.1 — UI helpers (commission toggle, fees mode, etc.) ──
+function toggleContractCommission(btn){
+  var contract=btn.closest('.deal-contract-block');
+  var cm=contract&&contract.querySelector('.contract-commission');
+  if(cm){cm.style.display='';btn.style.display='none';}
+}
+function hideContractCommission(btn){
+  var contract=btn.closest('.deal-contract-block');
+  var cm=contract&&contract.querySelector('.contract-commission');
+  var tg=contract&&contract.querySelector('.btn-toggle-commission');
+  if(cm)cm.style.display='none';
+  if(tg)tg.style.display='';
+  // Reset values when hiding
+  ['contractUFR','contractRunR','contractTVA'].forEach(function(c){
+    var el=contract.querySelector('.'+c);if(el)el.value='';
+  });
+  var ctSel=contract.querySelector('.contractCT');if(ctSel)ctSel.value='UF';
+}
+function _onContractDevChange(sel){
+  // Currency change at contract level — update the contract sum display
+  _updateContractSum(sel);
+}
+function _onDfFeesModeChange(sel){
+  var fournBlock=sel.closest('.deal-fourn-block');
+  if(!fournBlock)return;
+  var mode=sel.value;
+  var autoEl=fournBlock.querySelector('.dfFeesAutoDisplay');
+  var customWrap=fournBlock.querySelector('.dfFeesCustomWrap');
+  if(autoEl)autoEl.style.display=mode==='auto'?'':'none';
+  if(customWrap)customWrap.style.display=mode==='custom'?'':'none';
+  if(mode==='auto'){
+    // Re-derive snapshot from current ISIN
+    var isinInput=fournBlock.querySelector('.dfISIN');
+    if(isinInput)onDealIsinChange(isinInput);
+  } else if(mode==='custom'){
+    // Seed custom rows from current snapshot if empty
+    var rows=fournBlock.querySelector('.dfFeesCustomRows');
+    if(rows&&!rows.children.length){
+      var snap=[];
+      try{snap=JSON.parse(fournBlock.dataset.feeSnapshot||'[]')||[];}catch(e){snap=[];}
+      var seed=snap.length?snap:[{kind:'',pct:''}];
+      seed.forEach(function(f){_appendDfCustomFeeRow(rows,f);});
+    }
+  } else if(mode==='none'){
+    fournBlock.dataset.feeSnapshot='[]';
+  }
+}
+function _addDfCustomFeeRow(btn){
+  var fournBlock=btn.closest('.deal-fourn-block');
+  var rows=fournBlock&&fournBlock.querySelector('.dfFeesCustomRows');
+  if(rows)_appendDfCustomFeeRow(rows,{kind:'',pct:''});
+}
+function _appendDfCustomFeeRow(container,fee){
+  var row=document.createElement('div');
+  row.className='dfCustomFeeRow';
+  row.style.cssText='display:grid;grid-template-columns:1fr 80px 24px;gap:4px;margin-bottom:3px;align-items:center;';
+  row.innerHTML=
+    '<input type="text" class="dfCfKind" value="'+(fee.kind||'')+'" placeholder="Type (gestion, perf, entrée…)" style="font-size:11px;"/>'+
+    '<input type="number" class="dfCfPct" value="'+(fee.pct||fee.pct===0?fee.pct:'')+'" placeholder="%" step="0.01" min="0" style="font-size:11px;"/>'+
+    '<button type="button" onclick="_removeDfCustomFeeRow(this)" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:14px;padding:0;line-height:1;">×</button>';
+  container.appendChild(row);
+}
+function _removeDfCustomFeeRow(btn){
+  var row=btn.closest('.dfCustomFeeRow');
+  if(row)row.remove();
+}
+function _readDfCustomFees(fournBlock){
+  var out=[];
+  fournBlock.querySelectorAll('.dfCustomFeeRow').forEach(function(r){
+    var k=(r.querySelector('.dfCfKind').value||'').trim();
+    var p=parseFloat(r.querySelector('.dfCfPct').value);
+    if(k||!isNaN(p))out.push({kind:k,pct:isNaN(p)?0:p});
+  });
+  return out;
 }
 function removeDealFournBlock(btn){
   var block=btn.closest('.deal-fourn-block');
@@ -3636,18 +3764,19 @@ function onDealIsinChange(input){
   var isin=(input.value||'').trim();
   var product=getFournProductByIsin(fournName,isin);
   var fees=product?(product.fees||[]):[];
-  fournBlock.dataset.feeSnapshot=JSON.stringify(fees);
-  var snap=fournBlock.querySelector('.dfSnapshot');
-  if(snap){
-    var html=_renderFeeSnapshotInline(fees);
-    snap.innerHTML=html;
-    snap.style.display=html?'':'none';
+  // Only auto-apply snapshot when mode is "auto". In custom/none, leave whatever user has.
+  var modeEl=fournBlock.querySelector('.dfFeesMode');
+  var feesMode=modeEl?modeEl.value:'auto';
+  if(feesMode==='auto'){
+    fournBlock.dataset.feeSnapshot=JSON.stringify(fees);
+    var autoEl=fournBlock.querySelector('.dfFeesAutoDisplay');
+    if(autoEl){
+      autoEl.innerHTML=fees.length?_renderFeeSnapshotInline(fees):'<span style="color:var(--text3);font-style:italic;">— pas de frais sur cet ISIN dans le catalogue —</span>';
+    }
   }
   if(product){
     var prodInput=fournBlock.querySelector('.dfProduit');
     if(prodInput&&!prodInput.value&&product.part)prodInput.value=product.part;
-    var curSel=fournBlock.querySelector('.dfCurrency');
-    if(curSel&&product.currency&&curSel.dataset.userSet!=='true')curSel.value=product.currency;
   }
   var contract=input.closest('.deal-contract-block');
   if(contract)_updateContractSum(contract);
@@ -3668,35 +3797,30 @@ function _onDfPfModeChange(sel){
 function _updateContractSum(anyChildOrContract){
   var contract=(anyChildOrContract&&anyChildOrContract.classList&&anyChildOrContract.classList.contains('deal-contract-block'))?anyChildOrContract:(anyChildOrContract&&anyChildOrContract.closest?anyChildOrContract.closest('.deal-contract-block'):null);
   if(!contract)return;
-  var byCurrency={};
+  // Single currency = contract.dev. Sum all fournisseur nominals into one total.
+  var sumNom=0;
   contract.querySelectorAll('.deal-fourn-block').forEach(function(fb){
     var nomInp=fb.querySelector('.dfNominal');
-    var curSel=fb.querySelector('.dfCurrency');
-    if(!nomInp||!curSel)return;
+    if(!nomInp)return;
     var nominal=parseFloat(nomInp.value);
-    var curr=curSel.value||'EUR';
     if(isNaN(nominal)||nominal<=0)return;
-    byCurrency[curr]=(byCurrency[curr]||0)+nominal;
+    sumNom+=nominal;
   });
   var totalEl=contract.querySelector('.contractTotal');
   var devEl=contract.querySelector('.contractDev');
   var total=parseFloat(totalEl?totalEl.value:'')||0;
   var dealCur=devEl?devEl.value:'EUR';
-  var keys=Object.keys(byCurrency);
   var sumEl=contract.querySelector('.contract-sum');
   if(!sumEl)return;
-  if(!keys.length&&!total){sumEl.style.display='none';return;}
-  var sumPart=keys.length?'<b>Σ fourns</b> : '+keys.map(function(c){return f0(byCurrency[c])+' '+_curSymbol(c);}).join(' + '):'<b>Σ fourns</b> : —';
-  var totalPart='<b>Total contrat</b> : '+f0(total)+' '+_curSymbol(dealCur);
+  if(!sumNom&&!total){sumEl.style.display='none';return;}
+  var sym=_curSymbol(dealCur);
+  var sumPart='<b>Σ fourns</b> : '+f0(sumNom)+' '+sym;
+  var totalPart='<b>Total contrat</b> : '+f0(total)+' '+sym;
   var warning='';
-  if(keys.length===1&&keys[0]===dealCur&&total){
-    var diff=byCurrency[dealCur]-total;
+  if(total){
+    var diff=sumNom-total;
     if(Math.abs(diff)<0.5)warning=' <span style="color:var(--green);">✓ équilibré</span>';
-    else warning=' <span style="color:var(--red);">⚠ écart '+f0(Math.abs(diff))+' '+_curSymbol(dealCur)+'</span>';
-  } else if(keys.length>1){
-    warning=' <span style="color:var(--amber);">(devises mixtes — FX requis)</span>';
-  } else if(keys.length===1&&total&&keys[0]!==dealCur){
-    warning=' <span style="color:var(--amber);">(devises différentes — FX requis)</span>';
+    else warning=' <span style="color:var(--red);">⚠ écart '+f0(Math.abs(diff))+' '+sym+'</span>';
   }
   sumEl.innerHTML=sumPart+' &nbsp;·&nbsp; '+totalPart+warning;
   sumEl.style.display='';

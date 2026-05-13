@@ -15,6 +15,7 @@ function dealToRow(d){
   r.inv_s=r.invS; r.f_st=r.fSt; r.f_ref=r.fRef;
   r.arb_id=r.arbId; r.arb_src=r.arbSrc; r.arb_closed=r.arbClosed;
   r.end_date=r.end;
+  r.deal_group_id=r.dealGroupId; delete r.dealGroupId;
   delete r.ufR; delete r.runR; delete r.ufE; delete r.runE;
   delete r.invS; delete r.fSt; delete r.fRef;
   delete r.arbId; delete r.arbSrc; delete r.arbClosed; delete r.end;
@@ -39,6 +40,7 @@ function rowToDeal(r){
   d.invS=d.inv_s; d.fSt=d.f_st; d.fRef=d.f_ref;
   d.arbId=d.arb_id; d.arbSrc=d.arb_src; d.arbClosed=d.arb_closed;
   d.end=d.end_date;
+  d.dealGroupId=d.deal_group_id||null; delete d.deal_group_id;
   delete d.uf_r; delete d.run_r; delete d.uf_e; delete d.run_e;
   delete d.inv_s; delete d.f_st; delete d.f_ref;
   delete d.arb_id; delete d.arb_src; delete d.arb_closed; delete d.end_date;
@@ -747,10 +749,14 @@ function showAddClientForLine(btn){
 function showAddClient(){document.getElementById('addClientRow').style.display='block';setTimeout(()=>document.getElementById('newClientInput').focus(),50);}
 function cancelAddClient(){document.getElementById('addClientRow').style.display='none';document.getElementById('newClientInput').value='';}
 async function confirmAddClient(){var name=document.getElementById('newClientInput').value.trim();if(!name)return;if(!clients_db.find(c=>c.name===name)){var entry={name,type:'PP',vendeur:'',email:'',notes:''};var res=await sbInsert('clients',entry);if(res&&res[0]){clients_db.push({...entry,_id:res[0].id});}}
-  // Refresh all client selects and select the new client in the last line
+  // Refresh all client selects (both legacy .mClientSel and new .dealClientSel)
+  // and select the newly added client in the last one of each kind.
   var sels2=document.querySelectorAll('.mClientSel');
   sels2.forEach(function(sel){var cur=sel.value;sel.innerHTML=clientSelectHTML(cur);});
   if(sels2.length>0)sels2[sels2.length-1].value=name;
+  var sels3=document.querySelectorAll('.dealClientSel');
+  sels3.forEach(function(sel){var cur=sel.value;sel.innerHTML=clientSelectHTML(cur);});
+  if(sels3.length>0)sels3[sels3.length-1].value=name;
 cancelAddClient();}
 
 function goTo(id,btn){
@@ -3120,18 +3126,100 @@ function getCodifLines(){
   });
   return result;
 }
+// ── Phase 2 v2 — Deal modal opens onto a nested tree (Client → Contrat → Fournisseur)
 function openDealModal(idx){
   editIdx=idx!=null?idx:-1;
   rebuildFournSelect();rebuildBrokerSelect();
   document.getElementById('dmTitle').textContent=editIdx>=0?'Modifier le deal':'Nouveau deal';
-  if(editIdx>=0){var d=deals[editIdx];document.getElementById('mV').value=d.v;document.getElementById('mDate').value=d.date;document.getElementById('mStat').value=d.stat;renderClientLines([d.client],[d.contrat],[d.nom],[d.depositaire||'']);document.getElementById('mContrat').value=d.contrat;document.getElementById('mNom').value=d.nom;document.getElementById('mDev').value=d.dev;document.getElementById('mIssue').value=d.issue||'';document.getElementById('mInvS').value=d.invS||'';document.getElementById('mInv').value=d.inv||'';document.getElementById('mUFR').value=d.ufR;document.getElementById('mRunR').value=d.runR;document.getElementById('mNotes').value=d.notes||'';renderCodifLines(d.codifications&&d.codifications.length?d.codifications:[{fourn:d.fourn||'',produit:d.produit||'',type:d.produit_type||'',isin:d.isin||'',broker:d.broker||'',maturite:d.maturite||d.terme||''}]);setCT(d.ct);
-    var pf=d.pf||{mode:'none'};pfMode=pf.mode||'none';
-    var pfBtn=document.getElementById('ctPF');pfBtn.classList.toggle('on',pfMode!=='none');
-    document.getElementById('pfRow').style.display=pfMode!=='none'?'block':'none';
-    if(pfMode!=='none'){document.getElementById('mPFType').value=pf.type||'pct';document.getElementById('mPFRate').value=pf.rate||'';document.getElementById('mPFHurdle').value=pf.hurdle||'';document.getElementById('mPFFixed').value=pf.amount||'';document.getElementById('mPFFreq').value=pf.freq||'annuel';onPFTypeChange();}
-  } else {document.getElementById('mDate').value=today();renderClientLines(['']);renderCodifLines([]);document.getElementById('mNom').value='';document.getElementById('mUFR').value='';document.getElementById('mRunR').value='';document.getElementById('mNotes').value='';document.getElementById('mPFRate').value='';document.getElementById('mPFHurdle').value='';document.getElementById('mPFFixed').value='';document.getElementById('mInvS').value='';document.getElementById('ctPF').classList.remove('on');document.getElementById('pfRow').style.display='none';pfMode='none';cancelAddClient();setCT('UF');}
+  // Reset the tree
+  var treeContainer=document.getElementById('dealClients');
+  treeContainer.innerHTML='';
+  // Legacy hidden shims reset (so anything still reading them gets a sane default)
+  document.getElementById('mNom').value='';
+  document.getElementById('mUFR').value='';
+  document.getElementById('mRunR').value='';
+  document.getElementById('mDev').value='EUR';
+  document.getElementById('mContrat').value='Assurance Vie Lux';
+  document.getElementById('mPFRate').value='';
+  document.getElementById('mPFHurdle').value='';
+  document.getElementById('mPFFixed').value='';
+  pfMode='none';
+  if(editIdx>=0){
+    // EDIT mode — load the existing row + any siblings sharing dealGroupId
+    var d=deals[editIdx];
+    document.getElementById('mV').value=d.v||'Audrey';
+    document.getElementById('mDate').value=d.date||today();
+    document.getElementById('mStat').value=d.stat||'Deal pipe';
+    document.getElementById('mNotes').value=d.notes||'';
+    // Group rows: if dealGroupId set, find siblings; else single-row legacy edit
+    var groupRows=[];
+    if(d.dealGroupId){
+      groupRows=deals.filter(function(x){return x.dealGroupId===d.dealGroupId;});
+    } else {
+      groupRows=[d];
+    }
+    // Group by client → for each client, list its contracts (rows)
+    var byClient={};
+    groupRows.forEach(function(row){
+      var c=row.client||'(?)';
+      if(!byClient[c])byClient[c]={client:c,contracts:[]};
+      byClient[c].contracts.push(_dealRowToContractData(row));
+    });
+    Object.keys(byClient).forEach(function(c){
+      _renderDealClientBlockFromData(byClient[c]);
+    });
+    // Lock add-client/add-contract buttons in edit mode (keep scope = existing group structure)
+    document.getElementById('dealAddClientBtn')&&(document.getElementById('dealAddClientBtn').style.display='none');
+  } else {
+    // NEW mode — empty tree + first client block pre-added for friction-zero
+    document.getElementById('mDate').value=today();
+    document.getElementById('mV').value='Audrey';
+    document.getElementById('mStat').value='Deal pipe';
+    document.getElementById('mNotes').value='';
+    var addBtn=document.getElementById('dealAddClientBtn');
+    if(addBtn)addBtn.style.display='';
+    addDealClientBlock('');
+  }
+  cancelAddClient();
   rebuildFournSelect();rebuildBrokerSelect();
-  document.getElementById('dealModal').classList.add('on');calcM();
+  document.getElementById('dealModal').classList.add('on');
+}
+// Convert a saved deal row into the contract-shaped data the tree expects
+function _dealRowToContractData(row){
+  // Map row-level perf-fees down into the first codification if codifications don't carry per-fourn pf yet
+  var codifs=(row.codifications&&row.codifications.length)?row.codifications.slice():[{
+    fourn:row.fourn||'',produit:row.produit||'',type:row.produit_type||'',isin:row.isin||'',broker:row.broker||'',
+    maturite:row.maturite||row.terme||'',feeSnapshot:[],assureur:'',banque:'',nominal:row.nom||0,currency:row.dev||'EUR'
+  }];
+  if(row.pf&&row.pf.mode&&row.pf.mode!=='none'&&codifs.length){
+    // Legacy deals had pf at deal level. Promote it to the first codification if that codif has no pf yet.
+    if(!codifs[0].pf||!codifs[0].pf.mode||codifs[0].pf.mode==='none')codifs[0].pf=Object.assign({},row.pf);
+  }
+  return{
+    _id:row._id,
+    contrat:row.contrat||'Assurance Vie Lux',
+    nom:row.nom||0,dev:row.dev||'EUR',depositaire:row.depositaire||'',
+    ct:row.ct||'UF',ufR:row.ufR||'',runR:row.runR||'',tva:row.tva||0,
+    codifications:codifs
+  };
+}
+function _renderDealClientBlockFromData(clientData){
+  var block=addDealClientBlock(clientData.client,/*autoFirstContract*/false);
+  // In edit mode, lock add-contract / remove-client too
+  if(editIdx>=0){
+    var addC=block.querySelector('.btn-add-contract');if(addC)addC.style.display='none';
+    var rmC=block.querySelector('.btn-remove-client');if(rmC)rmC.style.display='none';
+  }
+  clientData.contracts.forEach(function(cd){
+    addDealContractBlock(block,cd);
+    // In edit mode, lock remove-contract too
+    if(editIdx>=0){
+      var last=block.querySelectorAll('.deal-contract-block');
+      var lastBlock=last[last.length-1];
+      var rmBtn=lastBlock&&lastBlock.querySelector('.btn-remove-contract');
+      if(rmBtn)rmBtn.style.display='none';
+    }
+  });
 }
 function closeDM(){document.getElementById('dealModal').classList.remove('on');editIdx=-1;}
 function setCT(t){ct=t;['UF','RUN','BOTH'].forEach(x=>{document.getElementById('ct'+x).classList.remove('on');});document.getElementById('ct'+t).classList.add('on');document.getElementById('ufRow').style.display=(t==='UF'||t==='BOTH')?'grid':'none';document.getElementById('runRow').style.display=(t==='RUN'||t==='BOTH')?'grid':'none';calcM();}
@@ -3190,45 +3278,428 @@ function calcM(){
 
 async function saveDeal(){
  try{
-  var nom=parseFloat(document.getElementById('mNom').value)||0;
-  var items=getSelectedClients();
-  if(!items.length){alert('Au moins un client requis.');return;}
-  if(!items.some(function(x){return x.nom>0;})){alert('Veuillez saisir un nominal pour au moins un client.');return;}
-  var dev=document.getElementById('mDev').value,fx=1,nomE=nom;
-  var ufP=(parseFloat(document.getElementById('mUFR').value)||0)/100,runP=(parseFloat(document.getElementById('mRunR').value)||0)/100;
-  var pf={mode:pfMode};
-  if(pfMode!=='none'){var pfType=document.getElementById('mPFType').value;pf.type=pfType;pf.freq=document.getElementById('mPFFreq').value;if(pfType==='pct'){pf.rate=parseFloat(document.getElementById('mPFRate').value)||0;pf.hurdle=parseFloat(document.getElementById('mPFHurdle').value)||0;}else{pf.amount=parseFloat(document.getElementById('mPFFixed').value)||0;}}
-  var codifs=getCodifLines();
-  var base={v:document.getElementById('mV').value,date:document.getElementById('mDate').value,stat:document.getElementById('mStat').value,contrat:document.getElementById('mContrat').value,fourn:codifs[0]?codifs[0].fourn:'',produit:codifs[0]?codifs[0].produit:'',produit_type:codifs[0]&&codifs[0].type?codifs[0].type:null,isin:codifs[0]?codifs[0].isin:'',broker:codifs[0]?codifs[0].broker:'',maturite:codifs[0]?codifs[0].maturite||null:null,terme:codifs[0]?codifs[0].maturite||null:null,codifications:codifs,nom,dev,fx,issue:document.getElementById('mIssue').value,invS:document.getElementById('mInvS').value,inv:document.getElementById('mInv').value,ct,ufR:parseFloat(document.getElementById('mUFR').value)||0,runR:parseFloat(document.getElementById('mRunR').value)||0,tva:0,ufE:Math.round(dev==='USD'?(nom*ufP/fx):nom*ufP),runE:Math.round(nomE*runP),pf,fSt:'À émettre',fRef:'',notes:document.getElementById('mNotes').value};
+  // Walk the nested tree → list of {client, contractData (incl. codifications)} pairs
+  var tree=_collectDealTree();
+  if(!tree.length){alert('Au moins un client requis.');return;}
+  var hasAnyNominal=false;
+  tree.forEach(function(pair){if(pair.contractData.nom>0)hasAnyNominal=true;});
+  if(!hasAnyNominal){alert('Veuillez saisir un total pour au moins un contrat.');return;}
+  var vendor=document.getElementById('mV').value;
+  var date=document.getElementById('mDate').value;
+  var stat=document.getElementById('mStat').value;
+  var notes=document.getElementById('mNotes').value;
   if(editIdx>=0){
-    var cc=getSelectedClients();
-    var lineNom=cc.length&&cc[0].nom?cc[0].nom:nom;
-    var ufP2=(parseFloat(document.getElementById('mUFR').value)||0)/100;
-    var runP2=(parseFloat(document.getElementById('mRunR').value)||0)/100;
+    // EDIT mode — update in-place. Modal is locked to the original group structure
+    // (no add/remove client/contract), so we map each rendered contract back to its
+    // original deal row by _id.
     var existing=deals[editIdx];
-    var prevHist=Array.isArray(existing.hist)?existing.hist:[];
-    var d={...base,nom:lineNom,ufE:Math.round(lineNom*ufP2),runE:Math.round(lineNom*runP2),client:cc.length?cc[0].client:existing.client,contrat:cc.length?cc[0].contrat:base.contrat,hist:[...prevHist,{ts:nowS(),a:'Deal modifié',by:base.v}]};
-    var _id=existing._id;d._id=_id;if(_id)await sbUpdate('deals',_id,d);deals[editIdx]=d;
+    var groupId=existing.dealGroupId||null;
+    for(var i=0;i<tree.length;i++){
+      var pair=tree[i];
+      var origId=pair.contractData._id;
+      if(!origId)continue;
+      var origRow=deals.find(function(x){return x._id===origId;});
+      if(!origRow)continue;
+      var prevHist=Array.isArray(origRow.hist)?origRow.hist:[];
+      var rowPayload=_buildDealRowFromContract(pair,vendor,date,stat,notes,groupId);
+      rowPayload._id=origId;
+      rowPayload.hist=prevHist.concat([{ts:nowS(),a:'Deal modifié',by:vendor}]);
+      await sbUpdate('deals',origId,rowPayload);
+      // Update in-memory
+      var idxInDeals=deals.findIndex(function(x){return x._id===origId;});
+      if(idxInDeals>=0)deals[idxInDeals]=rowPayload;
+    }
     closeDM();renderAll();toast('Deal modifié.');
   } else {
-    var ufP3=(parseFloat(document.getElementById('mUFR').value)||0)/100;
-    var runP3=(parseFloat(document.getElementById('mRunR').value)||0)/100;
+    // NEW mode — insert N rows (1 per client × contract) sharing a fresh dealGroupId
+    var groupId=tree.length>1?_genGroupId():null;
     var autoLinked=0;
-    for(var ii=0;ii<items.length;ii++){
-      var item=items[ii];
-      var lineNom2=item.nom||nom;
-      var d={...base,nom:lineNom2,ufE:Math.round(lineNom2*ufP3),runE:Math.round(lineNom2*runP3),client:item.client,contrat:item.contrat,depositaire:item.depositaire||'',fSt:'À émettre',hist:[{ts:nowS(),a:'Deal créé',by:base.v}]};
-      var res=await sbInsert('deals',d);
-      if(res&&res[0])d._id=res[0].id;
-      deals.push(d);
-      if(d.stat==='Deal pipe'){try{await autoLinkDealToContract(d);autoLinked++;}catch(e){console.error('autoLinkDealToContract failed',e);}}
+    for(var j=0;j<tree.length;j++){
+      var rowPayload=_buildDealRowFromContract(tree[j],vendor,date,stat,notes,groupId);
+      rowPayload.hist=[{ts:nowS(),a:'Deal créé',by:vendor}];
+      var res=await sbInsert('deals',rowPayload);
+      if(res&&res[0])rowPayload._id=res[0].id;
+      deals.push(rowPayload);
+      if(rowPayload.stat==='Deal pipe'){try{await autoLinkDealToContract(rowPayload);autoLinked++;}catch(e){console.error('autoLinkDealToContract failed',e);}}
     }
-    closeDM();renderAll();toast((items.length>1?items.length+' deals enregistrés':'Nouveau deal enregistré')+(autoLinked?' · '+autoLinked+' investissement'+(autoLinked>1?'s':'')+' ajouté'+(autoLinked>1?'s':'')+' au suivi.':'.'));
+    closeDM();renderAll();
+    var msg=tree.length>1?tree.length+' deals enregistrés':'Nouveau deal enregistré';
+    toast(msg+(autoLinked?' · '+autoLinked+' investissement'+(autoLinked>1?'s':'')+' ajouté'+(autoLinked>1?'s':'')+' au suivi.':'.'));
   }
  }catch(err){
   console.error('saveDeal failed',err);
   alert('Erreur enregistrement deal :\n\n'+(err.message||err)+'\n\n(Voir la console pour le détail.)');
  }
+}
+function _genGroupId(){
+  if(typeof crypto!=='undefined'&&crypto.randomUUID)return 'g_'+crypto.randomUUID();
+  return 'g_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,8);
+}
+function _buildDealRowFromContract(pair,vendor,date,stat,notes,groupId){
+  var c=pair.contractData;
+  var firstCodif=(c.codifications&&c.codifications[0])||{};
+  // Legacy deal-level pf : kept as a no-op marker (per-fourn pf is the source of truth now)
+  var legacyPf=(firstCodif.pf&&firstCodif.pf.mode&&firstCodif.pf.mode!=='none')?firstCodif.pf:{mode:'none'};
+  var ufP=(parseFloat(c.ufR)||0)/100;
+  var runP=(parseFloat(c.runR)||0)/100;
+  var nom=parseFloat(c.nom)||0;
+  return{
+    v:vendor,date:date,stat:stat,
+    client:pair.client,contrat:c.contrat||'Assurance Vie Lux',
+    depositaire:c.depositaire||'',
+    fourn:firstCodif.fourn||'',produit:firstCodif.produit||'',produit_type:firstCodif.type||null,
+    isin:firstCodif.isin||'',broker:firstCodif.broker||'',
+    maturite:firstCodif.maturite||null,terme:firstCodif.maturite||null,
+    codifications:c.codifications||[],
+    nom:nom,dev:c.dev||'EUR',fx:1,
+    issue:'',invS:'',inv:'',
+    ct:c.ct||'UF',ufR:parseFloat(c.ufR)||0,runR:parseFloat(c.runR)||0,tva:parseFloat(c.tva)||0,
+    ufE:Math.round(nom*ufP),runE:Math.round(nom*runP),
+    pf:legacyPf,
+    fSt:'À émettre',fRef:'',
+    notes:notes||'',
+    dealGroupId:groupId||null
+  };
+}
+function _collectDealTree(){
+  var pairs=[];
+  document.querySelectorAll('#dealClients .deal-client-block').forEach(function(cb){
+    var clientSel=cb.querySelector('.dealClientSel');
+    var clientName=clientSel?clientSel.value:'';
+    if(!clientName)return;
+    cb.querySelectorAll('.deal-contract-block').forEach(function(ctb){
+      var contractData=_collectContractBlock(ctb);
+      pairs.push({client:clientName,contractData:contractData});
+    });
+  });
+  return pairs;
+}
+function _collectContractBlock(ctb){
+  var contrat=ctb.querySelector('.contractType').value;
+  var nom=parseFloat(ctb.querySelector('.contractTotal').value)||0;
+  var dev=ctb.querySelector('.contractDev').value;
+  var depo=ctb.querySelector('.contractDepo').value;
+  var ct=ctb.querySelector('.contractCT').value;
+  var ufR=parseFloat(ctb.querySelector('.contractUFR').value)||0;
+  var runR=parseFloat(ctb.querySelector('.contractRunR').value)||0;
+  var tva=parseFloat(ctb.querySelector('.contractTVA').value)||0;
+  var codifications=[];
+  ctb.querySelectorAll('.deal-fourn-block').forEach(function(fb){
+    var feeSnapshot=[];
+    try{feeSnapshot=JSON.parse(fb.dataset.feeSnapshot||'[]')||[];}catch(e){feeSnapshot=[];}
+    var nominal=parseFloat(fb.querySelector('.dfNominal').value)||0;
+    var pfMode=fb.querySelector('.dfPfMode').value;
+    var pf={mode:pfMode};
+    if(pfMode==='pct'){
+      pf.type='pct';
+      pf.rate=parseFloat(fb.querySelector('.dfPfRate').value)||0;
+      pf.hurdle=parseFloat(fb.querySelector('.dfPfHurdle').value)||0;
+      pf.freq=fb.querySelector('.dfPfFreq').value||'annuel';
+    } else if(pfMode==='fixed'){
+      pf.type='fixed';
+      pf.amount=parseFloat(fb.querySelector('.dfPfFixed').value)||0;
+      pf.freq=fb.querySelector('.dfPfFreq').value||'annuel';
+    }
+    codifications.push({
+      fourn:fb.querySelector('.dfFourn').value,
+      produit:fb.querySelector('.dfProduit').value,
+      type:fb.querySelector('.dfType').value,
+      isin:fb.querySelector('.dfISIN').value,
+      broker:fb.querySelector('.dfBroker').value,
+      maturite:fb.querySelector('.dfMaturite').value,
+      feeSnapshot:feeSnapshot,
+      assureur:fb.querySelector('.dfAssureur').value,
+      banque:fb.querySelector('.dfBanque').value,
+      nominal:nominal,
+      currency:fb.querySelector('.dfCurrency').value,
+      pf:pf
+    });
+  });
+  return{
+    _id:ctb.dataset.origDealId||null,
+    contrat:contrat,nom:nom,dev:dev,depositaire:depo,
+    ct:ct,ufR:ufR,runR:runR,tva:tva,
+    codifications:codifications
+  };
+}
+
+// ── Phase 2 v2 — Render helpers for the nested deal tree ────────────────────
+function showAddClientPickerForDeal(){
+  // Simple — add a new empty client block. User picks from the dropdown inside.
+  // The "+ nouveau client" path is handled via addClientRow (newClientInput) which
+  // appends to clients_db, then we refresh all .dealClientSel.
+  addDealClientBlock('');
+}
+function addDealClientBlock(clientName,autoFirstContract){
+  if(autoFirstContract===undefined)autoFirstContract=true;
+  clientName=clientName||'';
+  var container=document.getElementById('dealClients');
+  var blockIdx=container.children.length;
+  var block=document.createElement('div');
+  block.className='deal-client-block';
+  block.style.cssText='background:var(--surface2);border:1px solid var(--border);border-radius:var(--rs);padding:14px 16px;margin-bottom:14px;';
+  block.innerHTML=
+    '<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">'+
+      '<span class="client-label" style="font-size:11px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.4px;">Client #'+(blockIdx+1)+'</span>'+
+      '<select class="dealClientSel" style="flex:1;max-width:340px;">'+clientSelectHTML(clientName)+'</select>'+
+      '<button type="button" class="btn btn-sm" onclick="showAddClient()" title="Nouveau client" style="padding:4px 8px;">+ nouveau</button>'+
+      '<button type="button" class="btn btn-sm btn-add-contract" onclick="addContractToClientBlock(this)">+ contrat</button>'+
+      '<div style="flex:1;"></div>'+
+      '<button type="button" class="btn btn-sm btn-remove-client" onclick="removeDealClientBlock(this)" style="color:var(--red);border-color:var(--red-bg);">× client</button>'+
+    '</div>'+
+    '<div class="deal-contracts"></div>';
+  container.appendChild(block);
+  if(autoFirstContract)addDealContractBlock(block);
+  return block;
+}
+function removeDealClientBlock(btn){
+  var block=btn.closest('.deal-client-block');
+  if(block)block.remove();
+  _renumberDealClients();
+}
+function _renumberDealClients(){
+  document.querySelectorAll('#dealClients .deal-client-block').forEach(function(b,i){
+    var lbl=b.querySelector('.client-label');
+    if(lbl)lbl.textContent='Client #'+(i+1);
+  });
+}
+function addContractToClientBlock(btn){
+  var clientBlock=btn.closest('.deal-client-block');
+  if(clientBlock)addDealContractBlock(clientBlock);
+}
+function addDealContractBlock(clientBlock,data){
+  data=Object.assign({
+    contrat:'Assurance Vie Lux',nom:'',dev:'EUR',depositaire:'',
+    ct:'UF',ufR:'',runR:'',tva:0,codifications:[],
+    _id:null
+  },data||{});
+  var contractsContainer=clientBlock.querySelector('.deal-contracts');
+  var idx=contractsContainer.children.length;
+  var block=document.createElement('div');
+  block.className='deal-contract-block';
+  block.style.cssText='background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:11px 12px;margin-bottom:8px;';
+  if(data._id)block.dataset.origDealId=data._id;
+  block.innerHTML=
+    '<div style="display:flex;gap:8px;align-items:center;margin-bottom:7px;">'+
+      '<span class="contract-label" style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.3px;">Contrat #'+(idx+1)+'</span>'+
+      '<div style="flex:1;"></div>'+
+      '<button type="button" class="btn btn-sm btn-remove-contract" onclick="removeDealContractBlock(this)" style="color:var(--red);border-color:var(--red-bg);font-size:10px;padding:3px 8px;">× contrat</button>'+
+    '</div>'+
+    // Row : type / total / devise / dépositaire
+    '<div style="display:grid;grid-template-columns:1.3fr 130px 90px 1.5fr;gap:6px;margin-bottom:7px;align-items:center;">'+
+      '<select class="contractType">'+contratSelectHTML(data.contrat)+'</select>'+
+      '<input type="number" class="contractTotal" value="'+(data.nom||'')+'" placeholder="Total contrat" step="0.01" min="0" oninput="_updateContractSum(this)"/>'+
+      '<select class="contractDev" onchange="_updateContractSum(this)">'+currencySelectHTML(data.dev)+'</select>'+
+      '<select class="contractDepo">'+depositaireSelectHTML(data.depositaire)+'</select>'+
+    '</div>'+
+    // Row : commission structure compact
+    '<div style="display:flex;gap:6px;align-items:center;background:var(--surface2);padding:6px 9px;border-radius:4px;margin-bottom:8px;flex-wrap:wrap;">'+
+      '<span style="font-size:10px;color:var(--text3);font-weight:600;letter-spacing:.3px;">COMM.</span>'+
+      '<select class="contractCT" style="font-size:11px;">'+
+        '<option value="UF"'+(data.ct==='UF'?' selected':'')+'>Up-Front</option>'+
+        '<option value="RUN"'+(data.ct==='RUN'?' selected':'')+'>Running</option>'+
+        '<option value="BOTH"'+(data.ct==='BOTH'?' selected':'')+'>UF + Run</option>'+
+      '</select>'+
+      '<span style="font-size:10px;color:var(--text3);">UF%</span><input type="number" class="contractUFR" value="'+(data.ufR||'')+'" step="0.01" placeholder="0" style="width:70px;font-size:11px;"/>'+
+      '<span style="font-size:10px;color:var(--text3);">Run%</span><input type="number" class="contractRunR" value="'+(data.runR||'')+'" step="0.001" placeholder="0" style="width:70px;font-size:11px;"/>'+
+      '<span style="font-size:10px;color:var(--text3);">TVA%</span><input type="number" class="contractTVA" value="'+(data.tva||0)+'" step="0.1" placeholder="0" style="width:60px;font-size:11px;"/>'+
+    '</div>'+
+    '<div style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.3px;margin-bottom:5px;">Fournisseurs du contrat</div>'+
+    '<div class="contract-fourns"></div>'+
+    '<button type="button" class="btn btn-sm" onclick="addFournToContractBlock(this)" style="margin-top:4px;font-size:11px;">+ fournisseur</button>'+
+    '<div class="contract-sum" style="display:none;font-size:11px;color:var(--text2);margin-top:8px;padding:6px 10px;background:var(--surface2);border-radius:4px;border:1px solid var(--border);"></div>';
+  contractsContainer.appendChild(block);
+  // Populate the fournisseurs
+  if(Array.isArray(data.codifications)&&data.codifications.length){
+    data.codifications.forEach(function(c){_appendDealFournBlock(block,c);});
+  } else {
+    _appendDealFournBlock(block,{});
+  }
+  _updateContractSum(block);
+  _renumberDealContracts(clientBlock);
+}
+function removeDealContractBlock(btn){
+  var block=btn.closest('.deal-contract-block');
+  var client=btn.closest('.deal-client-block');
+  if(block)block.remove();
+  if(client)_renumberDealContracts(client);
+}
+function _renumberDealContracts(clientBlock){
+  clientBlock.querySelectorAll('.deal-contract-block').forEach(function(b,i){
+    var lbl=b.querySelector('.contract-label');
+    if(lbl)lbl.textContent='Contrat #'+(i+1);
+  });
+}
+function addFournToContractBlock(btn){
+  var contract=btn.closest('.deal-contract-block');
+  if(contract){_appendDealFournBlock(contract,{});_updateContractSum(contract);}
+}
+function _appendDealFournBlock(contractBlock,data){
+  data=Object.assign({
+    fourn:'',produit:'',type:'',isin:'',broker:'',maturite:'',
+    feeSnapshot:[],assureur:'',banque:'',nominal:'',currency:'',
+    pf:{mode:'none'}
+  },data||{});
+  if(!data.currency){
+    var devSel=contractBlock.querySelector('.contractDev');
+    data.currency=devSel?devSel.value:'EUR';
+  }
+  var fournsContainer=contractBlock.querySelector('.contract-fourns');
+  var listId='dealIsinList-'+(++_codifLineCounter);
+  var fournBlock=document.createElement('div');
+  fournBlock.className='deal-fourn-block';
+  fournBlock.style.cssText='background:#fff;border:1px solid var(--border);border-radius:5px;padding:8px 9px;margin-bottom:6px;';
+  fournBlock.dataset.isinListId=listId;
+  fournBlock.dataset.feeSnapshot=JSON.stringify(data.feeSnapshot||[]);
+  var pf=data.pf||{mode:'none'};
+  var pfMode=pf.mode||(pf.type?pf.type:'none');
+  var showRate=pfMode==='pct';
+  var showFixed=pfMode==='fixed';
+  var showFreq=pfMode!=='none'&&pfMode;
+  fournBlock.innerHTML=
+    // Row 1 : SDG / Produit / Type / ISIN / Broker / Maturité / ×
+    '<div style="display:grid;grid-template-columns:1.3fr 1.3fr 130px 100px 1fr 120px 28px;gap:6px;align-items:center;margin-bottom:4px;">'+
+      '<select class="dfFourn" onchange="onDealFournChange(this)">'+fournOptHtml(data.fourn)+'</select>'+
+      '<input type="text" class="dfProduit" value="'+(data.produit||'')+'" placeholder="Produit"/>'+
+      '<select class="dfType">'+produitTypeOptHtml(data.type)+'</select>'+
+      '<input list="'+listId+'" type="text" class="dfISIN" value="'+(data.isin||'')+'" placeholder="ISIN" style="font-family:monospace;font-size:11px;" onchange="onDealIsinChange(this)" oninput="onDealIsinChange(this)"/>'+
+      '<select class="dfBroker">'+brokerOptHtml(data.broker)+'</select>'+
+      '<input type="date" class="dfMaturite" value="'+(data.maturite||'')+'"/>'+
+      '<button type="button" onclick="removeDealFournBlock(this)" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:18px;padding:0;line-height:1;">×</button>'+
+    '</div>'+
+    // Row 2 : Assureur / Banque / Nominal / Devise
+    '<div style="display:grid;grid-template-columns:1.5fr 1.5fr 130px 80px;gap:6px;align-items:center;margin-bottom:4px;">'+
+      '<select class="dfAssureur">'+assureurSelectHTML(data.assureur)+'</select>'+
+      '<select class="dfBanque">'+banqueSelectHTML(data.banque)+'</select>'+
+      '<input type="number" class="dfNominal" value="'+(data.nominal||'')+'" placeholder="Nominal" step="0.01" min="0" oninput="_updateContractSum(this)"/>'+
+      '<select class="dfCurrency" onchange="this.dataset.userSet=\'true\';_updateContractSum(this);">'+currencySelectHTML(data.currency)+'</select>'+
+    '</div>'+
+    '<datalist id="'+listId+'">'+_isinDatalistInnerHtml(data.fourn||'')+'</datalist>'+
+    '<div class="dfSnapshot" style="font-size:10px;color:var(--text2);padding:2px 4px;'+
+      ((data.feeSnapshot&&data.feeSnapshot.length)?'':'display:none;')+'">'+
+      _renderFeeSnapshotInline(data.feeSnapshot||[])+
+    '</div>'+
+    // Perf fees per fourn
+    '<div style="margin-top:4px;padding:5px 8px;background:var(--surface);border-radius:4px;border-top:1px dashed var(--border);display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'+
+      '<span style="font-size:10px;color:var(--text3);font-weight:600;letter-spacing:.3px;">PERF FEES</span>'+
+      '<select class="dfPfMode" onchange="_onDfPfModeChange(this)" style="font-size:11px;">'+
+        '<option value="none"'+(pfMode==='none'?' selected':'')+'>Aucun</option>'+
+        '<option value="pct"'+(pfMode==='pct'?' selected':'')+'>% sur perf</option>'+
+        '<option value="fixed"'+(pfMode==='fixed'?' selected':'')+'>Montant fixe</option>'+
+      '</select>'+
+      '<span class="dfPfPctLabel" style="font-size:10px;color:var(--text3);display:'+(showRate?'':'none')+';">Rate%</span>'+
+      '<input type="number" class="dfPfRate" value="'+(pf.rate||'')+'" step="0.01" placeholder="ex: 20" style="width:70px;font-size:11px;display:'+(showRate?'':'none')+';"/>'+
+      '<span class="dfPfHurdleLabel" style="font-size:10px;color:var(--text3);display:'+(showRate?'':'none')+';">Hurdle%</span>'+
+      '<input type="number" class="dfPfHurdle" value="'+(pf.hurdle||'')+'" step="0.01" placeholder="ex: 8" style="width:70px;font-size:11px;display:'+(showRate?'':'none')+';"/>'+
+      '<span class="dfPfFixedLabel" style="font-size:10px;color:var(--text3);display:'+(showFixed?'':'none')+';">Montant</span>'+
+      '<input type="number" class="dfPfFixed" value="'+(pf.amount||'')+'" step="1" placeholder="ex: 50000" style="width:90px;font-size:11px;display:'+(showFixed?'':'none')+';"/>'+
+      '<span class="dfPfFreqLabel" style="font-size:10px;color:var(--text3);display:'+(showFreq?'':'none')+';">Fréq.</span>'+
+      '<select class="dfPfFreq" style="font-size:11px;display:'+(showFreq?'':'none')+';">'+
+        '<option value="annuel"'+(pf.freq==='annuel'?' selected':'')+'>Annuelle</option>'+
+        '<option value="cloture"'+(pf.freq==='cloture'?' selected':'')+'>Clôture</option>'+
+        '<option value="valorisation"'+(pf.freq==='valorisation'?' selected':'')+'>Valorisation</option>'+
+        '<option value="variable"'+(pf.freq==='variable'?' selected':'')+'>Variable</option>'+
+      '</select>'+
+    '</div>';
+  fournsContainer.appendChild(fournBlock);
+  if(data.currency&&data.currency!=='EUR'){
+    var curSel=fournBlock.querySelector('.dfCurrency');
+    if(curSel)curSel.dataset.userSet='true';
+  }
+  // Opportunistic snapshot derivation for legacy codifs (no stored snapshot but ISIN set)
+  if((!Array.isArray(data.feeSnapshot)||!data.feeSnapshot.length)&&data.isin){
+    var isinInput=fournBlock.querySelector('.dfISIN');
+    if(isinInput)onDealIsinChange(isinInput);
+  }
+}
+function removeDealFournBlock(btn){
+  var block=btn.closest('.deal-fourn-block');
+  var contract=btn.closest('.deal-contract-block');
+  if(block)block.remove();
+  if(contract)_updateContractSum(contract);
+}
+function onDealFournChange(sel){
+  var fournBlock=sel.closest('.deal-fourn-block');
+  if(!fournBlock)return;
+  var fournName=sel.value;
+  var listId=fournBlock.dataset.isinListId;
+  var dl=fournBlock.querySelector('datalist#'+listId);
+  if(dl)dl.innerHTML=_isinDatalistInnerHtml(fournName);
+  var isinInput=fournBlock.querySelector('.dfISIN');
+  if(isinInput)onDealIsinChange(isinInput);
+}
+function onDealIsinChange(input){
+  var fournBlock=input.closest('.deal-fourn-block');
+  if(!fournBlock)return;
+  var fournSel=fournBlock.querySelector('.dfFourn');
+  var fournName=fournSel?fournSel.value:'';
+  var isin=(input.value||'').trim();
+  var product=getFournProductByIsin(fournName,isin);
+  var fees=product?(product.fees||[]):[];
+  fournBlock.dataset.feeSnapshot=JSON.stringify(fees);
+  var snap=fournBlock.querySelector('.dfSnapshot');
+  if(snap){
+    var html=_renderFeeSnapshotInline(fees);
+    snap.innerHTML=html;
+    snap.style.display=html?'':'none';
+  }
+  if(product){
+    var prodInput=fournBlock.querySelector('.dfProduit');
+    if(prodInput&&!prodInput.value&&product.part)prodInput.value=product.part;
+    var curSel=fournBlock.querySelector('.dfCurrency');
+    if(curSel&&product.currency&&curSel.dataset.userSet!=='true')curSel.value=product.currency;
+  }
+  var contract=input.closest('.deal-contract-block');
+  if(contract)_updateContractSum(contract);
+}
+function _onDfPfModeChange(sel){
+  var fournBlock=sel.closest('.deal-fourn-block');
+  var mode=sel.value;
+  var show=function(s,visible){var el=fournBlock.querySelector(s);if(el)el.style.display=visible?'':'none';};
+  show('.dfPfPctLabel',mode==='pct');
+  show('.dfPfRate',mode==='pct');
+  show('.dfPfHurdleLabel',mode==='pct');
+  show('.dfPfHurdle',mode==='pct');
+  show('.dfPfFixedLabel',mode==='fixed');
+  show('.dfPfFixed',mode==='fixed');
+  show('.dfPfFreqLabel',mode!=='none');
+  show('.dfPfFreq',mode!=='none');
+}
+function _updateContractSum(anyChildOrContract){
+  var contract=(anyChildOrContract&&anyChildOrContract.classList&&anyChildOrContract.classList.contains('deal-contract-block'))?anyChildOrContract:(anyChildOrContract&&anyChildOrContract.closest?anyChildOrContract.closest('.deal-contract-block'):null);
+  if(!contract)return;
+  var byCurrency={};
+  contract.querySelectorAll('.deal-fourn-block').forEach(function(fb){
+    var nomInp=fb.querySelector('.dfNominal');
+    var curSel=fb.querySelector('.dfCurrency');
+    if(!nomInp||!curSel)return;
+    var nominal=parseFloat(nomInp.value);
+    var curr=curSel.value||'EUR';
+    if(isNaN(nominal)||nominal<=0)return;
+    byCurrency[curr]=(byCurrency[curr]||0)+nominal;
+  });
+  var totalEl=contract.querySelector('.contractTotal');
+  var devEl=contract.querySelector('.contractDev');
+  var total=parseFloat(totalEl?totalEl.value:'')||0;
+  var dealCur=devEl?devEl.value:'EUR';
+  var keys=Object.keys(byCurrency);
+  var sumEl=contract.querySelector('.contract-sum');
+  if(!sumEl)return;
+  if(!keys.length&&!total){sumEl.style.display='none';return;}
+  var sumPart=keys.length?'<b>Σ fourns</b> : '+keys.map(function(c){return f0(byCurrency[c])+' '+_curSymbol(c);}).join(' + '):'<b>Σ fourns</b> : —';
+  var totalPart='<b>Total contrat</b> : '+f0(total)+' '+_curSymbol(dealCur);
+  var warning='';
+  if(keys.length===1&&keys[0]===dealCur&&total){
+    var diff=byCurrency[dealCur]-total;
+    if(Math.abs(diff)<0.5)warning=' <span style="color:var(--green);">✓ équilibré</span>';
+    else warning=' <span style="color:var(--red);">⚠ écart '+f0(Math.abs(diff))+' '+_curSymbol(dealCur)+'</span>';
+  } else if(keys.length>1){
+    warning=' <span style="color:var(--amber);">(devises mixtes — FX requis)</span>';
+  } else if(keys.length===1&&total&&keys[0]!==dealCur){
+    warning=' <span style="color:var(--amber);">(devises différentes — FX requis)</span>';
+  }
+  sumEl.innerHTML=sumPart+' &nbsp;·&nbsp; '+totalPart+warning;
+  sumEl.style.display='';
 }
 
 function exportCSV(){

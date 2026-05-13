@@ -974,105 +974,53 @@
   </div>
 </div>
 <div class="ov" id="dealModal">
-  <div class="modal" style="max-width:900px;">
+  <div class="modal" style="max-width:1040px;">
     <div class="modal-hd"><span class="modal-title" id="dmTitle">Nouveau deal</span><button class="close-btn" onclick="closeDM()">×</button></div>
     <div class="modal-body">
 
-      <!-- Ligne 1 : Vendeur / Trade date / Statut / Devise -->
-      <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 16px;margin-bottom:12px;">
+      <!-- Ligne 1 : Vendeur / Trade date / Statut -->
+      <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px 16px;margin-bottom:14px;">
         <div class="fl"><label>Vendeur</label><select id="mV"><option>Audrey</option><option>David</option><option>Audrey & David</option></select></div>
         <div class="fl"><label>Trade date</label><input type="date" id="mDate"/></div>
         <div class="fl"><label>Statut</label><select id="mStat"><option>Deal pipe</option><option>Deal réalisé</option><option>Deal payé</option></select></div>
-        <div class="fl"><label>Devise</label><select id="mDev" onchange="calcM()"><option>EUR</option><option>USD</option></select></div>
       </div>
 
-      <!-- Section clients pleine largeur -->
-      <div style="background:var(--surface2);border-radius:var(--rs);padding:14px 16px;margin-bottom:16px;">
-        <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:10px;text-transform:uppercase;letter-spacing:.4px;">Clients &amp; Nominaux</div>
-        <div style="display:flex;gap:8px;margin-bottom:6px;padding:0 2px;">
-            <span style="flex:2;min-width:0;font-size:11px;color:var(--text3);font-weight:500;">Client</span>
-            <span style="flex:2;min-width:0;font-size:11px;color:var(--text3);font-weight:500;">Contrat</span>
-            <span style="flex:2;min-width:0;font-size:11px;color:var(--text3);font-weight:500;">Dépositaire</span>
-            <span style="flex:1;min-width:80px;max-width:130px;font-size:11px;color:var(--text3);font-weight:500;">Nominal</span>
-            <span style="flex-shrink:0;width:66px;"></span>
-          </div>
+      <!-- Arbre Clients → Contrats → Fournisseurs -->
+      <div id="dealClients"></div>
+      <button type="button" class="btn btn-sm btn-primary" onclick="showAddClientPickerForDeal()" style="margin-top:4px;">+ Ajouter un client</button>
+      <div id="addClientRow" style="display:none;margin-top:8px;"><div style="display:flex;gap:6px;"><input type="text" id="newClientInput" placeholder="Nom du nouveau client" style="flex:1;max-width:280px;"/><button type="button" class="btn btn-sm btn-primary" onclick="confirmAddClient()">Ajouter</button><button type="button" class="btn btn-sm" onclick="cancelAddClient()">✕</button></div></div>
+
+      <div class="fl" style="margin-top:14px;"><label>Notes</label><textarea id="mNotes" rows="2" style="resize:vertical;"></textarea></div>
+
+      <!-- Hidden legacy compatibility shims (kept so calcM/setCT/etc. don't throw — values are no-ops in the new model) -->
+      <div style="display:none;">
+        <input type="number" id="mNom"/>
+        <input type="hidden" id="mInvS"/>
+        <input type="hidden" id="mInv"/>
+        <input type="date" id="mIssue"/>
+        <select id="mFourn"></select>
+        <select id="mBroker"></select>
+        <input type="hidden" id="mProduit"/>
+        <input type="hidden" id="mISIN"/>
+        <select id="mContrat"><option>Assurance Vie Lux</option></select>
+        <select id="mDev"><option>EUR</option><option>USD</option></select>
+        <input type="number" id="mUFR"/>
+        <input type="number" id="mRunR"/>
+        <input type="date" id="mRunStart"/>
+        <input type="number" id="mPFRate"/>
+        <input type="number" id="mPFHurdle"/>
+        <input type="number" id="mPFFixed"/>
+        <select id="mPFType"><option value="pct">pct</option><option value="fixed">fixed</option></select>
+        <select id="mPFFreq"><option value="annuel">annuel</option></select>
         <div id="clientLines"></div>
-        <button type="button" class="btn btn-sm" onclick="addClientLine()" style="margin-top:8px;">+ Ajouter un client</button>
-        <div id="addClientRow" style="display:none;margin-top:8px;"><div style="display:flex;gap:6px;"><input type="text" id="newClientInput" placeholder="Nom du nouveau client" style="flex:1;max-width:280px;"/><button type="button" class="btn btn-sm btn-primary" onclick="confirmAddClient()">Ajouter</button><button type="button" class="btn btn-sm" onclick="cancelAddClient()">✕</button></div></div>
-      </div>
-
-      <!-- Section codification & échéance -->
-      <div style="background:var(--surface2);border-radius:var(--rs);padding:14px 16px;margin-bottom:16px;">
-        <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:10px;text-transform:uppercase;letter-spacing:.4px;">Codification &amp; Échéance</div>
-        <div style="display:grid;grid-template-columns:1.3fr 1.3fr 130px 100px 1fr 120px 28px;gap:6px;margin-bottom:6px;padding:0 2px;">
-          <span style="font-size:11px;color:var(--text3);font-weight:500;">Fournisseur (SDG)</span>
-          <span style="font-size:11px;color:var(--text3);font-weight:500;">Produit / Support</span>
-          <span style="font-size:11px;color:var(--text3);font-weight:500;">Type</span>
-          <span style="font-size:11px;color:var(--text3);font-weight:500;">ISIN</span>
-          <span style="font-size:11px;color:var(--text3);font-weight:500;">Broker</span>
-          <span style="font-size:11px;color:var(--text3);font-weight:500;">Maturité <span style="font-weight:400;">(opt.)</span></span>
-          <span></span>
-        </div>
         <div id="codifLines"></div>
-        <button type="button" class="btn btn-sm" onclick="addCodifLine()" style="margin-top:8px;">+ Ajouter un produit</button>
-        <div id="codifSumIndicator" style="display:none;font-size:11px;color:var(--text2);margin-top:8px;padding:6px 10px;background:var(--surface);border-radius:4px;border:1px solid var(--border);"></div>
+        <div id="codifSumIndicator"></div>
+        <button id="ctUF"></button><button id="ctRUN"></button><button id="ctBOTH"></button><button id="ctPF"></button>
+        <div id="ufRow"></div><div id="runRow"></div><div id="pfRow"></div>
+        <div id="pfRateWrap"></div><div id="pfFixedWrap"></div><div id="pfHurdleWrap"></div>
+        <div id="csD"></div><div id="csUF"></div><div id="csRun"></div><div id="csTTC"></div>
+        <div id="pfSummType"></div><div id="pfSummCond"></div><div id="pfSummFreq"></div>
       </div>
-
-      <div class="fl" style="display:none;"><label>Contrat</label><select id="mContrat"><option>Assurance Vie Lux</option><option>Contrat Assurance Vie</option><option>Contrat de Capitalisation</option><option>CTO</option><option>PER</option></select></div>
-      <div style="display:none;"><input type="number" id="mNom"/><input type="hidden" id="mInvS"/><input type="hidden" id="mInv"/><input type="date" id="mIssue"/><select id="mFourn"></select><select id="mBroker"></select><input type="hidden" id="mProduit"/><input type="hidden" id="mISIN"/></div>
-      <div class="form-sep">Structure de commission</div>
-      <div class="ctype-row">
-        <button class="ctype on" id="ctUF" onclick="setCT('UF')">Up-Front</button>
-        <button class="ctype" id="ctRUN" onclick="setCT('RUN')">Running</button>
-        <button class="ctype" id="ctBOTH" onclick="setCT('BOTH')">UF + Running</button>
-      </div>
-      <div class="fg2" id="ufRow">
-        <div class="fl"><label>Taux UF (%)</label><input type="number" id="mUFR" step="0.01" oninput="calcM()"/></div>
-        
-      </div>
-      <div class="fg2" id="runRow" style="display:none;margin-top:8px;">
-        <div class="fl"><label>Taux Running (%/an)</label><input type="number" id="mRunR" step="0.001" oninput="calcM()"/></div>
-        <div class="fl"><label>Running start</label><input type="date" id="mRunStart"/></div>
-      </div>
-      <div class="calc-strip">
-        <div><div class="cs-l">UF (devise)</div><div class="cs-v" id="csD">—</div></div>
-        <div><div class="cs-l">UF (EUR)</div><div class="cs-v" id="csUF" style="color:var(--blue);">—</div></div>
-        <div><div class="cs-l">Running /an</div><div class="cs-v" id="csRun" style="color:var(--green);">—</div></div>
-        <div><div class="cs-l">Total</div><div class="cs-v" id="csTTC" style="font-size:16px;">—</div></div>
-      </div>
-      <div class="form-sep">Perf fees <span style="font-size:10px;font-weight:400;color:var(--text3);">(optionnel)</span></div>
-      <div class="ctype-row">
-        <button class="ctype" id="ctPF" onclick="togglePF(this)">Perf fees</button>
-      </div>
-      <div id="pfRow" style="display:none;">
-        <div class="fg">
-          <div class="fl"><label>Type</label>
-            <select id="mPFType" onchange="onPFTypeChange()">
-              <option value="pct">% sur performance</option>
-              <option value="fixed">Montant fixe</option>
-            </select>
-          </div>
-          <div class="fl" id="pfRateWrap"><label>Taux perf fees (%)</label><input type="number" id="mPFRate" step="0.01" placeholder="ex: 20" oninput="calcM()"/></div>
-          <div class="fl" id="pfFixedWrap" style="display:none;"><label>Montant fixe (EUR)</label><input type="number" id="mPFFixed" step="1" placeholder="ex: 50000" oninput="calcM()"/></div>
-        </div>
-        <div class="fg" style="margin-top:8px;">
-          <div class="fl" id="pfHurdleWrap"><label>Hurdle rate (%) <span style="font-weight:400;color:var(--text3);">optionnel</span></label><input type="number" id="mPFHurdle" step="0.01" placeholder="ex: 8"/></div>
-          <div class="fl"><label>Fréquence</label>
-            <select id="mPFFreq">
-              <option value="annuel">Annuelle</option>
-              <option value="cloture">À la clôture</option>
-              <option value="valorisation">À chaque valorisation</option>
-              <option value="variable">Variable</option>
-            </select>
-          </div>
-        </div>
-        <div style="background:var(--surface2);border-radius:var(--rs);padding:9px 13px;border:1px solid var(--border);margin-top:10px;display:flex;gap:24px;">
-          <div><div style="font-size:10px;color:var(--text3);margin-bottom:2px;">Type</div><div style="font-size:13px;font-weight:500;color:var(--purple);" id="pfSummType">—</div></div>
-          <div><div style="font-size:10px;color:var(--text3);margin-bottom:2px;">Condition</div><div style="font-size:13px;font-weight:500;" id="pfSummCond">—</div></div>
-          <div><div style="font-size:10px;color:var(--text3);margin-bottom:2px;">Fréquence</div><div style="font-size:13px;font-weight:500;" id="pfSummFreq">—</div></div>
-        </div>
-      </div>
-      <div class="fl" style="margin-top:8px;"><label>Notes</label><textarea id="mNotes" rows="2" style="resize:vertical;"></textarea></div>
     </div>
     <div class="modal-ft"><button class="btn" onclick="closeDM()">Annuler</button><button class="btn btn-primary" onclick="saveDeal()">Enregistrer</button></div>
   </div>

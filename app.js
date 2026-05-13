@@ -2919,20 +2919,92 @@ var PRODUIT_TYPES=['Action','Obligation','Produit Structuré','Private Equity','
 function produitTypeOptHtml(selected){
   return '<option value="">— Choisir —</option>'+PRODUIT_TYPES.map(function(t){return '<option'+(t===(selected||'')?' selected':'')+'>'+t+'</option>';}).join('');
 }
+// ── Phase 1B — Codif line cascade Fournisseur → ISIN (datalist) + fee snapshot
+var _codifLineCounter=0;
+function _isinDatalistInnerHtml(fournName){
+  var products=getFournProducts(fournName);
+  if(!products.length)return '';
+  return products.map(function(p){
+    var label=[p.part||'',p.currency||''].filter(Boolean).join(' · ');
+    return '<option value="'+escH(p.isin||'')+'">'+escH(label)+'</option>';
+  }).join('');
+}
+function _renderFeeSnapshotInline(fees){
+  if(!fees||!fees.length)return '';
+  return 'Frais produit : '+fees.map(function(f){
+    var pct=(f.pct||f.pct===0)?f.pct+'%':'—';
+    return '<b>'+escH(f.kind||'?')+'</b> '+escH(pct);
+  }).join(' · ');
+}
+function onCodifFournChange(sel){
+  var row=sel.closest('.codif-line');
+  if(!row)return;
+  var fournName=sel.value;
+  // Rebuild datalist options for the ISIN field of THIS row
+  var listId=row.dataset.isinListId;
+  var dl=row.querySelector('datalist#'+listId);
+  if(dl)dl.innerHTML=_isinDatalistInnerHtml(fournName);
+  // Re-evaluate fee snapshot for currently-typed ISIN (might no longer match the new fourn)
+  var isinInput=row.querySelector('.codifISIN');
+  if(isinInput)onCodifIsinChange(isinInput);
+}
+function onCodifIsinChange(input){
+  var row=input.closest('.codif-line');
+  if(!row)return;
+  var fournSel=row.querySelector('.codifFourn');
+  var fournName=fournSel?fournSel.value:'';
+  var isin=(input.value||'').trim();
+  var product=getFournProductByIsin(fournName,isin);
+  var fees=product?(product.fees||[]):[];
+  // Persist snapshot on the row (read back in getCodifLines)
+  row.dataset.feeSnapshot=JSON.stringify(fees);
+  var snap=row.querySelector('.codif-snapshot');
+  if(snap){
+    var html=_renderFeeSnapshotInline(fees);
+    snap.innerHTML=html;
+    snap.style.display=html?'':'none';
+  }
+  // Auto-fill Produit (= part label) only if empty so we don't stomp user input
+  if(product){
+    var prodInput=row.querySelector('.codifProduit');
+    if(prodInput&&!prodInput.value&&product.part)prodInput.value=product.part;
+  }
+}
 function addCodifLine(codif){
-  codif=codif||{fourn:'',produit:'',type:'',isin:'',broker:'',maturite:''};
+  codif=codif||{fourn:'',produit:'',type:'',isin:'',broker:'',maturite:'',feeSnapshot:[]};
   var container=document.getElementById('codifLines');
+  var listId='codifIsinList-'+(++_codifLineCounter);
   var row=document.createElement('div');
   row.className='codif-line';
-  row.style.cssText='display:grid;grid-template-columns:1.3fr 1.3fr 130px 100px 1fr 120px 28px;gap:6px;margin-bottom:6px;align-items:center;';
-  row.innerHTML='<select class="codifFourn">'+fournOptHtml(codif.fourn)+'</select>'
-    +'<input type="text" class="codifProduit" value="'+(codif.produit||'')+'" placeholder="Produit / Support"/>'
-    +'<select class="codifType">'+produitTypeOptHtml(codif.type)+'</select>'
-    +'<input type="text" class="codifISIN" value="'+(codif.isin||'')+'" placeholder="ISIN" style="font-family:monospace;font-size:11px;"/>'
-    +'<select class="codifBroker">'+brokerOptHtml(codif.broker)+'</select>'
-    +'<input type="date" class="codifMaturite" value="'+(codif.maturite||'')+'"/>'
-    +'<button type="button" onclick="removeCodifLine(this)" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:18px;padding:0;line-height:1;">×</button>';
+  row.style.cssText='margin-bottom:6px;';
+  row.dataset.isinListId=listId;
+  row.dataset.feeSnapshot=JSON.stringify(codif.feeSnapshot||[]);
+  row.innerHTML=
+    '<div style="display:grid;grid-template-columns:1.3fr 1.3fr 130px 100px 1fr 120px 28px;gap:6px;align-items:center;">'+
+      '<select class="codifFourn" onchange="onCodifFournChange(this)">'+fournOptHtml(codif.fourn)+'</select>'+
+      '<input type="text" class="codifProduit" value="'+(codif.produit||'')+'" placeholder="Produit / Support"/>'+
+      '<select class="codifType">'+produitTypeOptHtml(codif.type)+'</select>'+
+      '<input list="'+listId+'" type="text" class="codifISIN" value="'+(codif.isin||'')+'" placeholder="ISIN" style="font-family:monospace;font-size:11px;" onchange="onCodifIsinChange(this)" oninput="onCodifIsinChange(this)"/>'+
+      '<select class="codifBroker">'+brokerOptHtml(codif.broker)+'</select>'+
+      '<input type="date" class="codifMaturite" value="'+(codif.maturite||'')+'"/>'+
+      '<button type="button" onclick="removeCodifLine(this)" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:18px;padding:0;line-height:1;">×</button>'+
+    '</div>'+
+    '<datalist id="'+listId+'">'+_isinDatalistInnerHtml(codif.fourn||'')+'</datalist>'+
+    '<div class="codif-snapshot" style="font-size:10px;color:var(--text2);padding-left:4px;margin-top:2px;display:none;"></div>';
   container.appendChild(row);
+  // Snapshot pattern (Q1A — immutable). On render :
+  //  1) If the codif carries a stored snapshot, display it as-is (don't re-derive from
+  //     the live product — fees may have changed since deal creation, and the historical
+  //     value is what matters).
+  //  2) Else if codif has an ISIN (legacy pre-Phase-1B deal), opportunistically derive
+  //     the snapshot once from the live catalogue so it shows something useful.
+  if(Array.isArray(codif.feeSnapshot)&&codif.feeSnapshot.length){
+    var snap=row.querySelector('.codif-snapshot');
+    if(snap){snap.innerHTML=_renderFeeSnapshotInline(codif.feeSnapshot);snap.style.display='';}
+  } else if(codif.isin){
+    var isinInput=row.querySelector('.codifISIN');
+    onCodifIsinChange(isinInput);
+  }
 }
 function removeCodifLine(btn){
   var row=btn.closest('.codif-line');
@@ -2946,13 +3018,16 @@ function renderCodifLines(codifs){
 function getCodifLines(){
   var result=[];
   document.querySelectorAll('#codifLines .codif-line').forEach(function(row){
+    var feeSnapshot=[];
+    try{feeSnapshot=JSON.parse(row.dataset.feeSnapshot||'[]')||[];}catch(e){feeSnapshot=[];}
     result.push({
       fourn:row.querySelector('.codifFourn').value,
       produit:row.querySelector('.codifProduit').value,
       type:row.querySelector('.codifType')?row.querySelector('.codifType').value:'',
       isin:row.querySelector('.codifISIN').value,
       broker:row.querySelector('.codifBroker').value,
-      maturite:row.querySelector('.codifMaturite').value
+      maturite:row.querySelector('.codifMaturite').value,
+      feeSnapshot:feeSnapshot
     });
   });
   return result;

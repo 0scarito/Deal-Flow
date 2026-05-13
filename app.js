@@ -673,7 +673,15 @@ function escAttr(s){return escH(escJS(s));}
 //  • the Deals table (renderDeals filters !archived)
 //  • the Suivi Contrats auto-link (saveDeal flow creates fresh deals)
 // Facturation includes them and shows a "Deal supprimé" warning on the card.
-function filt(){return curV==='Tous'?deals:deals.filter(function(d){return d.v===curV;});}
+// Vendor filter — "Audrey" includes "Audrey & David" co-owned deals, same for "David".
+// "Tous" returns everything.
+function filt(){
+  if(curV==='Tous')return deals;
+  return deals.filter(function(d){
+    if(!d.v)return false;
+    return d.v===curV||d.v.indexOf(curV)!==-1; // catches "Audrey", "Audrey & David", etc.
+  });
+}
 function filtIncludingArchived(){return filt();} // alias kept for clarity at call sites
 function toast(m){var t=document.getElementById('toast');t.textContent=m;t.classList.add('on');setTimeout(()=>t.classList.remove('on'),2200);}
 async function saveLocal(){
@@ -1299,11 +1307,17 @@ function openDet(d){
         var feeStr=(c.feeSnapshot&&c.feeSnapshot.length)?c.feeSnapshot.map(function(f){return escH(f.kind||'?')+' '+(f.pct||0)+'%';}).join(' · '):'—';
         var pfStr=(c.pf&&c.pf.mode&&c.pf.mode!=='none')?(c.pf.mode==='pct'?(c.pf.rate||0)+'% sur perf'+(c.pf.hurdle?' (hurdle '+c.pf.hurdle+'%)':''):fE(c.pf.amount||0)+' fixe')+' · '+(c.pf.freq||'annuel'):null;
         var amtStr=c.nominal?fE(c.nominal):'—';
+        // Batch A.3 — billing mode badge
+        var bm=c.billingMode||'fast';
+        var bmBadge='<span style="font-size:10px;padding:1px 6px;border-radius:3px;font-weight:600;'+
+          (bm==='feed'?'background:rgba(176,122,16,.15);color:#b07a10;':'background:rgba(29,95,212,.12);color:#1d5fd4;')+
+          '">'+(bm==='feed'?'FEED':'FAST')+'</span>';
         return '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:5px;padding:8px 10px;font-size:12px;">'+
           '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:baseline;margin-bottom:4px;">'+
             '<span style="font-weight:600;">'+escH(c.fourn||'—')+'</span>'+
             (c.produit?'<span style="color:var(--text2);">'+escH(c.produit)+'</span>':'')+
             (c.isin?'<span style="font-family:monospace;font-size:10px;color:var(--text3);">'+escH(c.isin)+'</span>':'')+
+            bmBadge+
             '<div style="flex:1;"></div>'+
             '<span style="font-weight:600;">'+amtStr+'</span>'+
           '</div>'+
@@ -3528,6 +3542,8 @@ function _collectContractBlock(ctb){
       pf.amount=parseFloat(fb.querySelector('.dfPfFixed').value)||0;
       pf.freq=fb.querySelector('.dfPfFreq').value||'annuel';
     }
+    var billingModeEl=fb.querySelector('.dfBillingMode');
+    var billingMode=billingModeEl?billingModeEl.value:'fast';
     codifications.push({
       fourn:fb.querySelector('.dfFourn').value,
       produit:fb.querySelector('.dfProduit').value,
@@ -3541,6 +3557,7 @@ function _collectContractBlock(ctb){
       banque:fb.querySelector('.dfBanque').value,
       nominal:nominal,
       currency:dev, // Per Oscar : currency lives at contract level only
+      billingMode:billingMode, // Batch A.3 — fast | feed
       pf:pf
     });
   });
@@ -3678,6 +3695,7 @@ function _appendDealFournBlock(contractBlock,data){
     fourn:'',produit:'',type:'',isin:'',broker:'',maturite:'',
     feeSnapshot:[],assureur:'',banque:'',nominal:'',
     feesMode:'auto',
+    billingMode:'fast', // Batch A.3 — fast = facture unique au save · feed = running annuel facturé à la SDG
     pf:{mode:'none'}
   },data||{});
   var fournsContainer=contractBlock.querySelector('.contract-fourns');
@@ -3721,6 +3739,15 @@ function _appendDealFournBlock(contractBlock,data){
       '<input type="number" class="dfNominal" value="'+(data.nominal||'')+'" placeholder="Nominal" step="0.01" min="0" oninput="_updateContractSum(this)"/>'+
     '</div>'+
     '<datalist id="'+listId+'">'+_isinDatalistInnerHtml(data.fourn||'')+'</datalist>'+
+    // ── Mode facturation (Fast / Feed) ──
+    '<div class="dfBillingBlock" style="margin-top:6px;padding:5px 8px;background:var(--surface);border-radius:4px;border-top:1px dashed var(--border);display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'+
+      '<span style="font-size:10px;color:var(--text3);font-weight:600;letter-spacing:.3px;">FACTURATION</span>'+
+      '<select class="dfBillingMode" onchange="_onDfBillingModeChange(this)" style="font-size:11px;">'+
+        '<option value="fast"'+((data.billingMode||'fast')==='fast'?' selected':'')+'>Fast — facture unique au closing</option>'+
+        '<option value="feed"'+(data.billingMode==='feed'?' selected':'')+'>Feed — running annuel facturé à la SDG</option>'+
+      '</select>'+
+      '<span class="dfBillingHint" style="font-size:10px;color:var(--text3);font-style:italic;">'+(data.billingMode==='feed'?'→ facture annuelle à émettre vers '+(data.fourn||'la société de gestion'):'→ une seule facture (UF) au save')+'</span>'+
+    '</div>'+
     // ── Fees block (auto from ISIN / personnaliser / aucun) ──
     '<div class="dfFeesBlock" style="margin-top:6px;padding:5px 8px;background:var(--surface);border-radius:4px;border-top:1px dashed var(--border);">'+
       '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'+
@@ -3851,6 +3878,17 @@ function _readDfCustomFees(fournBlock){
     if(k||!isNaN(p))out.push({kind:k,pct:isNaN(p)?0:p});
   });
   return out;
+}
+// Batch A.3 — update hint when billing mode changes
+function _onDfBillingModeChange(sel){
+  var fournBlock=sel.closest('.deal-fourn-block');
+  var hint=fournBlock&&fournBlock.querySelector('.dfBillingHint');
+  if(!hint)return;
+  var fournSel=fournBlock.querySelector('.dfFourn');
+  var fournName=fournSel?fournSel.value:'';
+  hint.textContent=sel.value==='feed'
+    ?'→ facture annuelle à émettre vers '+(fournName||'la société de gestion')
+    :'→ une seule facture (UF) au save';
 }
 function removeDealFournBlock(btn){
   var block=btn.closest('.deal-fourn-block');
@@ -3983,6 +4021,8 @@ function importCSV(e){
 
 // ── CLIENTS ──────────────────────────────────────────────────────────────────
 var clientTab='ALL';
+var clientSortKey='name'; // 'name' | 'classif'
+var clientSortDir=1;       // 1 asc / -1 desc
 function loadClientDB(){return clients_db;}
 function saveClientDB(db){/* async handled in saveClient */}
 // saveClientDB handled by Supabase
@@ -3992,10 +4032,31 @@ function setClientTab(t,btn){
   btn.style.background='var(--text)';btn.style.color='var(--surface)';btn.style.borderColor='var(--text)';
   renderClients();
 }
+function setClientSort(k){
+  if(clientSortKey===k)clientSortDir=-clientSortDir;
+  else{clientSortKey=k;clientSortDir=1;}
+  renderClients();
+}
+// Batch A.2 — classification badge (A premium / B actif / C courant / D dormant)
+function _clientClassifBadge(cl){
+  if(!cl)return '<span style="font-size:10px;color:var(--text3);">—</span>';
+  var colorMap={A:{bg:'rgba(34,139,69,.15)',fg:'#1e7f3a'},B:{bg:'rgba(29,95,212,.15)',fg:'#1d5fd4'},C:{bg:'rgba(176,122,16,.15)',fg:'#b07a10'},D:{bg:'rgba(140,140,140,.15)',fg:'#777'}};
+  var c=colorMap[cl]||{bg:'var(--surface2)',fg:'var(--text2)'};
+  return '<span style="display:inline-block;width:22px;height:22px;line-height:22px;text-align:center;border-radius:50%;font-weight:700;font-size:11px;background:'+c.bg+';color:'+c.fg+';">'+escH(cl)+'</span>';
+}
 function renderClients(){
   var db=loadClientDB();
-  var filtered=clientTab==='ALL'?db:db.filter(c=>c.type===clientTab);
-  filtered.sort((a,b)=>a.name.localeCompare(b.name,undefined,{sensitivity:'base'}));
+  var filtered=clientTab==='ALL'?db.slice():db.filter(c=>c.type===clientTab);
+  // Sort: default by name; click on Classif. header → sort by classification (NULL last)
+  if(clientSortKey==='classif'){
+    filtered.sort(function(a,b){
+      var ac=a.classification||'￿',bc=b.classification||'￿'; // unclassified last
+      if(ac!==bc)return ac<bc?-1*clientSortDir:1*clientSortDir;
+      return a.name.localeCompare(b.name,undefined,{sensitivity:'base'});
+    });
+  } else {
+    filtered.sort((a,b)=>a.name.localeCompare(b.name,undefined,{sensitivity:'base'})*clientSortDir);
+  }
   var t=document.getElementById('clientsT');
   while(t.rows.length>1)t.deleteRow(1);
   document.getElementById('clientsEmpty').style.display=filtered.length?'none':'block';
@@ -4009,7 +4070,7 @@ function renderClients(){
     var typeBadge=c.type==='PP'?'<span class="badge bb">Pers. physique</span>':'<span class="badge bp">Pers. morale</span>';
     var r=t.insertRow();
     var encours=encoursForClient(c.name);
-    r.innerHTML='<td style="font-weight:500;cursor:pointer;" title="Double-cliquer pour modifier" ondblclick="openAddClientModal(\''+escAttr(c.name)+'\')">'+escH(c.name)+'</td><td>'+typeBadge+'</td><td style="color:var(--text2);">'+(c.vendeur?escH(c.vendeur):'—')+'</td><td style="text-align:right;font-weight:600;color:var(--blue);" class="mono">'+(encours>0?fE(encours):'—')+'</td><td style="text-align:center;">'+nbD+'</td><td style="text-align:right;" class="mono">'+(totalNom>0?fE(totalNom):'—')+'</td><td style="text-align:right;color:var(--blue);font-weight:500;">'+(totalUF>0?fE(totalUF):'—')+'</td><td style="text-align:right;color:var(--green);font-weight:500;">'+(totalRun>0?fE(totalRun):'—')+'</td><td class="mono" style="color:var(--text2);">'+escH(lastDate)+'</td>';
+    r.innerHTML='<td style="font-weight:500;cursor:pointer;" title="Double-cliquer pour modifier" ondblclick="openAddClientModal(\''+escAttr(c.name)+'\')">'+escH(c.name)+'</td><td>'+typeBadge+'</td><td style="text-align:center;">'+_clientClassifBadge(c.classification)+'</td><td style="color:var(--text2);">'+(c.vendeur?escH(c.vendeur):'—')+'</td><td style="text-align:right;font-weight:600;color:var(--blue);" class="mono">'+(encours>0?fE(encours):'—')+'</td><td style="text-align:center;">'+nbD+'</td><td style="text-align:right;" class="mono">'+(totalNom>0?fE(totalNom):'—')+'</td><td style="text-align:right;color:var(--blue);font-weight:500;">'+(totalUF>0?fE(totalUF):'—')+'</td><td style="text-align:right;color:var(--green);font-weight:500;">'+(totalRun>0?fE(totalRun):'—')+'</td><td class="mono" style="color:var(--text2);">'+escH(lastDate)+'</td>';
   });
 }
 function openAddClientModal(name){
@@ -4019,12 +4080,14 @@ function openAddClientModal(name){
   if(name){
     var db=loadClientDB();var c=db.find(x=>x.name===name)||{};
     document.getElementById('cType').value=c.type||'PP';
+    var clEl=document.getElementById('cClassif');if(clEl)clEl.value=c.classification||'';
     document.getElementById('cVendeur').value=c.vendeur||'';
     document.getElementById('cEmail').value=c.email||'';
     var ecDisp=document.getElementById('cEncoursDisplay');if(ecDisp){var ec=encoursForClient(c.name);ecDisp.textContent=ec>0?fE(ec):'— (aucun deal actif)';}
     document.getElementById('cNotes').value=c.notes||'';
   } else {
     document.getElementById('cType').value='PP';
+    var clEl2=document.getElementById('cClassif');if(clEl2)clEl2.value='';
     document.getElementById('cVendeur').value='';
     document.getElementById('cEmail').value='';
     var ecDisp2=document.getElementById('cEncoursDisplay');if(ecDisp2)ecDisp2.textContent='— (aucun deal pour l\'instant)';
@@ -4154,95 +4217,131 @@ function openAddClientModal(name){
     investSection.style.display='none';
     investLines.innerHTML='';
   }
-  // Historique des opérations — deals + retraits, fusionnés sur la même timeline
-  var histSection=document.getElementById('clientHistSection');
-  var histLines=document.getElementById('clientHistLines');
-  if(name){
-    var events=[];
-    // Deals (création + arbitrages = ils apparaissent comme deal ou arbitrage selon arbId/arbSrc)
-    deals.filter(function(d){return d.client===name;}).forEach(function(d){
-      events.push({kind:d.arbId||d.arbSrc?'arb':'deal',date:d.date||'',deal:d});
-    });
-    // Retraits (stockés dans contracts_db[].produits[].retraits[])
-    contracts_db.forEach(function(c){
-      if(c.client!==name)return;
-      (c.produits||[]).forEach(function(p){
-        (p.retraits||[]).forEach(function(r){
-          var srcDeal=p.deal_id?deals.find(function(x){return x._id===p.deal_id;}):null;
-          events.push({kind:'retrait',date:r.date||'',retrait:r,prod:p,contract:c,srcDeal:srcDeal});
-        });
-      });
-    });
-    if(events.length){
-      histSection.style.display='block';
-      events.sort(function(a,b){return (b.date||'').localeCompare(a.date||'');});
-      var html='<div style="border-left:2px solid var(--border);padding-left:12px;">';
-      events.forEach(function(ev){
-        if(ev.kind==='retrait'){
-          var r=ev.retrait,p=ev.prod,sd=ev.srcDeal;
-          var icon='↓',color='var(--amber)',label='Retrait'+(r.closed?' (clôture)':'');
-          var srcLabel=sd?(escH(sd.fourn||'')+' — '+escH(sd.produit||'')):escH(p.name||'(produit)');
-          var dev=sd?(sd.dev||'EUR'):'EUR';
-          html+=
-            '<div style="position:relative;margin-bottom:12px;">'+
-              '<div style="position:absolute;left:-18px;top:3px;color:'+color+';font-size:14px;font-weight:700;">'+icon+'</div>'+
-              '<div style="display:flex;justify-content:space-between;align-items:flex-start;">'+
-                '<div>'+
-                  '<span style="font-size:11px;color:var(--text3);">'+escH(r.date||'')+'</span>'+
-                  '<span style="font-size:11px;color:var(--amber-t);margin-left:6px;font-weight:500;">'+label+'</span>'+
-                  '<div style="font-weight:500;margin-top:2px;">'+srcLabel+'</div>'+
-                  (r.note?'<div style="font-size:11px;color:var(--text3);margin-top:1px;font-style:italic;">'+escH(r.note)+'</div>':'')+
-                '</div>'+
-                '<div style="text-align:right;flex-shrink:0;margin-left:12px;">'+
-                  '<span class="badge ba">↓ Cash retiré</span>'+
-                  '<div style="font-size:12px;color:var(--amber-t);font-weight:600;margin-top:3px;">−'+fE(r.montant||0)+' '+escH(dev)+'</div>'+
-                  (r.prorata_run?'<div style="font-size:11px;color:var(--text2);">+ pro-rata '+fE(r.prorata_run)+'</div>':'')+
-                '</div>'+
-              '</div>'+
-            '</div>';
-          return;
-        }
-        var d=ev.deal;
-        var isArb=d.arbId||d.arbSrc;
-        var icon=isArb?'⇄':'●';
-        var color=isArb?'var(--purple,#7c3aed)':'var(--blue)';
-        var label=isArb?'Arbitrage':'Deal';
-        var typeBadge=d.ct==='UF'?'<span class="badge bb">UF</span>':d.ct==='RUN'?'<span class="badge bg">Running</span>':'<span class="badge bb">UF+Run</span>';
-        var fees='';
-        if(d.ufE>0)fees+=fE(d.ufE)+' UF';
-        if(d.runE>0)fees+=(fees?' · ':'')+fE(d.runE)+'/an';
-        if(d.pf&&d.pf.amount)fees+=(fees?' · ':'')+fE(d.pf.amount)+' PF';
-        html+=
-          '<div style="position:relative;margin-bottom:12px;">'+
-            '<div style="position:absolute;left:-18px;top:3px;color:'+color+';font-size:14px;font-weight:700;">'+icon+'</div>'+
-            '<div style="display:flex;justify-content:space-between;align-items:flex-start;">'+
-              '<div>'+
-                '<span style="font-size:11px;color:var(--text3);">'+escH(d.date||'')+'</span>'+
-                '<span style="font-size:11px;color:var(--text3);margin-left:6px;">'+label+'</span>'+
-                '<div style="font-weight:500;margin-top:2px;">'+escH(d.fourn||'')+' — '+escH(d.produit||'')+'</div>'+
-                (d.notes&&d.notes!=='Deal test'?'<div style="font-size:11px;color:var(--text3);margin-top:1px;font-style:italic;">'+escH(d.notes)+'</div>':'')+
-              '</div>'+
-              '<div style="text-align:right;flex-shrink:0;margin-left:12px;">'+
-                typeBadge+
-                '<div style="font-size:12px;color:var(--blue);font-weight:500;margin-top:3px;">'+fE(d.nom)+' '+escH(d.dev||'')+'</div>'+
-                (fees?'<div style="font-size:11px;color:var(--text2);">'+fees+'</div>':'')+
-              '</div>'+
-            '</div>'+
-          '</div>';
-      });
-      html+='</div>';
-      histLines.innerHTML=html;
-    } else {
-      histSection.style.display='none';
-    }
-  } else {
-    histSection.style.display='none';
-    histLines.innerHTML='';
-  }
+  // Historique des opérations — extracted to renderClientHistory() so the
+  // "Masquer les payés" toggle can re-render without re-opening the modal.
+  _currentClientHistName=name||null;
+  _clientHistShowPaid=false; // reset unfold-override per client
+  var hpCb=document.getElementById('cHidePaid');if(hpCb)hpCb.checked=false; // default = show all
+  renderClientHistory();
   setTimeout(()=>document.getElementById('cName').focus(),50);
   document.getElementById('clientModal').classList.add('on');
 }
-function closeClientModal(){document.getElementById('clientModal').classList.remove('on');document.getElementById('cName').dataset.original='';}
+function closeClientModal(){document.getElementById('clientModal').classList.remove('on');document.getElementById('cName').dataset.original='';_currentClientHistName=null;}
+
+// Batch A.4 — extracted history renderer so the "Masquer les payés" toggle
+// can re-render in place. State lives in _currentClientHistName.
+var _currentClientHistName=null;
+var _clientHistShowPaid=false; // override when user clicks the "+ X payés masqués" link
+function _isEventPaid(ev){
+  if(ev.kind!=='deal'&&ev.kind!=='arb')return false;
+  var d=ev.deal;
+  if(!d)return false;
+  return d.stat==='Deal payé'||d.fSt==='Facture payée';
+}
+function _renderHistDealRow(ev){
+  var d=ev.deal;
+  var isArb=d.arbId||d.arbSrc;
+  var icon=isArb?'⇄':'●';
+  var color=isArb?'var(--purple,#7c3aed)':'var(--blue)';
+  var label=isArb?'Arbitrage':'Deal';
+  var typeBadge=d.ct==='UF'?'<span class="badge bb">UF</span>':d.ct==='RUN'?'<span class="badge bg">Running</span>':'<span class="badge bb">UF+Run</span>';
+  var paidBadge=_isEventPaid(ev)?'<span class="badge" style="background:rgba(34,139,69,.15);color:#1e7f3a;margin-left:4px;">✓ Payé</span>':'';
+  var fees='';
+  if(d.ufE>0)fees+=fE(d.ufE)+' UF';
+  if(d.runE>0)fees+=(fees?' · ':'')+fE(d.runE)+'/an';
+  if(d.pf&&d.pf.amount)fees+=(fees?' · ':'')+fE(d.pf.amount)+' PF';
+  return '<div style="position:relative;margin-bottom:12px;'+(_isEventPaid(ev)?'opacity:.65;':'')+'">'+
+    '<div style="position:absolute;left:-18px;top:3px;color:'+color+';font-size:14px;font-weight:700;">'+icon+'</div>'+
+    '<div style="display:flex;justify-content:space-between;align-items:flex-start;">'+
+      '<div>'+
+        '<span style="font-size:11px;color:var(--text3);">'+escH(d.date||'')+'</span>'+
+        '<span style="font-size:11px;color:var(--text3);margin-left:6px;">'+label+'</span>'+
+        paidBadge+
+        '<div style="font-weight:500;margin-top:2px;">'+escH(d.fourn||'')+' — '+escH(d.produit||'')+'</div>'+
+        (d.notes&&d.notes!=='Deal test'?'<div style="font-size:11px;color:var(--text3);margin-top:1px;font-style:italic;">'+escH(d.notes)+'</div>':'')+
+      '</div>'+
+      '<div style="text-align:right;flex-shrink:0;margin-left:12px;">'+
+        typeBadge+
+        '<div style="font-size:12px;color:var(--blue);font-weight:500;margin-top:3px;">'+fE(d.nom)+' '+escH(d.dev||'')+'</div>'+
+        (fees?'<div style="font-size:11px;color:var(--text2);">'+fees+'</div>':'')+
+      '</div>'+
+    '</div>'+
+  '</div>';
+}
+function _renderHistRetraitRow(ev){
+  var r=ev.retrait,p=ev.prod,sd=ev.srcDeal;
+  var icon='↓',color='var(--amber)',label='Retrait'+(r.closed?' (clôture)':'');
+  var srcLabel=sd?(escH(sd.fourn||'')+' — '+escH(sd.produit||'')):escH(p.name||'(produit)');
+  var dev=sd?(sd.dev||'EUR'):'EUR';
+  return '<div style="position:relative;margin-bottom:12px;">'+
+    '<div style="position:absolute;left:-18px;top:3px;color:'+color+';font-size:14px;font-weight:700;">'+icon+'</div>'+
+    '<div style="display:flex;justify-content:space-between;align-items:flex-start;">'+
+      '<div>'+
+        '<span style="font-size:11px;color:var(--text3);">'+escH(r.date||'')+'</span>'+
+        '<span style="font-size:11px;color:var(--amber-t);margin-left:6px;font-weight:500;">'+label+'</span>'+
+        '<div style="font-weight:500;margin-top:2px;">'+srcLabel+'</div>'+
+        (r.note?'<div style="font-size:11px;color:var(--text3);margin-top:1px;font-style:italic;">'+escH(r.note)+'</div>':'')+
+      '</div>'+
+      '<div style="text-align:right;flex-shrink:0;margin-left:12px;">'+
+        '<span class="badge ba">↓ Cash retiré</span>'+
+        '<div style="font-size:12px;color:var(--amber-t);font-weight:600;margin-top:3px;">−'+fE(r.montant||0)+' '+escH(dev)+'</div>'+
+        (r.prorata_run?'<div style="font-size:11px;color:var(--text2);">+ pro-rata '+fE(r.prorata_run)+'</div>':'')+
+      '</div>'+
+    '</div>'+
+  '</div>';
+}
+function renderClientHistory(){
+  var name=_currentClientHistName;
+  var histSection=document.getElementById('clientHistSection');
+  var histLines=document.getElementById('clientHistLines');
+  if(!histSection||!histLines)return;
+  if(!name){histSection.style.display='none';histLines.innerHTML='';return;}
+  // Collect events (deals + retraits) for this client
+  var events=[];
+  deals.filter(function(d){return d.client===name;}).forEach(function(d){
+    events.push({kind:d.arbId||d.arbSrc?'arb':'deal',date:d.date||'',deal:d});
+  });
+  contracts_db.forEach(function(c){
+    if(c.client!==name)return;
+    (c.produits||[]).forEach(function(p){
+      (p.retraits||[]).forEach(function(r){
+        var srcDeal=p.deal_id?deals.find(function(x){return x._id===p.deal_id;}):null;
+        events.push({kind:'retrait',date:r.date||'',retrait:r,prod:p,contract:c,srcDeal:srcDeal});
+      });
+    });
+  });
+  if(!events.length){histSection.style.display='none';return;}
+  histSection.style.display='block';
+  events.sort(function(a,b){return (b.date||'').localeCompare(a.date||'');});
+  // Filter logic — checkbox "Masquer les payés" + override flag set by the unfold link
+  var cb=document.getElementById('cHidePaid');
+  var hide=cb&&cb.checked&&!_clientHistShowPaid;
+  var paidCount=events.filter(_isEventPaid).length;
+  var visible=hide?events.filter(function(e){return !_isEventPaid(e);}):events;
+  var html='<div style="border-left:2px solid var(--border);padding-left:12px;">';
+  visible.forEach(function(ev){
+    html+=ev.kind==='retrait'?_renderHistRetraitRow(ev):_renderHistDealRow(ev);
+  });
+  html+='</div>';
+  // Footer : if filter active and some events were hidden, show an "unfold" link
+  if(hide&&paidCount>0){
+    html+='<div style="text-align:center;margin-top:8px;">'+
+      '<a onclick="_unfoldPaidEvents()" style="cursor:pointer;font-size:11px;color:var(--text3);text-decoration:underline;">'+
+        '+ '+paidCount+' opération'+(paidCount>1?'s':'')+' payée'+(paidCount>1?'s':'')+' masquée'+(paidCount>1?'s':'')+' (afficher)'+
+      '</a>'+
+    '</div>';
+  } else if(!hide&&_clientHistShowPaid&&cb&&cb.checked){
+    html+='<div style="text-align:center;margin-top:8px;">'+
+      '<a onclick="_refoldPaidEvents()" style="cursor:pointer;font-size:11px;color:var(--text3);text-decoration:underline;">'+
+        '↑ Masquer à nouveau les payés'+
+      '</a>'+
+    '</div>';
+  }
+  histLines.innerHTML=html;
+}
+function _unfoldPaidEvents(){_clientHistShowPaid=true;renderClientHistory();}
+function _refoldPaidEvents(){_clientHistShowPaid=false;renderClientHistory();}
+function _onHidePaidToggle(){_clientHistShowPaid=false;renderClientHistory();}
 function deleteClientFromModal(){var o=document.getElementById('cName').dataset.original;if(!o)return;closeClientModal();deleteClient(o);}
 // Returns {contract, prod} if a Suivi-Contrats investissement is linked to this deal, else null.
 function findLinkedInvestissement(deal){
@@ -4335,10 +4434,12 @@ async function saveClient(){
   var name=document.getElementById('cName').value.trim();
   var original=document.getElementById('cName').dataset.original||'';
   if(!name){alert('Nom requis.');return;}
-  var entry={name,type:document.getElementById('cType').value,vendeur:document.getElementById('cVendeur').value,email:document.getElementById('cEmail').value,notes:document.getElementById('cNotes').value};
+  var classifEl=document.getElementById('cClassif');
+  var classification=classifEl?classifEl.value:'';
+  var entry={name,type:document.getElementById('cType').value,classification:classification||null,vendeur:document.getElementById('cVendeur').value,email:document.getElementById('cEmail').value,notes:document.getElementById('cNotes').value};
   if(original&&original!==name){
     var c=clients_db.find(x=>x.name===original);
-    if(c){entry._id=c._id;await sbUpdate('clients',c._id,entry);Object.assign(c,entry);}
+    if(c){entry._id=c._id;await _sbClientUpsertSafe('update',c._id,entry);Object.assign(c,entry);}
     for(var di=0;di<deals.length;di++){var dd=deals[di];if(dd.client===original){dd.client=name;if(dd._id)await sbUpdate('deals',dd._id,dd);}}
     // Cascade to contracts (rename client field)
     var ctrToUpdate=contracts_db.filter(function(x){return x.client===original;});
@@ -4348,10 +4449,30 @@ async function saveClient(){
     }
   } else {
     var existing=clients_db.find(x=>x.name===name);
-    if(existing){await sbUpdate('clients',existing._id,entry);Object.assign(existing,entry);}
-    else{var res=await sbInsert('clients',entry);if(res&&res[0])clients_db.push({...entry,_id:res[0].id});}
+    if(existing){await _sbClientUpsertSafe('update',existing._id,entry);Object.assign(existing,entry);}
+    else{var res=await _sbClientUpsertSafe('insert',null,entry);if(res&&res[0])clients_db.push({...entry,_id:res[0].id});}
   }
   closeClientModal();renderClients();renderDeals();toast(original?'Client mis à jour.':'Client ajouté.');
+}
+// Defensive client upsert — strips `classification` and retries if the column
+// isn't yet migrated on Supabase (apply 08_client_classification.sql).
+var _warnedNoClassifCol=false;
+async function _sbClientUpsertSafe(op,id,entry){
+  var payload=Object.assign({},entry);
+  delete payload._id; delete payload.id;
+  try{
+    if(op==='update')return await sb.from('clients').update(payload).eq('id',id).select().then(function(r){if(r.error)throw r.error;return r.data;});
+    return await sb.from('clients').insert(payload).select().then(function(r){if(r.error)throw r.error;return r.data;});
+  }catch(err){
+    var msg=String((err&&err.message)||err||'').toLowerCase();
+    if(msg.indexOf('classification')!==-1||msg.indexOf("'classification'")!==-1){
+      if(!_warnedNoClassifCol){_warnedNoClassifCol=true;toast('Colonne "classification" absente — sauvegardé sans. Lance 08_client_classification.sql.');}
+      var stripped=Object.assign({},payload);delete stripped.classification;
+      if(op==='update'){var ru=await sb.from('clients').update(stripped).eq('id',id).select();if(ru.error)throw ru.error;return ru.data;}
+      var ri=await sb.from('clients').insert(stripped).select();if(ri.error)throw ri.error;return ri.data;
+    }
+    throw err;
+  }
 }
 
 // ── FOURNISSEURS ─────────────────────────────────────────────────────────────

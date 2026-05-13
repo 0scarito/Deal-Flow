@@ -426,6 +426,7 @@
             <tr>
               <th>Nom</th>
               <th>Type</th>
+              <th onclick="setClientSort('classif')" style="cursor:pointer;" title="Trier par classification">Classif.</th>
               <th>Vendeur référent</th>
               <th>Encours client</th>
               <th>Nb deals</th>
@@ -921,6 +922,15 @@
             <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;font-weight:600;">Informations client</div>
             <div class="fl"><label>Nom</label><input type="text" id="cName" placeholder="ex: Jean Dupont"/></div>
             <div class="fl" style="margin-top:8px;"><label>Type</label><select id="cType"><option value="PP">Personne physique</option><option value="PM">Personne morale</option></select></div>
+            <div class="fl" style="margin-top:8px;"><label>Classification <span style="color:var(--text3);font-weight:400;">(A / B / C / D)</span></label>
+              <select id="cClassif">
+                <option value="">— Non classé —</option>
+                <option value="A">A — premium / stratégique</option>
+                <option value="B">B — actif</option>
+                <option value="C">C — courant</option>
+                <option value="D">D — dormant</option>
+              </select>
+            </div>
             <div class="fl" style="margin-top:8px;"><label>Vendeur référent</label><select id="cVendeur"><option value="">— Aucun —</option><option>Audrey</option><option>David</option></select></div>
             <div class="fl" style="margin-top:8px;"><label>Email</label><input type="text" id="cEmail" placeholder="jean.dupont@email.com"/></div>
             <div class="fl" style="margin-top:8px;"><label>Encours <span style="color:var(--text3);font-weight:400;">(calculé automatiquement)</span></label><div id="cEncoursDisplay" class="mono" style="padding:7px 10px;background:var(--surface2);border-radius:var(--rs);font-size:13px;color:var(--blue);font-weight:600;">—</div></div>
@@ -956,6 +966,11 @@
             <div style="font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px;display:flex;align-items:center;gap:8px;">
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 4v4l3 2"/></svg>
               Historique des opérations
+              <div style="flex:1;"></div>
+              <label style="display:flex;align-items:center;gap:5px;font-size:10px;font-weight:500;color:var(--text2);text-transform:none;letter-spacing:0;cursor:pointer;">
+                <input type="checkbox" id="cHidePaid" onchange="_onHidePaidToggle()" style="margin:0;cursor:pointer;"/>
+                Masquer les payés
+              </label>
             </div>
             <div id="clientHistLines"></div>
           </div>

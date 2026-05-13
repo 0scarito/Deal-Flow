@@ -440,6 +440,71 @@ function dealTypeToProdType(pt){
   return'autre';
 }
 
+// Audit fix — sync the linked Suivi Contrat's produits[] with the deal's current
+// codifications[]. Used on edit (= after saveDeal updates the row). Removes orphans
+// (codifs removed by the user), adds new produits for newly-added codifs, and
+// updates display fields on existing produits while preserving user-added state
+// (steps progress, retraits, arbitrages, arb_origin, notes).
+async function _syncContractProduitsForDealEdit(deal){
+  if(!deal||!deal._id||!deal.client)return;
+  var contract=contracts_db.find(function(c){return c.client===deal.client;});
+  if(!contract||!Array.isArray(contract.produits))return;
+  var newCodifs=Array.isArray(deal.codifications)?deal.codifications:[];
+  var validIdx={};for(var i=0;i<newCodifs.length;i++)validIdx[i]=true;
+  var dirty=false;
+  var existingIdx={};
+  // Pass 1 : iterate existing produits, drop orphans, update matched ones
+  var kept=[];
+  contract.produits.forEach(function(p){
+    if(p.deal_id!==deal._id){kept.push(p);return;}
+    var pidx=(p.codif_idx==null)?0:p.codif_idx;
+    if(!validIdx[pidx]){dirty=true;return;} // orphan → drop
+    existingIdx[pidx]=true;
+    var c=newCodifs[pidx];
+    var newName=c.produit||p.name;
+    var newIsin=c.isin||p.isin||'';
+    var newType=dealTypeToProdType(c.type||deal.produit_type);
+    var montantStr=c.nominal?(new Intl.NumberFormat('fr-FR').format(c.nominal)+' '+(c.currency||deal.dev||'EUR')):p.montant;
+    var fields={name:newName,isin:newIsin,type:newType,montant:montantStr,fourn:c.fourn||'',assureur:c.assureur||'',banque:c.banque||'',billingMode:c.billingMode||'fast'};
+    Object.keys(fields).forEach(function(k){if(p[k]!==fields[k]){p[k]=fields[k];dirty=true;}});
+    kept.push(p);
+  });
+  // Pass 2 : add new produits for codifs that don't have a matching produit yet
+  newCodifs.forEach(function(c,i){
+    if(existingIdx[i])return;
+    var pickedPack=null,steps=[];
+    if(contract.template_name){
+      pickedPack=templatePackForType(contract.template_name,c.type||deal.produit_type);
+      if(pickedPack)steps=templatePackCopy(contract.template_name,pickedPack.id);
+    }
+    var notesParts=[];
+    if(c.fourn)notesParts.push('Fournisseur: '+c.fourn);
+    if(c.assureur)notesParts.push('Assureur: '+c.assureur);
+    if(c.banque)notesParts.push('Banque: '+c.banque);
+    if(c.broker)notesParts.push('Broker: '+c.broker);
+    if(deal.contrat)notesParts.push('Contrat: '+deal.contrat);
+    if(c.maturite)notesParts.push('Maturité: '+c.maturite);
+    kept.push({
+      id:newStepId(),
+      name:c.produit||deal.produit||'(produit non nommé)',
+      isin:c.isin||'',
+      type:dealTypeToProdType(c.type||deal.produit_type),
+      pack_name:pickedPack?pickedPack.name:'',
+      montant:c.nominal?(new Intl.NumberFormat('fr-FR').format(c.nominal)+' '+(c.currency||deal.dev||'EUR')):'',
+      notes:notesParts.join(' · '),
+      steps:steps,
+      deal_id:deal._id,
+      codif_idx:i,
+      fourn:c.fourn||'',assureur:c.assureur||'',banque:c.banque||'',billingMode:c.billingMode||'fast'
+    });
+    dirty=true;
+  });
+  if(dirty){
+    contract.produits=kept;
+    try{await saveContract(contract);}catch(e){console.error('saveContract after produits sync failed',e);}
+  }
+}
+
 // Batch C.1 — On deal creation: find (or create) the client's contract and append
 // ONE produit PER codification (= per fournisseur in the new model). Legacy deals
 // without codifications[] fall back to a single produit using top-level fields.
@@ -1972,7 +2037,7 @@ function renderUFDeals(){
       :d.fSt==='Facturé'
         ?'<button class="btn btn-sm" style="background:var(--green);color:white;border-color:var(--green);" onclick="markUFInvPaid('+idx+')">Marquer payé</button>'
         :'<button class="btn btn-sm" style="background:var(--green);color:white;border-color:var(--green);" onclick="openUFFactModalDeal('+idx+')">Facturer</button>';
-    var nomE=d.dev==='USD'?d.nom/(d.fx||1):d.nom;
+    var nomE=_dealNomEur(d);
     var r=t.insertRow();
     r.innerHTML=
       '<td style="font-weight:500;">'+d.fourn+'</td>'+
@@ -2073,7 +2138,7 @@ function renderRecapFourn(){
   filteredFourns.forEach(f=>{
     var fDeals=data.filter(d=>(d.ct==='RUN'||d.ct==='BOTH')&&d.fourn===f.name&&(d.issue||d.date||'')<=trimDates.endStr);
     if(!fDeals.length)return;
-    var nomEUR=fDeals.reduce((s,d)=>s+(d.dev==='USD'?d.nom/(d.fx||1):d.nom),0);
+    var nomEUR=fDeals.reduce((s,d)=>s+(_dealNomEur(d)),0);
     var runAn=fDeals.reduce((s,d)=>s+(d.runE||0),0);
     var theoTrim=fDeals.reduce((s,d)=>s+calcRunProrataTrim(d,trimDates),0);
     var saved=loadRecapFact(f.name);
@@ -2142,7 +2207,7 @@ function renderRecapFourn(){
     var actionBtn=d.fSt==='Payé'
       ?'<span style="font-size:11px;color:var(--green);font-weight:600;">✓ Payé</span>'
       :'<button class="btn btn-sm" style="background:var(--green);color:white;border-color:var(--green);" onclick="openUFFactModalDeal('+idx+')">Facturer</button>';
-    var nomE=d.dev==='USD'?d.nom/(d.fx||1):d.nom;
+    var nomE=_dealNomEur(d);
     var r=tUF.insertRow();
     r.innerHTML=
       '<td style="font-weight:500;">'+d.fourn+'</td>'+
@@ -2447,7 +2512,7 @@ function renderUFRappr(){
   filteredFourns.forEach(f=>{
     var fDeals=data.filter(d=>(d.ct==='UF'||d.ct==='BOTH')&&d.fourn===f.name&&(!d.fSt||d.fSt==='À émettre'));
     if(!fDeals.length)return;
-    var nomTotal=fDeals.reduce((s,d)=>s+(d.dev==='USD'?d.nom/(d.fx||1):d.nom||0),0);
+    var nomTotal=fDeals.reduce((s,d)=>s+(_dealNomEur(d)),0);
     var theo=fDeals.reduce((s,d)=>s+(d.ufE||0),0);
     var saved=loadUFRappr(f.name);
     rows.push({fourn:f,nb:fDeals.length,nomTotal,theo,declared:saved?saved.declared:null,facture:saved?saved.facture:false,deals:fDeals});
@@ -3266,17 +3331,23 @@ function renderAlertesPage(){
 
 // Encours d'un client = somme des nominaux (en EUR) de ses deals actifs.
 // Un deal est "actif" si nom > 0 (les deals fully arbed-out ont nom=0 automatiquement).
+// Audit fix — generic FX conversion for ALL non-EUR currencies (was hardcoded USD only).
+// d.fx convention : native_per_EUR (e.g. USD : 1.087 → d.nom/d.fx = EUR).
+function _dealNomEur(d){
+  if(!d)return 0;
+  var nom=d.nom||0;
+  if(!d.dev||d.dev==='EUR')return nom;
+  return nom/(d.fx||1);
+}
 function encoursForClient(clientName){
   if(!clientName)return 0;
   return deals.filter(function(d){return d.client===clientName&&(d.nom||0)>0;}).reduce(function(s,d){
-    var nomEUR=d.dev==='USD'?d.nom/(d.fx||1):d.nom;
-    return s+nomEUR;
+    return s+_dealNomEur(d);
   },0);
 }
 function encoursTotalGlobal(){
   return deals.filter(function(d){return (d.nom||0)>0;}).reduce(function(s,d){
-    var nomEUR=d.dev==='USD'?d.nom/(d.fx||1):d.nom;
-    return s+nomEUR;
+    return s+_dealNomEur(d);
   },0);
 }
 function renderEncoursGlobaux(){
@@ -3341,7 +3412,7 @@ function renderCharts(){
   var byClient={};
   data.forEach(function(d){
     if(!d.client||d.arbClosed)return;
-    var nomEUR=d.dev==='USD'?d.nom/(d.fx||1):d.nom;
+    var nomEUR=_dealNomEur(d);
     byClient[d.client]=(byClient[d.client]||0)+nomEUR;
   });
   var topClients=Object.entries(byClient).sort(function(a,b){return a[1]-b[1];}).slice(-10);
@@ -3354,7 +3425,7 @@ function renderCharts(){
   var byType={};data.forEach(function(d){
     if(d.arbClosed||!d.nom)return;
     var t=d.produit_type||'Non classé';
-    var nomEUR=d.dev==='USD'?d.nom/(d.fx||1):d.nom;
+    var nomEUR=_dealNomEur(d);
     byType[t]=(byType[t]||0)+nomEUR;
   });
   var typeEntries=Object.entries(byType).sort(function(a,b){return b[1]-a[1];});
@@ -3408,7 +3479,7 @@ function renderCharts(){
   data.forEach(function(d){
     var s=pipeBySt[d.fSt];if(!s)return;
     s.uf+=(d.ufE||0);s.run+=(d.runE||0);s.nb++;
-    s.nom+=(d.dev==='USD'?d.nom/(d.fx||1):d.nom);
+    s.nom+=(_dealNomEur(d));
   });
   if(charts.pipe)charts.pipe.destroy();
   charts.pipe=new Chart(document.getElementById('cPipe'),{
@@ -3895,6 +3966,9 @@ async function saveDeal(){
       // Update in-memory
       var idxInDeals=deals.findIndex(function(x){return x._id===origId;});
       if(idxInDeals>=0)deals[idxInDeals]=rowPayload;
+      // Audit fix — sync produits in the linked Suivi Contrat : remove orphans,
+      // add new fourns, update mutable display fields on existing produits.
+      try{await _syncContractProduitsForDealEdit(rowPayload);}catch(syncErr){console.error('Contract produits sync failed',syncErr);}
     }
     closeDM();renderAll();toast('Deal modifié.');
   } else {
@@ -4537,7 +4611,8 @@ function renderClients(){
   while(t.rows.length>1)t.deleteRow(1);
   document.getElementById('clientsEmpty').style.display=filtered.length?'none':'block';
   filtered.forEach(c=>{
-    var dDeals=deals.filter(d=>d.client===c.name);
+    // Audit fix — respect vendor filter (curV via filt()) so per-client KPIs match the active scope
+    var dDeals=filt().filter(d=>d.client===c.name);
     var nbD=dDeals.length;
     var totalNom=dDeals.reduce((s,d)=>s+d.nom,0);
     var totalUF=dDeals.reduce((s,d)=>s+d.ufE,0);
@@ -4579,8 +4654,9 @@ function openAddClientModal(name){
   var kpisDiv=document.getElementById('clientKpis');
   var kpisContent=document.getElementById('clientKpisContent');
   if(name){
-    var cDeals=deals.filter(function(d){return d.client===name;});
-    var totalNom=cDeals.reduce(function(s,d){return s+(d.dev==='USD'?d.nom/(d.fx||1):d.nom||0);},0);
+    // Audit fix — respect vendor filter
+    var cDeals=filt().filter(function(d){return d.client===name;});
+    var totalNom=cDeals.reduce(function(s,d){return s+(d.dev==='EUR'?(d.nom||0):((d.nom||0)/(d.fx||1)));},0);
     var totalUF=cDeals.reduce(function(s,d){return s+(d.ufE||0);},0);
     var totalRun=cDeals.reduce(function(s,d){return s+(d.runE||0);},0);
     var nbDeals=cDeals.length;
@@ -4606,7 +4682,7 @@ function openAddClientModal(name){
   var investSection=document.getElementById('clientInvestSection');
   var investLines=document.getElementById('clientInvestLines');
   if(name){
-    var clientDeals=deals.filter(function(d){return d.client===name;}).sort(function(a,b){return (a.contrat||'').localeCompare(b.contrat||'');});
+    var clientDeals=filt().filter(function(d){return d.client===name;}).sort(function(a,b){return (a.contrat||'').localeCompare(b.contrat||'');});
     if(clientDeals.length){
       investSection.style.display='block';
       // Grouper par contrat
@@ -4620,7 +4696,7 @@ function openAddClientModal(name){
       Object.entries(byContrat).forEach(function(entry){
         var contrat=entry[0],cDeals=entry[1];
         // Stats du contrat
-        var sumNomEUR=cDeals.reduce(function(s,d){return s+(d.dev==='USD'?d.nom/(d.fx||1):d.nom);},0);
+        var sumNomEUR=cDeals.reduce(function(s,d){return s+(_dealNomEur(d));},0);
         var sumUF=cDeals.reduce(function(s,d){return s+(d.ufE||0);},0);
         var sumRun=cDeals.reduce(function(s,d){return s+(d.runE||0);},0);
 
@@ -4777,7 +4853,8 @@ function renderClientHistory(){
   if(!name){histSection.style.display='none';histLines.innerHTML='';return;}
   // Collect events (deals + retraits) for this client
   var events=[];
-  deals.filter(function(d){return d.client===name;}).forEach(function(d){
+  // Audit fix — respect vendor filter in the history timeline
+  filt().filter(function(d){return d.client===name;}).forEach(function(d){
     events.push({kind:d.arbId||d.arbSrc?'arb':'deal',date:d.date||'',deal:d});
   });
   contracts_db.forEach(function(c){
@@ -5333,7 +5410,8 @@ function renderFourn(){
   while(t.rows.length>1)t.deleteRow(1);
   document.getElementById('fournEmpty').style.display=list.length?'none':'block';
   list.forEach(function(f){
-    var dDeals=deals.filter(d=>d.fourn===f.name);
+    // Audit fix — per-fournisseur KPIs respect vendor filter
+    var dDeals=filt().filter(d=>d.fourn===f.name);
     var nb=dDeals.length;
     var tUF=dDeals.reduce((s,d)=>s+d.ufE,0);
     var tRun=dDeals.reduce((s,d)=>s+d.runE,0);
@@ -5620,10 +5698,7 @@ function renderRapprochement(){
   fourns.forEach(f=>{
     var fDeals=allDeals.filter(d=>d.fourn===f.name);
     if(!fDeals.length)return;
-    var nomEUR=fDeals.reduce((s,d)=>{
-      var n=d.nom||0;
-      return s+(d.dev==='USD'?n/(d.fx||1):n);
-    },0);
+    var nomEUR=fDeals.reduce((s,d)=>s+_dealNomEur(d),0);
     var saved=loadRapprData(f.name,rapprTrim,year);
     rows.push({fourn:f,deals:fDeals,nomEUR,declared:saved?saved.declared:null,comment:saved?saved.comment:''});
   });
@@ -5693,7 +5768,7 @@ function updateRapprCalc(){
   // reparse from stored value
   var fournName=document.getElementById('rapprModalFourn').textContent;
   var allDeals=deals.filter(d=>d.fourn===fournName);
-  var nomEUR=allDeals.reduce((s,d)=>s+(d.dev==='USD'?d.nom/(d.fx||1):d.nom),0);
+  var nomEUR=allDeals.reduce((s,d)=>s+(_dealNomEur(d)),0);
   if(!declared){document.getElementById('rapprEcartDisplay').textContent='—';document.getElementById('rapprEcartPct').textContent='';return;}
   var ecart=declared-nomEUR;
   var pct=nomEUR>0?((ecart/nomEUR)*100).toFixed(1)+'%':'';
@@ -5722,7 +5797,8 @@ function renderBrokers(){
   while(t.rows.length>1)t.deleteRow(1);
   document.getElementById('brokerEmpty').style.display=list.length?'none':'block';
   list.forEach(function(b){
-    var dDeals=deals.filter(d=>d.broker===b);
+    // Audit fix — per-broker KPIs respect vendor filter
+    var dDeals=filt().filter(d=>d.broker===b);
     var nb=dDeals.length;
     var tUF=dDeals.reduce((s,d)=>s+d.ufE,0);
     var tRun=dDeals.reduce((s,d)=>s+d.runE,0);
@@ -6228,7 +6304,7 @@ function genInvoicePDF(fournName,type,period,amount,deals_list){
   <tr>
     <td>Management Fees rebates — ${fournName}</td>
     <td>${period||'—'}</td>
-    <td>${new Intl.NumberFormat('fr-FR').format(Math.round(deals_list.reduce((s,d)=>s+(d.dev==='USD'?d.nom/(d.fx||1):d.nom||0),0)))} EUR</td>
+    <td>${new Intl.NumberFormat('fr-FR').format(Math.round(deals_list.reduce((s,d)=>s+(_dealNomEur(d)),0)))} EUR</td>
     <td>${deals_list.length>0?((deals_list.reduce((s,d)=>s+(d.runR||0),0)/deals_list.length).toFixed(3))+'%/an':'—'}</td>
     <td>${new Intl.NumberFormat('fr-FR',{minimumFractionDigits:2}).format(amount)} EUR</td>
   </tr>

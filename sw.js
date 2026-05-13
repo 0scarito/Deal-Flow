@@ -2,7 +2,7 @@
 // Stratégie : network-first pour l'app shell (toujours essayer la dernière version,
 // fallback cache si offline). Aucune interception des appels Supabase / CDN.
 
-const CACHE_NAME = 'dealflow-v15';
+const CACHE_NAME = 'dealflow-v17';
 const APP_SHELL = [
   './',
   './index.html',

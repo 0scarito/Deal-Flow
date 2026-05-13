@@ -17,6 +17,7 @@ function dealToRow(d){
   r.end_date=r.end;
   r.deal_group_id=r.dealGroupId; delete r.dealGroupId;
   r.fx_date=r.fxDate||null; delete r.fxDate;
+  r.paid_at=r.paidAt||null; delete r.paidAt;
   delete r.ufR; delete r.runR; delete r.ufE; delete r.runE;
   delete r.invS; delete r.fSt; delete r.fRef;
   delete r.arbId; delete r.arbSrc; delete r.arbClosed; delete r.end;
@@ -43,6 +44,7 @@ function rowToDeal(r){
   d.end=d.end_date;
   d.dealGroupId=d.deal_group_id||null; delete d.deal_group_id;
   d.fxDate=d.fx_date||null; delete d.fx_date;
+  d.paidAt=d.paid_at||null; delete d.paid_at;
   delete d.uf_r; delete d.run_r; delete d.uf_e; delete d.run_e;
   delete d.inv_s; delete d.f_st; delete d.f_ref;
   delete d.arb_id; delete d.arb_src; delete d.arb_closed; delete d.end_date;
@@ -2179,7 +2181,14 @@ function getAllRunInvoices(){
 
 function renderRunInvTable(){
   var all=getAllRunInvoices();
-  var filtered=runInvTab==='all'?all:runInvTab==='aE'?all.filter(i=>!i.facture&&!i.paid):runInvTab==='fact'?all.filter(i=>i.facture&&!i.paid):all.filter(i=>i.paid);
+  // Batch E.1 — 'archives' tab = paid invoices (Running/PF use rapprochement_db, no
+  // 60s standby — the ✕ delete button is the revert path). 'pay' tab = empty in
+  // the new flow since paid migrates immediately to Archives.
+  var filtered=runInvTab==='all'?all.filter(function(i){return !i.paid;})
+    :runInvTab==='aE'?all.filter(i=>!i.facture&&!i.paid)
+    :runInvTab==='fact'?all.filter(i=>i.facture&&!i.paid)
+    :runInvTab==='archives'?all.filter(i=>i.paid)
+    :all.filter(i=>i.paid); // 'pay' (legacy) → behave like archives
   var t=document.getElementById('runInvT');
   while(t.rows.length>1)t.deleteRow(1);
   document.getElementById('runInvEmpty').style.display=filtered.length?'none':'block';
@@ -2352,29 +2361,30 @@ async function genPFRapprFacture(){
 
 function renderPFInvTable(){
   var all=deals.filter(d=>d.pf&&d.pf.mode!=='none'&&d.pf.amount>0);
-  var filtered=pfInvTabCurrent==='all'?all
-    :pfInvTabCurrent==='aE'?all.filter(d=>!d.fSt||d.fSt==='À émettre')
-    :pfInvTabCurrent==='fact'?all.filter(d=>d.fSt==='Facturé')
-    :all.filter(d=>d.fSt==='Payé');
+  var filtered=_filterInvByTab(all,pfInvTabCurrent);
+  if(pfInvTabCurrent==='archives'){
+    filtered.sort(function(a,b){return (b.paidAt||'').localeCompare(a.paidAt||'');});
+  } else {
+    filtered.sort((a,b)=>a.fourn.localeCompare(b.fourn));
+  }
   var t=document.getElementById('pfInvT');if(!t)return;
   while(t.rows.length>1)t.deleteRow(1);
   document.getElementById('pfInvEmpty').style.display=filtered.length?'none':'block';
-  filtered.slice().sort((a,b)=>a.fourn.localeCompare(b.fourn)).forEach(function(d){
+  filtered.forEach(function(d){
     var idx=deals.indexOf(d);
     var statut=d.fSt==='Payé'?'<span class="badge bg">Payée</span>':d.fSt==='Facturé'?'<span class="badge bb">Facturée</span>':'<span class="badge ba">À émettre</span>';
-    var btn=d.fSt==='Payé'
-      ?'<span style="font-size:11px;color:var(--green);">✓ Payé le '+(d.inv||'')+'</span>'
-      :d.fSt==='Facturé'
-        ?'<button class="btn btn-sm" style="background:var(--green);color:white;border-color:var(--green);" onclick="markPFInvPaid('+idx+')">Marquer payé</button>'
-        :'—';
+    var btn;
+    if(d.fSt==='Payé'){btn=_renderStandbyBtn(idx,d,'unMarkPFInvPaid');}
+    else if(d.fSt==='Facturé'){btn='<button class="btn btn-sm" style="background:var(--green);color:white;border-color:var(--green);" onclick="markPFInvPaid('+idx+')">Marquer payé</button>';}
+    else {btn='—';}
     var r=t.insertRow();
     r.innerHTML=
-      '<td style="font-weight:500;">'+d.fourn+'</td>'+
-      '<td>'+d.client+'</td>'+
-      '<td style="color:var(--text2);">'+d.produit+'</td>'+
+      '<td style="font-weight:500;">'+escH(d.fourn||'')+'</td>'+
+      '<td>'+escH(d.client||'')+'</td>'+
+      '<td style="color:var(--text2);">'+escH(d.produit||'')+'</td>'+
       '<td style="text-align:right;font-weight:500;color:var(--green);">'+fE(d.pf.amount)+'</td>'+
-      '<td class="mono" style="color:var(--text2);">'+(d.invS||'—')+'</td>'+
-      '<td class="mono" style="color:var(--text2);">'+(d.inv||'—')+'</td>'+
+      '<td class="mono" style="color:var(--text2);">'+escH(d.invS||'—')+'</td>'+
+      '<td class="mono" style="color:var(--text2);">'+escH(d.inv||'—')+'</td>'+
       '<td>'+statut+'</td>'+
       '<td>'+btn+'</td>';
   });
@@ -2383,10 +2393,21 @@ function renderPFInvTable(){
 async function markPFInvPaid(idx){
   var d=deals[idx];if(!d)return;
   d.fSt='Payé';d.stat='Deal payé';d.inv=new Date().toISOString().split('T')[0];
+  d.paidAt=new Date().toISOString(); // Batch E.1 — start 60s stand-by
   d.hist.push({ts:nowS(),a:'Facture Perf fees payée (deal passé en payé)',by:'Système'});
   if(d._id)await sbUpdate('deals',d._id,d);
   renderPFInvTable();renderPFRappr();renderFact();renderKpis();updateAlertBadge();
-  toast('Facture Perf fees de '+d.client+' marquée payée.');
+  _kickFactStandbyTimer();
+  toast('Facture Perf fees de '+d.client+' marquée payée — archivée dans 60s. Cliquer Annuler si erreur.');
+}
+async function unMarkPFInvPaid(idx){
+  var d=deals[idx];if(!d)return;
+  if(!_isPaidStandby(d))return;
+  d.fSt='Facturé';d.stat='Deal réalisé';d.inv='';d.paidAt=null;
+  d.hist.push({ts:nowS(),a:'Marquage facture Perf fees "payée" annulé (revenu en facturée)',by:'Système'});
+  if(d._id)await sbUpdate('deals',d._id,d);
+  renderPFInvTable();renderPFRappr();renderFact();renderKpis();updateAlertBadge();
+  toast('Marquage annulé — facture revenue en "Facturée".');
 }
 
 // ── UF RAPPROCHEMENT ─────────────────────────────────────────────────────────
@@ -2523,37 +2544,95 @@ function setUFInvTab(tab,btn){
   ufInvTab=tab;
   document.querySelectorAll('#ufInvTabs .btn').forEach(b=>{b.style.background='';b.style.color='';b.style.borderColor='';});
   if(btn){btn.style.background='var(--text)';btn.style.color='var(--surface)';btn.style.borderColor='var(--text)';}
+  // Search box visible only on the Archives tab
+  var sBox=document.getElementById('ufInvSearchWrap');
+  if(sBox)sBox.style.display=tab==='archives'?'flex':'none';
   renderUFInvTable();
+}
+
+// ── Batch E.1 — stand-by + archives helpers (shared UF / RUN / PF) ──────────
+var _FACT_STANDBY_MS=60000;
+function _isPaidStandby(d){
+  if(!d||d.fSt!=='Payé'||!d.paidAt)return false;
+  try{return(Date.now()-new Date(d.paidAt).getTime())<_FACT_STANDBY_MS;}catch(e){return false;}
+}
+function _isPaidArchived(d){
+  return d&&d.fSt==='Payé'&&!!d.paidAt&&!_isPaidStandby(d);
+}
+function _standbySecondsLeft(d){
+  if(!d||!d.paidAt)return 0;
+  try{return Math.max(0,Math.ceil((_FACT_STANDBY_MS-(Date.now()-new Date(d.paidAt).getTime()))/1000));}catch(e){return 0;}
+}
+function _filterInvByTab(all,tab){
+  // tab values : 'all' | 'aE' | 'fact' | 'pay' | 'archives'
+  if(tab==='archives')return all.filter(_isPaidArchived);
+  // For non-archive tabs, always exclude already-archived paid (timestamped > 60s ago)
+  var live=all.filter(function(d){return !_isPaidArchived(d);});
+  if(tab==='aE')return live.filter(function(d){return !d.fSt||d.fSt==='À émettre';});
+  if(tab==='fact')return live.filter(function(d){return d.fSt==='Facturé';});
+  if(tab==='pay')return live.filter(function(d){return d.fSt==='Payé';});
+  return live; // 'all'
+}
+function _renderStandbyBtn(idx,d,unMarkFn){
+  // The fixed-width slot that displays "✓ Payé · (Ns) [Annuler]" while in stand-by,
+  // then collapses to a static "✓ Payé le X" once archived.
+  if(_isPaidStandby(d)){
+    var s=_standbySecondsLeft(d);
+    return '<span style="font-size:11px;color:var(--green);font-weight:500;">✓ Payé le '+escH(d.inv||'')+'</span>'+
+      ' <span style="font-size:10px;color:var(--text3);">('+s+'s avant archivage)</span>'+
+      ' <button class="btn btn-sm" style="margin-left:4px;font-size:10px;padding:2px 8px;color:var(--amber-t);border-color:var(--amber);" onclick="'+unMarkFn+'('+idx+')">Annuler</button>';
+  }
+  return '<span style="font-size:11px;color:var(--green);">✓ Payé le '+escH(d.inv||'')+'</span>';
+}
+// Auto-refresh timer — ticks every 1s while at least one deal is in stand-by window.
+var _factStandbyTimer=null;
+function _kickFactStandbyTimer(){
+  if(_factStandbyTimer)return;
+  _factStandbyTimer=setInterval(function(){
+    var stillStandby=deals.some(_isPaidStandby);
+    var pageOpen=document.getElementById('p-facturation')&&document.getElementById('p-facturation').classList.contains('on');
+    if(pageOpen){
+      if(typeof renderUFInvTable==='function')renderUFInvTable();
+      if(typeof renderRunInvTable==='function')renderRunInvTable();
+      if(typeof renderPFInvTable==='function')renderPFInvTable();
+    }
+    if(!stillStandby){clearInterval(_factStandbyTimer);_factStandbyTimer=null;}
+  },1000);
 }
 
 function renderUFInvTable(){
   var all=deals.filter(d=>(d.ct==='UF'||d.ct==='BOTH')&&d.ufE>0);
-  var filtered=ufInvTab==='all'?all
-    :ufInvTab==='aE'?all.filter(d=>!d.fSt||d.fSt==='À émettre')
-    :ufInvTab==='fact'?all.filter(d=>d.fSt==='Facturé')
-    :all.filter(d=>d.fSt==='Payé');
+  var filtered=_filterInvByTab(all,ufInvTab);
+  // Archives tab: search box filters by client/fourn/produit
+  if(ufInvTab==='archives'){
+    var q=((document.getElementById('ufInvSearch')||{}).value||'').toLowerCase().trim();
+    if(q)filtered=filtered.filter(function(d){return (d.client||'').toLowerCase().indexOf(q)!==-1||(d.fourn||'').toLowerCase().indexOf(q)!==-1||(d.produit||'').toLowerCase().indexOf(q)!==-1;});
+    // Sort archives by paidAt desc (most recently archived first)
+    filtered.sort(function(a,b){return (b.paidAt||'').localeCompare(a.paidAt||'');});
+  } else {
+    filtered.sort(function(a,b){return b.date.localeCompare(a.date);});
+  }
   var t=document.getElementById('ufInvT');
   if(!t)return;
   while(t.rows.length>1)t.deleteRow(1);
   document.getElementById('ufInvEmpty').style.display=filtered.length?'none':'block';
-  filtered.slice().sort((a,b)=>b.date.localeCompare(a.date)).forEach(function(d){
+  filtered.forEach(function(d){
     var idx=deals.indexOf(d);
     var statut=d.fSt==='Payé'?'<span class="badge bg">Payée</span>':d.fSt==='Facturé'?'<span class="badge bb">Facturée</span>':'<span class="badge ba">À émettre</span>';
-    var btn=d.fSt==='Payé'
-      ?'<span style="font-size:11px;color:var(--green);">✓ Payé le '+(d.inv||'')+'</span>'
-      :d.fSt==='Facturé'
-        ?'<button class="btn btn-sm" style="background:var(--green);color:white;border-color:var(--green);" onclick="markUFInvPaid('+idx+')">Marquer payé</button>'
-        :'<button class="btn btn-sm" onclick="markUFInvFact('+idx+')">Marquer facturée</button>';
+    var btn;
+    if(d.fSt==='Payé'){btn=_renderStandbyBtn(idx,d,'unMarkUFInvPaid');}
+    else if(d.fSt==='Facturé'){btn='<button class="btn btn-sm" style="background:var(--green);color:white;border-color:var(--green);" onclick="markUFInvPaid('+idx+')">Marquer payé</button>';}
+    else {btn='<button class="btn btn-sm" onclick="markUFInvFact('+idx+')">Marquer facturée</button>';}
     var delBtn='<button class="btn btn-sm" style="color:var(--red);border-color:var(--red-bg);margin-left:4px;" onclick="deleteUFInv('+idx+')" title="Supprimer">✕</button>';
     var r=t.insertRow();
     r.innerHTML=
-      '<td style="font-weight:500;">'+d.fourn+'</td>'+
-      '<td>'+d.client+'</td>'+
-      '<td style="color:var(--text2);">'+d.produit+'</td>'+
-      '<td class="mono" style="color:var(--text2);">'+(d.issue||d.date||'—')+'</td>'+
+      '<td style="font-weight:500;">'+escH(d.fourn||'')+'</td>'+
+      '<td>'+escH(d.client||'')+'</td>'+
+      '<td style="color:var(--text2);">'+escH(d.produit||'')+'</td>'+
+      '<td class="mono" style="color:var(--text2);">'+escH(d.issue||d.date||'—')+'</td>'+
       '<td style="text-align:right;font-weight:500;color:var(--blue);">'+fE(d.ufE)+'</td>'+
-      '<td class="mono" style="color:var(--text2);">'+(d.invS||'—')+'</td>'+
-      '<td class="mono" style="color:var(--text2);">'+(d.inv||'—')+'</td>'+
+      '<td class="mono" style="color:var(--text2);">'+escH(d.invS||'—')+'</td>'+
+      '<td class="mono" style="color:var(--text2);">'+escH(d.inv||'—')+'</td>'+
       '<td>'+statut+'</td>'+
       '<td style="white-space:nowrap;">'+btn+delBtn+'</td>';
   });
@@ -2586,10 +2665,23 @@ async function markUFInvPaid(idx){
   var paidDate=new Date().toISOString().split('T')[0];
   d.fSt='Payé';d.stat='Deal payé';
   d.inv=paidDate;
+  d.paidAt=new Date().toISOString(); // Batch E.1 — start the 60s stand-by countdown
   d.hist.push({ts:nowS(),a:'Facture UF payée (deal passé en payé)',by:'Système'});
   if(d._id)await sbUpdate('deals',d._id,d);
   renderUFInvTable();renderFact();renderKpis();updateAlertBadge();
-  toast('Facture UF de '+d.client+' marquée comme payée. Commissions mises à jour.');
+  _kickFactStandbyTimer();
+  toast('Facture UF de '+d.client+' marquée payée — archivée dans 60s. Cliquer Annuler si erreur.');
+}
+async function unMarkUFInvPaid(idx){
+  var d=deals[idx];if(!d)return;
+  if(!_isPaidStandby(d))return; // archived — unmarking from archives is via deleteUFInv
+  d.fSt='Facturé';d.stat='Deal réalisé';
+  d.inv='';
+  d.paidAt=null;
+  d.hist.push({ts:nowS(),a:'Marquage facture UF "payée" annulé (revenu en facturée)',by:'Système'});
+  if(d._id)await sbUpdate('deals',d._id,d);
+  renderUFInvTable();renderFact();renderKpis();updateAlertBadge();
+  toast('Marquage annulé — facture revenue en "Facturée".');
 }
 
 function openRecapFactModal(fournName,encours,theo){
@@ -4694,6 +4786,174 @@ function renderClientHistory(){
 function _unfoldPaidEvents(){_clientHistShowPaid=true;renderClientHistory();}
 function _refoldPaidEvents(){_clientHistShowPaid=false;renderClientHistory();}
 function _onHidePaidToggle(){_clientHistShowPaid=false;renderClientHistory();}
+
+// ── Batch E.2 — Perf rétro-commissions Excel import (LFIS template) ───────────
+var _sheetJsPromise=null;
+function _loadSheetJS(){
+  if(window.XLSX)return Promise.resolve(window.XLSX);
+  if(_sheetJsPromise)return _sheetJsPromise;
+  _sheetJsPromise=new Promise(function(resolve,reject){
+    var s=document.createElement('script');
+    s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    s.onload=function(){resolve(window.XLSX);};
+    s.onerror=function(){reject(new Error('Échec chargement SheetJS depuis CDN'));};
+    document.head.appendChild(s);
+  });
+  return _sheetJsPromise;
+}
+var _pendingPerfImport=null; // {periodLabel, matched, unmatched, fileName}
+async function _handlePerfImport(file){
+  if(!file)return;
+  toast('Chargement '+file.name+'…');
+  try{
+    var XLSX=await _loadSheetJS();
+    var buf=await file.arrayBuffer();
+    var wb=XLSX.read(buf,{type:'array',cellDates:true});
+    if(!wb.SheetNames||!wb.SheetNames.length){alert('Fichier vide.');return;}
+    // Find the Synthèse sheet — exact match or fuzzy
+    var synthName=wb.SheetNames.find(function(n){return /synth/i.test(n);});
+    if(!synthName){alert('Aucun onglet "Synthèse" trouvé dans le fichier.');return;}
+    var rows=XLSX.utils.sheet_to_json(wb.Sheets[synthName],{header:1,defval:null});
+    // Find header row containing "ISIN"
+    var headerIdx=rows.findIndex(function(r){return r&&r.some(function(c){return String(c||'').trim()==='ISIN';});});
+    if(headerIdx===-1){alert('Colonne "ISIN" introuvable dans l\'onglet Synthèse.');return;}
+    var headers=rows[headerIdx].map(function(h){return String(h||'').trim();});
+    var col=function(name){return headers.indexOf(name);};
+    var dataRows=rows.slice(headerIdx+1).filter(function(r){return r&&r[col('ISIN')];});
+    // Extract period label (e.g. "1T2026" or "Q1 2026") from cells above the header
+    var periodLabel='?';
+    for(var i=0;i<headerIdx;i++){
+      var rr=rows[i];if(!rr)continue;
+      var s=rr.map(function(c){return String(c||'');}).join(' ');
+      var m=s.match(/(\d[T])(\d{4})|du\s+(\d{2}\/\d{2}\/\d{4}).*au\s+(\d{2}\/\d{2}\/\d{4})/i);
+      if(m){periodLabel=(m[1]&&m[2])?(m[1]+m[2]):(m[3]+' → '+m[4]);break;}
+    }
+    var items=dataRows.map(function(r){return{
+      isin:String(r[col('ISIN')]||'').trim(),
+      libelle:String(r[col('Libellé')]||'').trim(),
+      onglet:String(r[col('Onglet')]||'').trim(),
+      tauxRetro:Number(r[col('Taux rétro.')]||0),
+      derPosition:Number(r[col('Dernière position')]||0),
+      derEncours:Number(r[col('Dernier encours')]||0),
+      encoursMoyen:Number(r[col('Encours moyen')]||0),
+      montantHT:Number(r[col('Montant HT')]||0),
+      montantTTC:Number(r[col('Montant TTC')]||0),
+      devise:String(r[col('Devise du contrat')]||'EUR').trim()
+    };}).filter(function(it){return it.isin;});
+    // Try to enrich with last VL from per-ISIN sheets
+    items.forEach(function(it){
+      var sn=wb.SheetNames.find(function(n){return n.indexOf(it.isin)!==-1;});
+      if(!sn)return;
+      var detail=XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,defval:null});
+      // Header is the row containing "Date Facturation" / "VL" (typically row 2 = idx 1)
+      var dHdrIdx=detail.findIndex(function(r){return r&&r.some(function(c){return String(c||'').trim()==='VL';});});
+      if(dHdrIdx===-1)return;
+      var dHeaders=detail[dHdrIdx].map(function(h){return String(h||'').trim();});
+      var vlCol=dHeaders.indexOf('VL');
+      var dateCol=dHeaders.indexOf('Date Position');
+      if(dateCol===-1)dateCol=dHeaders.indexOf('Date Facturation');
+      // Walk backwards to find the last row with a VL
+      for(var k=detail.length-1;k>dHdrIdx;k--){
+        var dr=detail[k];if(!dr||dr[vlCol]==null)continue;
+        it.lastVL=Number(dr[vlCol]||0);
+        var dv=dateCol>=0?dr[dateCol]:null;
+        if(dv instanceof Date)it.lastVLDate=dv.toISOString().slice(0,10);
+        else if(typeof dv==='string')it.lastVLDate=dv;
+        break;
+      }
+    });
+    // Match against fournisseur catalogue
+    var matched=[],unmatched=[];
+    items.forEach(function(it){
+      var foundFourn=null,foundProd=null;
+      for(var fi=0;fi<fourn_db.length;fi++){
+        var f=fourn_db[fi];if(!Array.isArray(f.products))continue;
+        for(var pi=0;pi<f.products.length;pi++){
+          if(f.products[pi].isin===it.isin){foundFourn=f;foundProd=f.products[pi];break;}
+        }
+        if(foundFourn)break;
+      }
+      if(foundFourn&&foundProd)matched.push({item:it,fourn:foundFourn,product:foundProd});
+      else unmatched.push(it);
+    });
+    _pendingPerfImport={periodLabel:periodLabel,matched:matched,unmatched:unmatched,fileName:file.name};
+    _renderPerfImportModal();
+  }catch(err){console.error('Perf import failed',err);alert('Erreur lecture Excel : '+(err.message||err));}
+}
+function _renderPerfImportModal(){
+  if(!_pendingPerfImport)return;
+  var p=_pendingPerfImport;
+  document.getElementById('perfImportTitle').textContent='Import rétro-commissions — '+p.periodLabel;
+  var body=document.getElementById('perfImportBody');
+  var matchedRows=p.matched.map(function(m){
+    var it=m.item;
+    return '<tr style="background:rgba(34,139,69,.06);">'+
+      '<td style="padding:5px 8px;border-bottom:1px solid var(--border);">'+escH(it.isin)+'</td>'+
+      '<td style="padding:5px 8px;border-bottom:1px solid var(--border);"><b>'+escH(m.fourn.name)+'</b> / '+escH(m.product.part||it.libelle)+'</td>'+
+      '<td style="padding:5px 8px;border-bottom:1px solid var(--border);text-align:right;font-family:monospace;font-size:11px;">'+(it.lastVL?it.lastVL.toFixed(4):'—')+'</td>'+
+      '<td style="padding:5px 8px;border-bottom:1px solid var(--border);text-align:right;">'+(it.encoursMoyen?fE(it.encoursMoyen):'—')+'</td>'+
+      '<td style="padding:5px 8px;border-bottom:1px solid var(--border);text-align:right;color:var(--blue);font-weight:500;">'+(it.montantHT?fE(it.montantHT):'—')+'</td>'+
+      '<td style="padding:5px 8px;border-bottom:1px solid var(--border);text-align:right;color:var(--text3);font-size:11px;">'+(it.tauxRetro?(it.tauxRetro*100).toFixed(3)+'%':'—')+'</td>'+
+    '</tr>';
+  }).join('');
+  var unmatchedRows=p.unmatched.map(function(it){
+    return '<tr>'+
+      '<td style="padding:5px 8px;border-bottom:1px solid var(--border);font-family:monospace;font-size:11px;">'+escH(it.isin)+'</td>'+
+      '<td style="padding:5px 8px;border-bottom:1px solid var(--border);">'+escH(it.libelle)+'</td>'+
+      '<td style="padding:5px 8px;border-bottom:1px solid var(--border);text-align:right;color:var(--text2);">'+(it.encoursMoyen?fE(it.encoursMoyen):'—')+'</td>'+
+      '<td style="padding:5px 8px;border-bottom:1px solid var(--border);text-align:right;color:var(--text2);">'+(it.montantHT?fE(it.montantHT):'—')+'</td>'+
+    '</tr>';
+  }).join('');
+  body.innerHTML=
+    '<div style="background:var(--surface2);padding:10px 14px;border-radius:var(--rs);margin-bottom:12px;font-size:12px;">'+
+      '<b>Fichier</b> : '+escH(p.fileName)+' &nbsp;·&nbsp; '+
+      '<b>Période détectée</b> : '+escH(p.periodLabel)+' &nbsp;·&nbsp; '+
+      '<span style="color:#1e7f3a;font-weight:600;">'+p.matched.length+' produit'+(p.matched.length>1?'s':'')+' matchés</span> &nbsp;·&nbsp; '+
+      '<span style="color:'+(p.unmatched.length?'var(--amber-t)':'var(--text3)')+';">'+p.unmatched.length+' non matchés</span>'+
+    '</div>'+
+    (p.matched.length?'<div style="font-size:11px;color:var(--text2);font-weight:600;margin-bottom:6px;text-transform:uppercase;letter-spacing:.3px;">✓ Matchés (le valider mettra à jour le catalogue)</div>'+
+      '<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:14px;">'+
+        '<thead><tr style="background:var(--surface2);"><th style="padding:5px 8px;text-align:left;font-size:10px;color:var(--text3);">ISIN</th><th style="padding:5px 8px;text-align:left;font-size:10px;color:var(--text3);">Fournisseur / Produit</th><th style="padding:5px 8px;text-align:right;font-size:10px;color:var(--text3);">Dernier VL</th><th style="padding:5px 8px;text-align:right;font-size:10px;color:var(--text3);">Encours moyen</th><th style="padding:5px 8px;text-align:right;font-size:10px;color:var(--text3);">Montant HT</th><th style="padding:5px 8px;text-align:right;font-size:10px;color:var(--text3);">Taux rétro</th></tr></thead>'+
+        '<tbody>'+matchedRows+'</tbody>'+
+      '</table>':'')+
+    (p.unmatched.length?'<div style="font-size:11px;color:var(--amber-t);font-weight:600;margin-bottom:6px;text-transform:uppercase;letter-spacing:.3px;">⚠ Non matchés (ajouter ces ISIN au catalogue Fournisseurs pour les importer)</div>'+
+      '<table style="width:100%;border-collapse:collapse;font-size:12px;">'+
+        '<thead><tr style="background:var(--surface2);"><th style="padding:5px 8px;text-align:left;font-size:10px;color:var(--text3);">ISIN</th><th style="padding:5px 8px;text-align:left;font-size:10px;color:var(--text3);">Libellé</th><th style="padding:5px 8px;text-align:right;font-size:10px;color:var(--text3);">Encours moyen</th><th style="padding:5px 8px;text-align:right;font-size:10px;color:var(--text3);">Montant HT</th></tr></thead>'+
+        '<tbody>'+unmatchedRows+'</tbody>'+
+      '</table>':'');
+  document.getElementById('perfImportConfirmBtn').textContent=p.matched.length?'Valider l\'import ('+p.matched.length+' produits)':'Aucun matché — fermer';
+  document.getElementById('perfImportConfirmBtn').disabled=!p.matched.length;
+  document.getElementById('perfImportModal').classList.add('on');
+}
+function closePerfImportModal(){
+  document.getElementById('perfImportModal').classList.remove('on');
+  _pendingPerfImport=null;
+}
+async function confirmPerfImport(){
+  if(!_pendingPerfImport||!_pendingPerfImport.matched.length){closePerfImportModal();return;}
+  var p=_pendingPerfImport;
+  var todayStr=today();
+  var savedCount=0;
+  for(var i=0;i<p.matched.length;i++){
+    var m=p.matched[i];
+    // Update the product fields in-place
+    m.product.latestVL=m.item.lastVL||null;
+    m.product.latestVLDate=m.item.lastVLDate||null;
+    m.product.latestEncours=m.item.derEncours||null;
+    m.product.latestEncoursMoyen=m.item.encoursMoyen||null;
+    m.product.latestRetroHT=m.item.montantHT||null;
+    m.product.latestRetroTTC=m.item.montantTTC||null;
+    m.product.lastImportDate=todayStr;
+    m.product.lastImportPeriod=p.periodLabel;
+    m.product.lastImportFileName=p.fileName;
+    // Persist the entire fourn row
+    try{await sbUpdateFournSafe(m.fourn._id,m.fourn,m.fourn);savedCount++;}catch(e){console.error('Save fourn failed',m.fourn.name,e);}
+  }
+  closePerfImportModal();
+  toast('Import validé — '+savedCount+' produit(s) mis à jour avec les données '+p.periodLabel+'.');
+  // Refresh any view that may surface these fields
+  if(typeof renderFourn==='function')renderFourn();
+}
 function deleteClientFromModal(){var o=document.getElementById('cName').dataset.original;if(!o)return;closeClientModal();deleteClient(o);}
 // Returns {contract, prod} if a Suivi-Contrats investissement is linked to this deal, else null.
 function findLinkedInvestissement(deal){

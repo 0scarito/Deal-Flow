@@ -222,6 +222,13 @@
         <!-- KPIs globaux -->
         <div class="kpi-grid" style="grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:20px;" id="factKpi"></div>
 
+        <!-- Drop zone Excel rétro-commissions (Batch E.2) -->
+        <div id="perfDropZone" style="border:2px dashed var(--border);border-radius:var(--rs);padding:14px 16px;margin-bottom:18px;background:var(--surface2);text-align:center;cursor:pointer;transition:all .15s;" ondragover="event.preventDefault();this.style.borderColor='var(--blue)';this.style.background='var(--blue-bg)';" ondragleave="this.style.borderColor='var(--border)';this.style.background='var(--surface2)';" ondrop="event.preventDefault();this.style.borderColor='var(--border)';this.style.background='var(--surface2)';if(event.dataTransfer.files[0])_handlePerfImport(event.dataTransfer.files[0]);" onclick="document.getElementById('perfDropInput').click();">
+          <div style="font-size:13px;color:var(--text2);font-weight:500;">📊 Drop d'un fichier Excel de rétro-commissions <span style="color:var(--text3);font-weight:400;font-size:11px;">(format LFIS / dépositaire — onglet "Synthèse" + détails par ISIN)</span></div>
+          <div style="font-size:11px;color:var(--text3);margin-top:3px;">Cliquer ici ou drop le fichier .xlsx</div>
+          <input type="file" id="perfDropInput" accept=".xlsx,.xlsm" style="display:none;" onchange="if(this.files[0]){_handlePerfImport(this.files[0]);this.value='';}"/>
+        </div>
+
         <!-- Onglets UF / Running / Perf fees -->
         <div style="display:flex;gap:0;border-bottom:2px solid var(--border);margin-bottom:20px;">
           <button id="ftUFTab" onclick="setFactType('UF',this)" style="padding:10px 32px;border:none;background:none;font-size:13px;font-weight:600;color:var(--blue);border-bottom:3px solid var(--blue);margin-bottom:-2px;cursor:pointer;font-family:inherit;">⬆ Up-Front</button>
@@ -263,7 +270,12 @@
                 <button class="btn btn-sm" id="uiAE" onclick="setUFInvTab('aE',this)">À émettre</button>
                 <button class="btn btn-sm" id="uiFact" onclick="setUFInvTab('fact',this)">Facturées</button>
                 <button class="btn btn-sm" id="uiPay" onclick="setUFInvTab('pay',this)">Payées</button>
+                <button class="btn btn-sm" id="uiArch" onclick="setUFInvTab('archives',this)" title="Factures payées archivées (après le délai de 60s)">📁 Archives</button>
               </div>
+            </div>
+            <div id="ufInvSearchWrap" style="display:none;gap:6px;padding:10px 16px 0;align-items:center;">
+              <input type="text" id="ufInvSearch" placeholder="Recherche client / fournisseur / produit…" style="flex:1;max-width:340px;font-size:12px;" oninput="renderUFInvTable()"/>
+              <span style="font-size:10px;color:var(--text3);">Tri : date d'archivage ↓</span>
             </div>
             <div class="tw" style="margin-top:12px;"><table id="ufInvT">
               <tr><th>Fournisseur</th><th>Client</th><th>Produit</th><th>Trade date</th><th>Montant UF</th><th>Date génération</th><th>Date paiement</th><th>Statut</th><th></th></tr>
@@ -315,6 +327,7 @@
                 <button class="btn btn-sm" id="riAE" onclick="setRunInvTab('aE',this)">À émettre</button>
                 <button class="btn btn-sm" id="riFact" onclick="setRunInvTab('fact',this)">Facturées</button>
                 <button class="btn btn-sm" id="riPay" onclick="setRunInvTab('pay',this)">Payées</button>
+                <button class="btn btn-sm" id="riArch" onclick="setRunInvTab('archives',this)" title="Factures payées archivées">📁 Archives</button>
               </div>
             </div>
             <div class="tw" style="margin-top:12px;"><table id="runInvT">
@@ -349,6 +362,7 @@
                 <button class="btn btn-sm" onclick="setPFInvTab('aE',this)">À émettre</button>
                 <button class="btn btn-sm" onclick="setPFInvTab('fact',this)">Facturées</button>
                 <button class="btn btn-sm" onclick="setPFInvTab('pay',this)">Payées</button>
+                <button class="btn btn-sm" onclick="setPFInvTab('archives',this)" title="Factures payées archivées">📁 Archives</button>
               </div>
             </div>
             <div class="tw" style="margin-top:12px;"><table id="pfInvT">
@@ -774,6 +788,20 @@
     <div class="modal-ft">
       <button class="btn" onclick="closeUFFactModal()">Annuler</button>
       <button class="btn btn-primary" style="background:var(--green);border-color:var(--green);" onclick="confirmUFInvoice()">✓ Générer la facture PDF</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL IMPORT PERF (Batch E.2) -->
+<div class="ov" id="perfImportModal">
+  <div class="modal" style="max-width:880px;">
+    <div class="modal-hd"><span class="modal-title" id="perfImportTitle">Import rétro-commissions</span><button class="close-btn" onclick="closePerfImportModal()">×</button></div>
+    <div class="modal-body" id="perfImportBody">
+      <!-- Rendered dynamically -->
+    </div>
+    <div class="modal-ft">
+      <button class="btn" onclick="closePerfImportModal()">Annuler</button>
+      <button class="btn btn-primary" id="perfImportConfirmBtn" onclick="confirmPerfImport()">Valider l'import</button>
     </div>
   </div>
 </div>

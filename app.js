@@ -3557,9 +3557,34 @@ function _isinDatalistInnerHtml(fournName){
   var products=getFournProducts(fournName);
   if(!products.length)return '';
   return products.map(function(p){
-    var label=[p.part||'',p.currency||''].filter(Boolean).join(' · ');
+    var unitLbl=p.unit==='share'?'Share':'Part';
+    var label=[unitLbl+': '+(p.part||''),p.currency||''].filter(Boolean).join(' · ');
     return '<option value="'+escH(p.isin||'')+'">'+escH(label)+'</option>';
   }).join('');
+}
+// Catalog picker — used in the FRAIS block when mode=auto & fournisseur has products.
+// One option per ISIN, with the full descriptor : ISIN · Part/Share label · fees summary.
+function _renderAutoPickerOptions(fournName,currentIsin){
+  var prods=getFournProducts(fournName);
+  if(!prods.length)return '<option value="">— Pas de produits dans le catalogue —</option>';
+  var opts='<option value="">— Choisir un produit du catalogue —</option>';
+  prods.forEach(function(p){
+    var unitLbl=p.unit==='share'?'Share':'Part';
+    var feesSummary=(p.fees&&p.fees.length)
+      ? p.fees.map(function(f){return f.kind+' '+(f.pct||0)+'%';}).join(' · ')
+      : '(aucun frais)';
+    var label=p.isin+' · '+unitLbl+': '+(p.part||'(sans nom)')+' · '+feesSummary;
+    opts+='<option value="'+escH(p.isin||'')+'"'+(p.isin===currentIsin?' selected':'')+'>'+escH(label)+'</option>';
+  });
+  return opts;
+}
+function _onDfAutoPickerChange(sel){
+  var fournBlock=sel.closest('.deal-fourn-block');
+  if(!fournBlock)return;
+  var newIsin=sel.value;
+  if(!newIsin)return;
+  var isinInput=fournBlock.querySelector('.dfISIN');
+  if(isinInput){isinInput.value=newIsin;onDealIsinChange(isinInput);}
 }
 function _renderFeeSnapshotInline(fees){
   if(!fees||!fees.length)return '';
@@ -4296,6 +4321,8 @@ function _appendDealFournBlock(contractBlock,data){
       '<span class="dfBillingHint" style="font-size:10px;color:var(--text3);font-style:italic;">'+(data.billingMode==='feed'?'→ facture annuelle à émettre vers '+(data.fourn||'la société de gestion'):'→ une seule facture (UF) au save')+'</span>'+
     '</div>'+
     // ── Fees block (auto from ISIN / personnaliser / aucun) ──
+    // Quand mode=auto ET le fournisseur a des produits → un sélecteur de catalogue
+    // explicite apparaît : pick d'un produit → fill auto ISIN + Part + Type + fees.
     '<div class="dfFeesBlock" style="margin-top:6px;padding:5px 8px;background:var(--surface);border-radius:4px;border-top:1px dashed var(--border);">'+
       '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'+
         '<span style="font-size:10px;color:var(--text3);font-weight:600;letter-spacing:.3px;">FRAIS</span>'+
@@ -4304,9 +4331,12 @@ function _appendDealFournBlock(contractBlock,data){
           '<option value="custom"'+(feesMode==='custom'?' selected':'')+'>Personnaliser</option>'+
           '<option value="none"'+(feesMode==='none'?' selected':'')+'>Aucun</option>'+
         '</select>'+
-        '<div class="dfFeesAutoDisplay" style="font-size:10px;color:var(--text2);flex:1;display:'+(feesMode==='auto'?'':'none')+';">'+
-          ((data.feeSnapshot&&data.feeSnapshot.length)?_renderFeeSnapshotInline(data.feeSnapshot):'<span style="color:var(--text3);font-style:italic;">— choisis un ISIN pour récupérer les frais —</span>')+
-        '</div>'+
+        '<select class="dfFeesAutoPicker" onchange="_onDfAutoPickerChange(this)" title="Catalogue produits du fournisseur" style="font-size:11px;flex:1;min-width:200px;display:'+((feesMode==='auto'&&data.fourn&&getFournProducts(data.fourn).length)?'':'none')+';">'+
+          _renderAutoPickerOptions(data.fourn||'',data.isin||'')+
+        '</select>'+
+      '</div>'+
+      '<div class="dfFeesAutoDisplay" style="font-size:10px;color:var(--text2);margin-top:4px;display:'+(feesMode==='auto'?'':'none')+';">'+
+        ((data.feeSnapshot&&data.feeSnapshot.length)?_renderFeeSnapshotInline(data.feeSnapshot):'<span style="color:var(--text3);font-style:italic;">— choisis un produit du catalogue ou tape l\'ISIN —</span>')+
       '</div>'+
       '<div class="dfFeesCustomWrap" style="margin-top:6px;display:'+(feesMode==='custom'?'':'none')+';">'+
         '<div class="dfFeesCustomRows"></div>'+
@@ -4379,8 +4409,15 @@ function _onDfFeesModeChange(sel){
   var mode=sel.value;
   var autoEl=fournBlock.querySelector('.dfFeesAutoDisplay');
   var customWrap=fournBlock.querySelector('.dfFeesCustomWrap');
+  var pickerEl=fournBlock.querySelector('.dfFeesAutoPicker');
   if(autoEl)autoEl.style.display=mode==='auto'?'':'none';
   if(customWrap)customWrap.style.display=mode==='custom'?'':'none';
+  if(pickerEl){
+    var fournSel=fournBlock.querySelector('.dfFourn');
+    var fournName=fournSel?fournSel.value:'';
+    var hasProducts=getFournProducts(fournName).length>0;
+    pickerEl.style.display=(mode==='auto'&&hasProducts)?'':'none';
+  }
   if(mode==='auto'){
     // Re-derive snapshot from current ISIN
     var isinInput=fournBlock.querySelector('.dfISIN');
@@ -4450,6 +4487,16 @@ function onDealFournChange(sel){
   var listId=fournBlock.dataset.isinListId;
   var dl=fournBlock.querySelector('datalist#'+listId);
   if(dl)dl.innerHTML=_isinDatalistInnerHtml(fournName);
+  // Refresh the auto picker dropdown — populated from the new fourn's catalog,
+  // visible only if mode=auto AND there are products.
+  var picker=fournBlock.querySelector('.dfFeesAutoPicker');
+  if(picker){
+    picker.innerHTML=_renderAutoPickerOptions(fournName,'');
+    var modeEl=fournBlock.querySelector('.dfFeesMode');
+    var hasProducts=getFournProducts(fournName).length>0;
+    var isAuto=modeEl&&modeEl.value==='auto';
+    picker.style.display=(hasProducts&&isAuto)?'':'none';
+  }
   var isinInput=fournBlock.querySelector('.dfISIN');
   if(isinInput)onDealIsinChange(isinInput);
 }
@@ -4477,6 +4524,12 @@ function onDealIsinChange(input){
     // Batch D.1.#2 — auto-fill Type from product catalogue if it carries one and the user hasn't picked anything yet
     var typeSel=fournBlock.querySelector('.dfType');
     if(typeSel&&!typeSel.value&&product.type)typeSel.value=product.type;
+  }
+  // Sync the auto picker dropdown to match the current ISIN (so picking via text/datalist updates the catalog picker)
+  var autoPicker=fournBlock.querySelector('.dfFeesAutoPicker');
+  if(autoPicker){
+    var match=Array.prototype.find.call(autoPicker.options,function(o){return o.value===isin;});
+    autoPicker.value=match?isin:'';
   }
   var contract=input.closest('.deal-contract-block');
   if(contract)_updateContractSum(contract);
@@ -5545,17 +5598,22 @@ function onFournFamilleChange(){
 }
 
 function addFournProductLine(prod){
-  prod=prod||{isin:'',part:'',type:'',currency:'EUR',fees:[{kind:'',pct:''}]};
+  prod=prod||{isin:'',part:'',type:'',unit:'part',currency:'EUR',fees:[{kind:'',pct:''}]};
   var c=document.getElementById('fProducts');
   var card=document.createElement('div');
   card.className='fourn-product-card';
   card.style.cssText='background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:6px;';
-  // Header row : ISIN, Part, Type, Currency, × remove product
+  // Header row : ISIN, Unit, Label, Type, Currency, × remove product
   var curOpts=['EUR','USD','GBP','CHF','JPY'].map(function(c){return '<option'+(c===(prod.currency||'EUR')?' selected':'')+'>'+c+'</option>';}).join('');
+  var unitVal=prod.unit||'part';
   card.innerHTML=
-    '<div style="display:grid;grid-template-columns:1.3fr 1.1fr 110px 65px 24px;gap:6px;margin-bottom:6px;align-items:center;">'+
+    '<div style="display:grid;grid-template-columns:1.2fr 70px 1fr 100px 60px 24px;gap:6px;margin-bottom:6px;align-items:center;">'+
       '<input type="text" class="fpIsin" value="'+escH(prod.isin||'')+'" placeholder="ISIN (FR00...)" style="font-family:monospace;font-size:11px;"/>'+
-      '<input type="text" class="fpPart" value="'+escH(prod.part||'')+'" placeholder="Part / Share"/>'+
+      '<select class="fpUnit" title="Type d\'unité — part de fonds ou action / share">'+
+        '<option value="part"'+(unitVal==='part'?' selected':'')+'>Part</option>'+
+        '<option value="share"'+(unitVal==='share'?' selected':'')+'>Share</option>'+
+      '</select>'+
+      '<input type="text" class="fpPart" value="'+escH(prod.part||'')+'" placeholder="ex: A acc EUR / AAPL"/>'+
       '<select class="fpType">'+produitTypeOptHtml(prod.type)+'</select>'+
       '<select class="fpCurrency">'+curOpts+'</select>'+
       '<button type="button" onclick="removeFournProductLine(this)" title="Supprimer ce produit" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:18px;padding:0;line-height:1;">×</button>'+
@@ -5607,6 +5665,8 @@ function getFournProductsFromModal(){
     var part=(card.querySelector('.fpPart').value||'').trim();
     var typeEl=card.querySelector('.fpType');
     var type=typeEl?typeEl.value:'';
+    var unitEl=card.querySelector('.fpUnit');
+    var unit=unitEl?unitEl.value:'part';
     var currency=card.querySelector('.fpCurrency').value||'EUR';
     var fees=[];
     card.querySelectorAll('.fp-fee-row').forEach(function(row){
@@ -5615,8 +5675,7 @@ function getFournProductsFromModal(){
       var pct=parseFloat(pctRaw);
       if(kind||!isNaN(pct))fees.push({kind:kind,pct:isNaN(pct)?0:pct});
     });
-    // Skip totally-empty cards (user clicked + then nothing)
-    if(isin||part||type||fees.length)prods.push({isin:isin,part:part,type:type,currency:currency,fees:fees});
+    if(isin||part||type||fees.length)prods.push({isin:isin,part:part,type:type,unit:unit,currency:currency,fees:fees});
   });
   return prods;
 }

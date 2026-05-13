@@ -16,6 +16,7 @@ function dealToRow(d){
   r.arb_id=r.arbId; r.arb_src=r.arbSrc; r.arb_closed=r.arbClosed;
   r.end_date=r.end;
   r.deal_group_id=r.dealGroupId; delete r.dealGroupId;
+  r.fx_date=r.fxDate||null; delete r.fxDate;
   delete r.ufR; delete r.runR; delete r.ufE; delete r.runE;
   delete r.invS; delete r.fSt; delete r.fRef;
   delete r.arbId; delete r.arbSrc; delete r.arbClosed; delete r.end;
@@ -41,12 +42,49 @@ function rowToDeal(r){
   d.arbId=d.arb_id; d.arbSrc=d.arb_src; d.arbClosed=d.arb_closed;
   d.end=d.end_date;
   d.dealGroupId=d.deal_group_id||null; delete d.deal_group_id;
+  d.fxDate=d.fx_date||null; delete d.fx_date;
   delete d.uf_r; delete d.run_r; delete d.uf_e; delete d.run_e;
   delete d.inv_s; delete d.f_st; delete d.f_ref;
   delete d.arb_id; delete d.arb_src; delete d.arb_closed; delete d.end_date;
   return d;
 }
 function rowToRef(r){var d=Object.assign({},r);d._id=d.id;delete d.id;delete d.created_at;delete d.updated_at;return d;}
+
+// ── Phase 3 — FX rates (Frankfurter / ECB) ─────────────────────────────────
+// In-memory cache + localStorage persistence. Keyed by "from-to-date".
+// Returns the multiplier rate so: amount_to = amount_from * rate.
+var _FX_CACHE_KEY='dealflow-fx-cache-v1';
+var _fxCache={};
+function _fxLoadFromStorage(){
+  try{var s=localStorage.getItem(_FX_CACHE_KEY);if(s)_fxCache=JSON.parse(s)||{};}catch(e){_fxCache={};}
+}
+function _fxSaveToStorage(){
+  try{localStorage.setItem(_FX_CACHE_KEY,JSON.stringify(_fxCache));}catch(e){}
+}
+_fxLoadFromStorage();
+async function getFxRate(from,to,date){
+  if(!from||!to||from===to)return 1;
+  var dKey=date||'latest';
+  var key=from+'-'+to+'-'+dKey;
+  if(_fxCache[key]!=null)return _fxCache[key];
+  var url='https://api.frankfurter.app/'+dKey+'?from='+encodeURIComponent(from)+'&to='+encodeURIComponent(to);
+  try{
+    var res=await fetch(url);
+    if(!res.ok)throw new Error('HTTP '+res.status);
+    var data=await res.json();
+    var rate=data&&data.rates&&data.rates[to];
+    if(rate==null)throw new Error('No rate '+to+' in response');
+    _fxCache[key]=rate;
+    // Frankfurter falls back to the last available rate if `date` is a weekend/holiday;
+    // also cache under that resolved date so subsequent lookups are exact.
+    if(data.date&&data.date!==dKey)_fxCache[from+'-'+to+'-'+data.date]=rate;
+    _fxSaveToStorage();
+    return rate;
+  }catch(err){
+    console.warn('[FX] fetch failed for '+key,err);
+    return null; // caller treats null = "could not resolve"
+  }
+}
 
 async function sbGet(table){
   var res=await sb.from(table).select('*');
@@ -1252,18 +1290,66 @@ function openDet(d){
     }
   }
 
+  // Phase 4 — richer details: codifications expanded + FX snapshot + group indicator
+  var codifsBlock='';
+  if(Array.isArray(d.codifications)&&d.codifications.length){
+    codifsBlock='<div class="form-sep" style="margin-top:14px;">Fournisseurs du contrat</div>';
+    codifsBlock+='<div style="display:flex;flex-direction:column;gap:6px;">'+
+      d.codifications.map(function(c){
+        var feeStr=(c.feeSnapshot&&c.feeSnapshot.length)?c.feeSnapshot.map(function(f){return escH(f.kind||'?')+' '+(f.pct||0)+'%';}).join(' · '):'—';
+        var pfStr=(c.pf&&c.pf.mode&&c.pf.mode!=='none')?(c.pf.mode==='pct'?(c.pf.rate||0)+'% sur perf'+(c.pf.hurdle?' (hurdle '+c.pf.hurdle+'%)':''):fE(c.pf.amount||0)+' fixe')+' · '+(c.pf.freq||'annuel'):null;
+        var amtStr=c.nominal?fE(c.nominal):'—';
+        return '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:5px;padding:8px 10px;font-size:12px;">'+
+          '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:baseline;margin-bottom:4px;">'+
+            '<span style="font-weight:600;">'+escH(c.fourn||'—')+'</span>'+
+            (c.produit?'<span style="color:var(--text2);">'+escH(c.produit)+'</span>':'')+
+            (c.isin?'<span style="font-family:monospace;font-size:10px;color:var(--text3);">'+escH(c.isin)+'</span>':'')+
+            '<div style="flex:1;"></div>'+
+            '<span style="font-weight:600;">'+amtStr+'</span>'+
+          '</div>'+
+          '<div style="font-size:11px;color:var(--text2);display:flex;gap:14px;flex-wrap:wrap;">'+
+            (c.assureur?'<span>Assureur : <b>'+escH(c.assureur)+'</b></span>':'')+
+            (c.banque?'<span>Banque : <b>'+escH(c.banque)+'</b></span>':'')+
+            (c.broker?'<span>Broker : '+escH(c.broker)+'</span>':'')+
+            (c.maturite?'<span>Maturité : '+escH(c.maturite)+'</span>':'')+
+          '</div>'+
+          '<div style="font-size:11px;color:var(--text3);margin-top:3px;">Frais : '+feeStr+(pfStr?' · Perf : '+pfStr:'')+'</div>'+
+        '</div>';
+      }).join('')+
+    '</div>';
+  }
+  // FX snapshot block (only when contract is non-EUR)
+  var fxBlock='';
+  if(d.dev&&d.dev!=='EUR'&&d.fx&&d.fx!==1){
+    fxBlock='<div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--rs);padding:8px 12px;margin-top:10px;font-size:11px;color:var(--text2);">'+
+      '<b>FX snapshot</b> : 1 '+escH(d.dev)+' = '+d.fx+' EUR'+(d.fxDate?' au '+escH(d.fxDate):'')+' · '+
+      'Nominal '+escH(d.dev)+' '+fE(d.nom).replace('€','')+' ≈ '+fE(Math.round(d.nom*d.fx))+
+    '</div>';
+  }
+  // Group indicator (this deal is part of a multi-row submission)
+  var groupBlock='';
+  if(d.dealGroupId){
+    var siblings=deals.filter(function(x){return x.dealGroupId===d.dealGroupId&&x._id!==d._id;});
+    if(siblings.length){
+      groupBlock='<div style="background:rgba(29,95,212,.08);border:1px solid rgba(29,95,212,.25);border-radius:var(--rs);padding:8px 12px;margin-top:10px;font-size:11px;color:var(--blue);">'+
+        '<b>↔ Soumission groupée</b> ('+(siblings.length+1)+' contrats) : '+
+        siblings.map(function(s){return '<a style="cursor:pointer;text-decoration:underline;" onclick="closeDet();openDet(deals['+deals.indexOf(s)+'])">'+escH(s.client)+' / '+escH(s.contrat)+'</a>';}).join(' · ')+
+      '</div>';
+    }
+  }
   document.getElementById('detBody').innerHTML=
     '<div class="fg2">'+
-    '<div><div class="kpi-l">Vendeur</div><div>'+d.v+'</div></div>'+
-    '<div><div class="kpi-l">Trade date</div><div>'+d.date+'</div></div>'+
-    '<div><div class="kpi-l">Fournisseur</div><div>'+d.fourn+'</div></div>'+
-    '<div><div class="kpi-l">Produit</div><div>'+d.produit+'</div></div>'+
-    '<div><div class="kpi-l">Nominal</div><div>'+fE(d.nom)+(d.arbClosed?' <span class="badge bp" style="margin-left:6px;">Clôturé par arbitrage</span>':'')+'</div></div>'+
-    '<div><div class="kpi-l">Type</div><div>'+d.ct+'</div></div>'+
+    '<div><div class="kpi-l">Vendeur</div><div>'+escH(d.v||'')+'</div></div>'+
+    '<div><div class="kpi-l">Trade date</div><div>'+escH(d.date||'')+'</div></div>'+
+    '<div><div class="kpi-l">Client</div><div>'+escH(d.client||'')+'</div></div>'+
+    '<div><div class="kpi-l">Contrat</div><div>'+escH(d.contrat||'')+'</div></div>'+
+    (d.depositaire?'<div><div class="kpi-l">Dépositaire</div><div>'+escH(d.depositaire)+'</div></div>':'')+
+    '<div><div class="kpi-l">Total contrat</div><div>'+fE(d.nom)+' '+escH(d.dev||'EUR')+(d.arbClosed?' <span class="badge bp" style="margin-left:6px;">Clôturé par arbitrage</span>':'')+'</div></div>'+
+    (d.ct?'<div><div class="kpi-l">Type comm.</div><div>'+escH(d.ct)+'</div></div>':'')+
     (d.ufE>0?'<div><div class="kpi-l">UF</div><div>'+fE(d.ufE)+'</div></div>':'')+
     (d.runE>0?'<div><div class="kpi-l">Running/an</div><div>'+fE(d.runE)+'</div></div>':'')+
-    '<div><div class="kpi-l">Statut facture</div><div>'+d.fSt+'</div></div>'+
-    '</div>'+arbBlock;
+    '<div><div class="kpi-l">Statut facture</div><div>'+escH(d.fSt||'')+'</div></div>'+
+    '</div>'+groupBlock+fxBlock+codifsBlock+arbBlock;
   document.getElementById('detHist').innerHTML=(d.hist||[]).slice().reverse().map(function(h){return '<div style="font-size:12px;padding:4px 0;border-bottom:1px solid var(--border);"><span style="color:var(--text3);">'+h.ts+'</span> — '+h.a+'</div>';}).join('');
   document.getElementById('detEdit').onclick=function(){closeDet();openDealModal(idx);};
   document.getElementById('detDelete').onclick=function(){
@@ -3291,6 +3377,20 @@ async function saveDeal(){
   var date=document.getElementById('mDate').value;
   var stat=document.getElementById('mStat').value;
   var notes=document.getElementById('mNotes').value;
+  // Phase 3 — Pre-fetch FX rates for every non-EUR contract currency.
+  // Each currency is fetched once; the result is reused for all contracts in that currency.
+  // FX is snapshotted as-of the trade date (immutable per deal — Q1A pattern, currency edition).
+  var fxByDev={};
+  for(var ti=0;ti<tree.length;ti++){
+    var dev=tree[ti].contractData.dev;
+    if(dev&&dev!=='EUR'&&!(dev in fxByDev)){
+      fxByDev[dev]=await getFxRate(dev,'EUR',date);
+    }
+  }
+  var fxFailures=Object.keys(fxByDev).filter(function(k){return fxByDev[k]==null;});
+  if(fxFailures.length){
+    toast('⚠ FX non récupéré pour : '+fxFailures.join(', ')+' — sauvegardé avec fx=1 (à corriger manuellement)');
+  }
   if(editIdx>=0){
     // EDIT mode — update in-place. Modal is locked to the original group structure
     // (no add/remove client/contract), so we map each rendered contract back to its
@@ -3304,7 +3404,7 @@ async function saveDeal(){
       var origRow=deals.find(function(x){return x._id===origId;});
       if(!origRow)continue;
       var prevHist=Array.isArray(origRow.hist)?origRow.hist:[];
-      var rowPayload=_buildDealRowFromContract(pair,vendor,date,stat,notes,groupId);
+      var rowPayload=_buildDealRowFromContract(pair,vendor,date,stat,notes,groupId,fxByDev);
       rowPayload._id=origId;
       rowPayload.hist=prevHist.concat([{ts:nowS(),a:'Deal modifié',by:vendor}]);
       await sbUpdate('deals',origId,rowPayload);
@@ -3318,7 +3418,7 @@ async function saveDeal(){
     var groupId=tree.length>1?_genGroupId():null;
     var autoLinked=0;
     for(var j=0;j<tree.length;j++){
-      var rowPayload=_buildDealRowFromContract(tree[j],vendor,date,stat,notes,groupId);
+      var rowPayload=_buildDealRowFromContract(tree[j],vendor,date,stat,notes,groupId,fxByDev);
       rowPayload.hist=[{ts:nowS(),a:'Deal créé',by:vendor}];
       var res=await sbInsert('deals',rowPayload);
       if(res&&res[0])rowPayload._id=res[0].id;
@@ -3338,7 +3438,7 @@ function _genGroupId(){
   if(typeof crypto!=='undefined'&&crypto.randomUUID)return 'g_'+crypto.randomUUID();
   return 'g_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,8);
 }
-function _buildDealRowFromContract(pair,vendor,date,stat,notes,groupId){
+function _buildDealRowFromContract(pair,vendor,date,stat,notes,groupId,fxByDev){
   var c=pair.contractData;
   var firstCodif=(c.codifications&&c.codifications[0])||{};
   // Legacy deal-level pf : kept as a no-op marker (per-fourn pf is the source of truth now)
@@ -3346,6 +3446,16 @@ function _buildDealRowFromContract(pair,vendor,date,stat,notes,groupId){
   var ufP=(parseFloat(c.ufR)||0)/100;
   var runP=(parseFloat(c.runR)||0)/100;
   var nom=parseFloat(c.nom)||0;
+  var dev=c.dev||'EUR';
+  // FX rate snapshot at trade date (per Q1A immutability) — only relevant for non-EUR contracts
+  var fxRate=1,fxDate=null;
+  if(dev!=='EUR'){
+    var resolved=(fxByDev&&fxByDev[dev]);
+    if(resolved!=null){fxRate=resolved;fxDate=date;}
+    // If null → keep fx=1 (the toast in saveDeal already warned the user)
+  }
+  // EUR-equivalent of the contract total — derived but useful for KPIs that need a single base
+  var nomEur=Math.round(nom*fxRate);
   return{
     v:vendor,date:date,stat:stat,
     client:pair.client,contrat:c.contrat||'Assurance Vie Lux',
@@ -3354,10 +3464,12 @@ function _buildDealRowFromContract(pair,vendor,date,stat,notes,groupId){
     isin:firstCodif.isin||'',broker:firstCodif.broker||'',
     maturite:firstCodif.maturite||null,terme:firstCodif.maturite||null,
     codifications:c.codifications||[],
-    nom:nom,dev:c.dev||'EUR',fx:1,
+    nom:nom,dev:dev,fx:fxRate,
+    fxDate:fxDate,
     issue:'',invS:'',inv:'',
     ct:c.ct||'UF',ufR:parseFloat(c.ufR)||0,runR:parseFloat(c.runR)||0,tva:parseFloat(c.tva)||0,
-    ufE:Math.round(nom*ufP),runE:Math.round(nom*runP),
+    // UF/Run EUR-equivalents apply the snapshotted FX rate
+    ufE:Math.round(nomEur*ufP),runE:Math.round(nomEur*runP),
     pf:legacyPf,
     fSt:'À émettre',fRef:'',
     notes:notes||'',

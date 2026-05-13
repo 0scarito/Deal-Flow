@@ -1335,9 +1335,11 @@ function openDet(d){
   // FX snapshot block (only when contract is non-EUR)
   var fxBlock='';
   if(d.dev&&d.dev!=='EUR'&&d.fx&&d.fx!==1){
+    // d.fx = native_per_EUR (legacy) → display the human "1 X = (1/d.fx) EUR" form
+    var rateHuman=(1/d.fx);
     fxBlock='<div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--rs);padding:8px 12px;margin-top:10px;font-size:11px;color:var(--text2);">'+
-      '<b>FX snapshot</b> : 1 '+escH(d.dev)+' = '+d.fx+' EUR'+(d.fxDate?' au '+escH(d.fxDate):'')+' · '+
-      'Nominal '+escH(d.dev)+' '+fE(d.nom).replace('€','')+' ≈ '+fE(Math.round(d.nom*d.fx))+
+      '<b>FX snapshot</b> : 1 '+escH(d.dev)+' = '+rateHuman.toFixed(4)+' EUR'+(d.fxDate?' au '+escH(d.fxDate):'')+' · '+
+      'Nominal '+escH(d.dev)+' '+f0(d.nom)+' ≈ '+fE(Math.round(d.nom/d.fx))+
     '</div>';
   }
   // Group indicator (this deal is part of a multi-row submission)
@@ -2550,6 +2552,45 @@ function renderFact(){
   document.getElementById('factList').innerHTML=show.length?
     show.slice().sort((a,b)=>b.date.localeCompare(a.date)).map(d=>fCard(d)).join(''):
     '<div class="empty">Aucune facture UF dans cette catégorie.</div>';
+  // Batch B.3 — async pass to fill USD conversion mentions with billing-date FX rate
+  _updateFactFxMentions(show);
+}
+// Batch B.3 — fetch period FX (= invoice date or today) for each USD facture
+// and render the conversion mention inline. Snapshot trade-date FX is also shown
+// for audit comparison.
+async function _updateFactFxMentions(deals_subset){
+  for(var i=0;i<deals_subset.length;i++){
+    var d=deals_subset[i];
+    if(!d._id||!d.dev||d.dev==='EUR')continue;
+    if(d.fSt==='Payé')continue; // payment locked the rate — no need to surface a live conversion
+    var card=document.querySelector('.fact-card[data-deal-id="'+d._id+'"]');
+    if(!card)continue;
+    var mention=card.querySelector('.fx-mention');
+    if(!mention)continue;
+    var billingDate=d.invS||today();
+    mention.innerHTML='<span style="color:var(--text3);font-size:10px;">⏱ Calcul FX au '+escH(billingDate)+'…</span>';
+    var rate=await getFxRate(d.dev,'EUR',billingDate);
+    if(rate==null){
+      mention.innerHTML='<div style="font-size:10px;color:var(--amber-t);background:var(--amber-bg);padding:5px 8px;border-radius:3px;border-left:2px solid var(--amber);">⚠ FX du jour non récupéré pour '+escH(d.dev)+' au '+escH(billingDate)+' — affichage avec snapshot trade-date.</div>';
+      continue;
+    }
+    var nominalNative=d.nom||0;
+    var ufP=(d.ufR||0)/100;
+    var feeNative=nominalNative*ufP;
+    var feeEurPeriod=feeNative*rate;
+    var snapshotRate=d.fx?(1/d.fx):1;
+    var snapshotEur=d.ufE||0;
+    var diff=feeEurPeriod-snapshotEur;
+    mention.innerHTML=
+      '<div style="font-size:10px;color:var(--text2);margin-top:6px;padding:6px 9px;background:var(--amber-bg);border-radius:3px;border-left:2px solid var(--amber);">'+
+        '<div style="font-weight:600;color:var(--amber-t);margin-bottom:3px;">⇄ Conversion '+escH(d.dev)+' → EUR (taux période)</div>'+
+        '<div>Nominal <b>'+f0(nominalNative)+' '+escH(d.dev)+'</b> × UF '+(d.ufR||0)+'% = <b>'+f0(feeNative)+' '+escH(d.dev)+'</b></div>'+
+        '<div>× FX <b>'+rate.toFixed(4)+'</b> au '+escH(billingDate)+' (date facturation) = <b>'+fE(Math.round(feeEurPeriod))+' HT</b></div>'+
+        '<div style="color:var(--text3);margin-top:3px;">Pour mémoire — snapshot trade : FX '+snapshotRate.toFixed(4)+' au '+escH(d.fxDate||d.date||'?')+' = '+fE(snapshotEur)+
+          (Math.abs(diff)>1?' · écart '+(diff>0?'+':'')+fE(Math.round(diff)):'')+
+        '</div>'+
+      '</div>';
+  }
 }
 
 function fCard(d){
@@ -2559,13 +2600,16 @@ function fCard(d){
   // Visual distinction for archived (faded + bottom-right warning panel)
   var archBanner=arch?'<div style="position:absolute;bottom:0;right:0;background:var(--red-bg);color:var(--red-t);font-size:10px;font-weight:600;padding:4px 10px;border-top-left-radius:8px;border-left:1px solid rgba(194,59,59,.3);border-top:1px solid rgba(194,59,59,.3);display:flex;align-items:center;gap:5px;" title="Le deal a été supprimé. La facture est conservée pour historique.">⚠ Deal supprimé</div>':'';
   var statusButtons=arch?'':'<button class="btn btn-sm" onclick="cycleFS('+idx+')">Changer statut</button>';
-  return '<div class="fact-card" style="position:relative;'+(arch?'opacity:.85;border-style:dashed;':'')+'">'+
+  // Batch B.3 — placeholder for FX conversion mention (USD/etc. only — filled async)
+  var fxMentionPlaceholder=(d.dev&&d.dev!=='EUR'&&d.fSt!=='Payé')?'<div class="fx-mention"></div>':'';
+  var devChip=(d.dev&&d.dev!=='EUR')?' <span class="badge ba" style="font-size:9px;">'+escH(d.dev)+'</span>':'';
+  return '<div class="fact-card" data-deal-id="'+escH(d._id||'')+'" style="position:relative;'+(arch?'opacity:.85;border-style:dashed;':'')+'">'+
     '<div style="display:flex;justify-content:space-between;align-items:flex-start;">'+
       '<div>'+
         '<div style="font-size:11px;color:var(--text3);">'+(d.fRef||'Sans référence')+' · '+d.date+'</div>'+
         '<div style="font-size:14px;font-weight:600;margin-top:1px;">'+d.client+'</div>'+
         '<div style="font-size:11px;color:var(--text2);">'+d.fourn+(d.produit?' · '+d.produit:'')+'</div>'+
-        '<div style="margin-top:4px;"><span class="badge bb" style="font-size:9px;">UF</span> <span style="font-size:11px;color:var(--text2);">Trade date : '+(d.issue||'—')+'</span></div>'+
+        '<div style="margin-top:4px;"><span class="badge bb" style="font-size:9px;">UF</span>'+devChip+' <span style="font-size:11px;color:var(--text2);">Trade date : '+(d.issue||'—')+'</span></div>'+
       '</div>'+
       '<div style="display:flex;gap:6px;align-items:center;">'+fBadge(d.fSt)+statusButtons+
       '</div>'+
@@ -2577,6 +2621,7 @@ function fCard(d){
       '<div><div class="fd-l">Invoice payment</div><div class="fd-v">'+(d.inv||'—')+'</div></div>'+
       '<div><div class="fd-l">Vendeur</div><div class="fd-v">'+d.v+'</div></div>'+
     '</div>'+
+    fxMentionPlaceholder+
     archBanner+
   '</div>';
 }
@@ -2603,12 +2648,48 @@ function trimLabelFR(period){
   return 'Q'+m[1]+' '+m[2];
 }
 var ALERT_CATEGORIES={
+  verifs:{label:'Vérifications post-deal',color:'var(--green,#22a05a)'},
   produits:{label:'Produits / Échéances',color:'var(--amber)'},
   deals:{label:'Cohérence des deals',color:'var(--red)'},
   contrats:{label:'Suivi Contrats',color:'var(--blue)'},
   rapprochement:{label:'Rapprochements',color:'var(--purple)'},
   orphans:{label:'Données orphelines',color:'var(--text3)'}
 };
+
+// Batch B.1 — Dismissed alerts persisted in localStorage.
+// Reset never (Oscar can clear localStorage manually if needed).
+var _ALERT_DISMISS_KEY='dealflow-alerts-dismissed-v1';
+var _dismissedAlerts=null;
+function _loadDismissedAlerts(){
+  if(_dismissedAlerts)return _dismissedAlerts;
+  try{_dismissedAlerts=JSON.parse(localStorage.getItem(_ALERT_DISMISS_KEY)||'{}')||{};}catch(e){_dismissedAlerts={};}
+  return _dismissedAlerts;
+}
+function _isAlertDismissed(id){return !!_loadDismissedAlerts()[id];}
+function dismissAlert(id){
+  var d=_loadDismissedAlerts();
+  d[id]=new Date().toISOString();
+  try{localStorage.setItem(_ALERT_DISMISS_KEY,JSON.stringify(d));}catch(e){}
+  renderAlertesPage();
+  renderAll&&typeof renderAll==='function'&&renderAll();
+}
+function _firstOfNextMonth(date){
+  return new Date(date.getFullYear(),date.getMonth()+1,1);
+}
+function _firstOfNextQuarter(date){
+  var qStartMonth=Math.floor(date.getMonth()/3)*3+3; // next quarter start
+  var year=date.getFullYear();
+  if(qStartMonth>=12){qStartMonth-=12;year++;}
+  return new Date(year,qStartMonth,1);
+}
+function _currentQuarterTag(date){
+  var q=Math.floor(date.getMonth()/3)+1;
+  return date.getFullYear()+'-Q'+q;
+}
+function _quarterEndDate(date){
+  var qStartMonth=Math.floor(date.getMonth()/3)*3;
+  return new Date(date.getFullYear(),qStartMonth+3,0); // last day of quarter
+}
 var ALERT_SEVERITY={
   urgent:{lbl:'Urgent',cls:'br',color:'var(--red)'},
   warning:{lbl:'Attention',cls:'ba',color:'var(--amber)'},
@@ -2618,6 +2699,65 @@ var ALERT_SEVERITY={
 function buildAlerts(){
   var alerts=[],now=new Date();now.setHours(0,0,0,0);
   var dayMs=86400000;
+
+  // VÉRIFICATIONS POST-DEAL (Batch B.1) — J+3 / J+10 / 1er du mois / 1er du trimestre
+  deals.forEach(function(d){
+    if(d.stat==='Deal payé')return; // fully closed = nothing to verify
+    if(d.archived)return;
+    var refRaw=d.issue||d.date;
+    if(!refRaw)return;
+    var ref=new Date(refRaw);
+    if(isNaN(ref))return;
+    ref.setHours(0,0,0,0);
+    var key=d._id||'idx-'+deals.indexOf(d);
+    var detail=(d.client||'?')+' · '+(d.fourn||'')+(d.produit?' / '+d.produit:'');
+    var act={type:'deal',payload:d._id||null};
+    // J+3
+    var j3=new Date(ref.getTime()+3*dayMs);
+    if(now>=j3){
+      var id3='verif-j3-'+key;
+      if(!_isAlertDismissed(id3)){
+        var ds3=Math.floor((now-j3)/dayMs);
+        alerts.push({id:id3,severity:ds3>14?'urgent':ds3>7?'warning':'info',category:'verifs',title:'Vérif J+3 — '+(d.produit||'deal'),detail:detail+' · trade '+fmtDateFR(refRaw)+(ds3>0?' · '+ds3+' j depuis la deadline':''),action:act,dismissable:true});
+      }
+    }
+    // J+10
+    var j10=new Date(ref.getTime()+10*dayMs);
+    if(now>=j10){
+      var id10='verif-j10-'+key;
+      if(!_isAlertDismissed(id10)){
+        var ds10=Math.floor((now-j10)/dayMs);
+        alerts.push({id:id10,severity:ds10>21?'urgent':ds10>10?'warning':'info',category:'verifs',title:'Vérif J+10 — '+(d.produit||'deal'),detail:detail+' · trade '+fmtDateFR(refRaw)+(ds10>0?' · '+ds10+' j depuis la deadline':''),action:act,dismissable:true});
+      }
+    }
+    // 1er du mois suivant
+    var nextMonth=_firstOfNextMonth(ref);
+    if(now>=nextMonth){
+      var idM='verif-month-'+key+'-'+nextMonth.toISOString().slice(0,7);
+      if(!_isAlertDismissed(idM)){
+        alerts.push({id:idM,severity:'info',category:'verifs',title:'Vérif mensuelle — '+(d.produit||'deal'),detail:detail+' · checkpoint depuis '+fmtDateFR(nextMonth.toISOString().slice(0,10)),action:act,dismissable:true});
+      }
+    }
+    // 1er du trimestre suivant
+    var nextQ=_firstOfNextQuarter(ref);
+    if(now>=nextQ){
+      var idQ='verif-quarter-'+key+'-'+nextQ.toISOString().slice(0,7);
+      if(!_isAlertDismissed(idQ)){
+        alerts.push({id:idQ,severity:'info',category:'verifs',title:'Vérif trimestrielle — '+(d.produit||'deal'),detail:detail+' · début de trimestre '+fmtDateFR(nextQ.toISOString().slice(0,10)),action:act,dismissable:true});
+      }
+    }
+  });
+
+  // FRAIS BANQUE TRIMESTRIEL (Batch B.2) — visible les 30 derniers jours du trimestre courant
+  var qEnd=_quarterEndDate(now);
+  var qTag=_currentQuarterTag(now);
+  var daysToQEnd=Math.round((qEnd-now)/dayMs);
+  if(daysToQEnd>=0&&daysToQEnd<=30){
+    var bankAlertId='bank-fees-check-'+qTag;
+    if(!_isAlertDismissed(bankAlertId)){
+      alerts.push({id:bankAlertId,severity:daysToQEnd<=10?'urgent':daysToQEnd<=20?'warning':'info',category:'verifs',title:'Frais transaction banque — '+qTag+' à check',detail:'Fin de trimestre dans '+daysToQEnd+' j · vérifier les frais de transaction côté banque dépositaire',action:null,dismissable:true});
+    }
+  }
 
   // PRODUITS / ÉCHÉANCES
   deals.forEach(function(d){
@@ -2797,6 +2937,7 @@ function renderAlertesPage(){
     list.forEach(function(a){
       var sv=ALERT_SEVERITY[a.severity];
       var clickable=alertActionHandler(a)?'cursor:pointer;':'';
+      var dismissBtn=a.dismissable?'<button type="button" class="alert-dismiss-btn" data-dismiss="'+escH(a.id)+'" title="Marquer comme vérifié" style="background:none;border:1px solid var(--border);color:var(--text2);cursor:pointer;font-size:10px;padding:3px 8px;border-radius:3px;margin-left:8px;">✓ Vérifié</button>':'';
       html+='<div class="alert-item" style="'+clickable+'" data-alertid="'+escH(a.id)+'">'+
         '<span class="adot" style="background:'+sv.color+';"></span>'+
         '<div style="flex:1;min-width:0;">'+
@@ -2804,16 +2945,30 @@ function renderAlertesPage(){
           '<div style="font-size:11px;color:var(--text2);margin-top:1px;">'+escH(a.detail||'')+'</div>'+
         '</div>'+
         '<span class="badge '+sv.cls+'">'+sv.lbl+'</span>'+
+        dismissBtn+
       '</div>';
     });
     html+='</div>';
   });
   listEl.innerHTML=html;
+  // Wire up action handlers (click on the row) and dismiss buttons (click on ✓)
   listEl.querySelectorAll('.alert-item').forEach(function(el){
     var id=el.dataset.alertid;
     var a=alerts.find(function(x){return x.id===id;});if(!a)return;
-    var h=alertActionHandler(a);if(!h)return;
-    el.addEventListener('click',h);
+    var h=alertActionHandler(a);
+    if(h){
+      el.addEventListener('click',function(ev){
+        // Don't trigger the row action when the user clicks the dismiss button
+        if(ev.target.closest('.alert-dismiss-btn'))return;
+        h(ev);
+      });
+    }
+  });
+  listEl.querySelectorAll('.alert-dismiss-btn').forEach(function(btn){
+    btn.addEventListener('click',function(ev){
+      ev.stopPropagation();
+      dismissAlert(btn.dataset.dismiss);
+    });
   });
 }
 
@@ -3461,15 +3616,18 @@ function _buildDealRowFromContract(pair,vendor,date,stat,notes,groupId,fxByDev){
   var runP=(parseFloat(c.runR)||0)/100;
   var nom=parseFloat(c.nom)||0;
   var dev=c.dev||'EUR';
-  // FX rate snapshot at trade date (per Q1A immutability) — only relevant for non-EUR contracts
+  // FX rate snapshot at trade date (per Q1A immutability) — only relevant for non-EUR contracts.
+  // Legacy convention: d.fx = native_per_EUR (e.g. for USD : 1.087 means 1 EUR = 1.087 USD,
+  // so d.nom / d.fx = EUR amount). Frankfurter returns the inverse (0.92 for USD→EUR),
+  // we invert to preserve compat with every existing renderer (d.nom/(d.fx||1) is used everywhere).
   var fxRate=1,fxDate=null;
   if(dev!=='EUR'){
     var resolved=(fxByDev&&fxByDev[dev]);
-    if(resolved!=null){fxRate=resolved;fxDate=date;}
+    if(resolved!=null&&resolved!==0){fxRate=1/resolved;fxDate=date;}
     // If null → keep fx=1 (the toast in saveDeal already warned the user)
   }
   // EUR-equivalent of the contract total — derived but useful for KPIs that need a single base
-  var nomEur=Math.round(nom*fxRate);
+  var nomEur=Math.round(nom/fxRate);
   return{
     v:vendor,date:date,stat:stat,
     client:pair.client,contrat:c.contrat||'Assurance Vie Lux',

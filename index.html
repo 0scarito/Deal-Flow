@@ -57,6 +57,7 @@
       <div class="sb-label" style="margin-top:14px;">Facturation &amp; Commissions</div>
       <button class="nbtn" onclick="goTo('facturation',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="1" width="12" height="14" rx="1.5"/><path d="M5 5h6M5 8h6M5 11h3"/></svg>Facturation</button>
       <button class="nbtn" onclick="goTo('commissions',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 13V5l4-3 4 3 4-3v11"/><path d="M6 13V9h4v4"/><path d="M8 3v2"/></svg>Commissions</button>
+      <button class="nbtn" onclick="goTo('suivi-perf',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="2,12 5,8 8,10 14,3"/><circle cx="5" cy="8" r="1" fill="currentColor"/><circle cx="8" cy="10" r="1" fill="currentColor"/><circle cx="14" cy="3" r="1" fill="currentColor"/></svg>Suivi Perf</button>
       <button class="nbtn" onclick="goTo('graphiques',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 13V7l4-3 4 3 4-4v10H2z"/></svg>Pilotage</button>
 
       <!-- Section Référentiels -->
@@ -229,13 +230,6 @@
         <!-- KPIs globaux -->
         <div class="kpi-grid" style="grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:20px;" id="factKpi"></div>
 
-        <!-- Drop zone Excel rétro-commissions (Batch E.2) -->
-        <div id="perfDropZone" style="border:2px dashed var(--border);border-radius:var(--rs);padding:14px 16px;margin-bottom:18px;background:var(--surface2);text-align:center;cursor:pointer;transition:all .15s;" ondragover="event.preventDefault();this.style.borderColor='var(--blue)';this.style.background='var(--blue-bg)';" ondragleave="this.style.borderColor='var(--border)';this.style.background='var(--surface2)';" ondrop="event.preventDefault();this.style.borderColor='var(--border)';this.style.background='var(--surface2)';if(event.dataTransfer.files[0])_handlePerfImport(event.dataTransfer.files[0]);" onclick="document.getElementById('perfDropInput').click();">
-          <div style="font-size:13px;color:var(--text2);font-weight:500;">📊 Drop d'un fichier Excel de rétro-commissions <span style="color:var(--text3);font-weight:400;font-size:11px;">(format LFIS / dépositaire — onglet "Synthèse" + détails par ISIN)</span></div>
-          <div style="font-size:11px;color:var(--text3);margin-top:3px;">Cliquer ici ou drop le fichier .xlsx</div>
-          <input type="file" id="perfDropInput" accept=".xlsx,.xlsm" style="display:none;" onchange="if(this.files[0]){_handlePerfImport(this.files[0]);this.value='';}"/>
-        </div>
-
         <!-- Onglets UF / Running / Perf fees -->
         <div style="display:flex;gap:0;border-bottom:2px solid var(--border);margin-bottom:20px;">
           <button id="ftUFTab" onclick="setFactType('UF',this)" style="padding:10px 32px;border:none;background:none;font-size:13px;font-weight:600;color:var(--blue);border-bottom:3px solid var(--blue);margin-bottom:-2px;cursor:pointer;font-family:inherit;">⬆ Up-Front</button>
@@ -393,6 +387,65 @@
         </div>
 
       </div>
+      <!-- SUIVI PERF — page dédiée (drop Excel + tableau + graph + perf fees calc) -->
+      <div class="page" id="p-suivi-perf">
+        <!-- Drop zone -->
+        <div id="perfDropZone" style="border:2px dashed var(--border);border-radius:var(--rs);padding:14px 16px;margin-bottom:18px;background:var(--surface2);text-align:center;cursor:pointer;transition:all .15s;" ondragover="event.preventDefault();this.style.borderColor='var(--blue)';this.style.background='var(--blue-bg)';" ondragleave="this.style.borderColor='var(--border)';this.style.background='var(--surface2)';" ondrop="event.preventDefault();this.style.borderColor='var(--border)';this.style.background='var(--surface2)';if(event.dataTransfer.files[0])_handlePerfImport(event.dataTransfer.files[0]);" onclick="document.getElementById('perfDropInput').click();">
+          <div style="font-size:13px;color:var(--text2);font-weight:500;">📊 Drop d'un fichier Excel de rétro-commissions / VL <span style="color:var(--text3);font-weight:400;font-size:11px;">(format LFIS / dépositaire — onglet "Synthèse" + détails par ISIN)</span></div>
+          <div style="font-size:11px;color:var(--text3);margin-top:3px;">Cliquer ici ou drop le fichier .xlsx — l'historique des VL est conservé pour le suivi de perf</div>
+          <input type="file" id="perfDropInput" accept=".xlsx,.xlsm" style="display:none;" onchange="if(this.files[0]){_handlePerfImport(this.files[0]);this.value='';}"/>
+        </div>
+        <!-- Filtres + KPIs -->
+        <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap;">
+          <span style="font-size:11px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.3px;">Filtres</span>
+          <select id="perfFournFilter" onchange="renderSuiviPerf()" style="font-size:12px;min-width:180px;">
+            <option value="">Tous les fournisseurs</option>
+          </select>
+          <select id="perfProductFilter" onchange="renderSuiviPerf()" style="font-size:12px;min-width:220px;">
+            <option value="">Tous les produits</option>
+          </select>
+          <div style="flex:1;"></div>
+          <span style="font-size:11px;color:var(--text3);" id="perfImportSummary"></span>
+        </div>
+        <!-- Tableau récap des produits -->
+        <div class="card" style="padding:0;overflow:hidden;margin-bottom:18px;">
+          <div style="padding:12px 16px 6px;display:flex;justify-content:space-between;align-items:center;">
+            <div style="font-size:13px;font-weight:600;">Performance par produit</div>
+            <div style="font-size:11px;color:var(--text3);" id="perfTableCount"></div>
+          </div>
+          <div class="tw"><table id="perfTable">
+            <tr>
+              <th onclick="setPerfSort('fourn')" style="cursor:pointer;">Fournisseur ↕</th>
+              <th onclick="setPerfSort('isin')" style="cursor:pointer;">ISIN ↕</th>
+              <th>Unité · Part / Share</th>
+              <th onclick="setPerfSort('vl0')" style="cursor:pointer;text-align:right;">VL initiale ↕</th>
+              <th onclick="setPerfSort('vl1')" style="cursor:pointer;text-align:right;">VL courante ↕</th>
+              <th onclick="setPerfSort('perf')" style="cursor:pointer;text-align:right;">Perf brute ↕</th>
+              <th style="text-align:right;">Nominal investi</th>
+              <th style="text-align:right;">Gain (€)</th>
+              <th style="text-align:right;">Perf fees dues</th>
+              <th onclick="setPerfSort('date')" style="cursor:pointer;text-align:right;">Dernière maj ↕</th>
+            </tr>
+          </table></div>
+          <div id="perfTableEmpty" class="empty" style="display:none;">Aucun produit importé. Drop un fichier Excel ci-dessus pour commencer.</div>
+        </div>
+        <!-- Graph performance -->
+        <div class="card" style="padding:14px 16px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+            <div>
+              <div style="font-size:13px;font-weight:600;">Évolution des VL <span style="font-weight:400;color:var(--text3);font-size:11px;" id="perfChartScope"></span></div>
+              <div style="font-size:11px;color:var(--text3);margin-top:2px;">Base 100 au premier import — comparable entre produits</div>
+            </div>
+            <div style="display:flex;gap:6px;">
+              <button class="btn btn-sm" id="perfChartModeAbs" onclick="setPerfChartMode('abs',this)" style="font-size:10px;padding:3px 8px;">VL absolue</button>
+              <button class="btn btn-sm" id="perfChartModeBase" onclick="setPerfChartMode('base',this)" style="font-size:10px;padding:3px 8px;background:var(--text);color:var(--surface);border-color:var(--text);">Base 100</button>
+            </div>
+          </div>
+          <div style="position:relative;height:340px;"><canvas id="perfChart"></canvas></div>
+          <div id="perfChartLegend" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;font-size:11px;"></div>
+        </div>
+      </div>
+
       <div class="page" id="p-graphiques">
 
         <!-- KPIs commissions (déplacés depuis Synthèse) -->

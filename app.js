@@ -924,14 +924,15 @@ async function confirmAddClient(){var name=document.getElementById('newClientInp
 cancelAddClient();}
 
 function goTo(id,btn){
-  ['synthese','alertes','deals','facturation','graphiques','clients','fournisseurs','brokers','contrats','commissions','membres'].forEach(p=>document.getElementById('p-'+p)&&document.getElementById('p-'+p).classList.toggle('on',p===id));
+  ['synthese','alertes','deals','facturation','suivi-perf','graphiques','clients','fournisseurs','brokers','contrats','commissions','membres'].forEach(p=>document.getElementById('p-'+p)&&document.getElementById('p-'+p).classList.toggle('on',p===id));
   document.querySelectorAll('.nbtn').forEach(b=>b.classList.remove('on'));
   if(btn)btn.classList.add('on');
-  document.getElementById('pageTitle').textContent={synthese:'Synthèse',alertes:'Alertes & vérifications',deals:'Tous les deals',facturation:'Facturation',graphiques:'Pilotage',clients:'Clients',fournisseurs:'Fournisseurs',brokers:'Brokers',contrats:'Suivi Contrats',commissions:'Commissions',membres:'Équipe & accès'}[id]||'';
+  document.getElementById('pageTitle').textContent={synthese:'Synthèse',alertes:'Alertes & vérifications',deals:'Tous les deals',facturation:'Facturation','suivi-perf':'Suivi Perf',graphiques:'Pilotage',clients:'Clients',fournisseurs:'Fournisseurs',brokers:'Brokers',contrats:'Suivi Contrats',commissions:'Commissions',membres:'Équipe & accès'}[id]||'';
   if(id==='synthese')setTimeout(function(){renderCAChart();},200);
   else if(id==='alertes')renderAlertesPage();
   else if(id==='graphiques')setTimeout(renderCharts,80);
     else if(id==='facturation'){setTimeout(()=>{renderFact();renderUFRappr();renderUFInvTable();},50);}
+  else if(id==='suivi-perf')setTimeout(renderSuiviPerf,80);
   else if(id==='deals')renderDeals();
   else if(id==='clients')renderClients();
   else if(id==='fournisseurs')renderFourn();
@@ -958,6 +959,7 @@ function renderAll(){
   if(isOn('p-contrats')&&typeof renderContrats==='function')renderContrats();
   if(isOn('p-commissions')&&typeof renderCommissions==='function')renderCommissions();
   if(isOn('p-graphiques')&&typeof renderCharts==='function')renderCharts();
+  if(isOn('p-suivi-perf')&&typeof renderSuiviPerf==='function')renderSuiviPerf();
 }
 
 // Compute the year's three commission totals + CA total. Used by Synthèse (CA only)
@@ -5101,7 +5103,7 @@ async function confirmPerfImport(){
   var savedCount=0;
   for(var i=0;i<p.matched.length;i++){
     var m=p.matched[i];
-    // Update the product fields in-place
+    // Update the latest summary fields (used for KPIs / récap)
     m.product.latestVL=m.item.lastVL||null;
     m.product.latestVLDate=m.item.lastVLDate||null;
     m.product.latestEncours=m.item.derEncours||null;
@@ -5111,13 +5113,262 @@ async function confirmPerfImport(){
     m.product.lastImportDate=todayStr;
     m.product.lastImportPeriod=p.periodLabel;
     m.product.lastImportFileName=p.fileName;
-    // Persist the entire fourn row
+    // Append to vlHistory — keyed by date, idempotent (re-import same period = update, not duplicate).
+    // This is the data driving the perf graph + over-perf calc.
+    if(m.item.lastVL!=null&&m.item.lastVLDate){
+      m.product.vlHistory=Array.isArray(m.product.vlHistory)?m.product.vlHistory:[];
+      var existing=m.product.vlHistory.find(function(h){return h.date===m.item.lastVLDate;});
+      if(existing){
+        existing.vl=m.item.lastVL;
+        existing.encours=m.item.derEncours||null;
+        existing.encoursMoyen=m.item.encoursMoyen||null;
+        existing.period=p.periodLabel;
+      } else {
+        m.product.vlHistory.push({
+          date:m.item.lastVLDate,
+          vl:m.item.lastVL,
+          encours:m.item.derEncours||null,
+          encoursMoyen:m.item.encoursMoyen||null,
+          retroHT:m.item.montantHT||null,
+          period:p.periodLabel
+        });
+      }
+      // Keep chronological order — useful for the graph
+      m.product.vlHistory.sort(function(a,b){return (a.date||'').localeCompare(b.date||'');});
+    }
     try{await sbUpdateFournSafe(m.fourn._id,m.fourn,m.fourn);savedCount++;}catch(e){console.error('Save fourn failed',m.fourn.name,e);}
   }
   closePerfImportModal();
   toast('Import validé — '+savedCount+' produit(s) mis à jour avec les données '+p.periodLabel+'.');
-  // Refresh any view that may surface these fields
   if(typeof renderFourn==='function')renderFourn();
+  if(typeof renderSuiviPerf==='function')renderSuiviPerf();
+}
+
+// ── Suivi Perf — page dédiée (import LFIS + tableau + graph + perf fees over-perf) ──
+var _perfSortKey='fourn',_perfSortDir=1;
+var _perfChartMode='base'; // 'base' (100=premier import) ou 'abs' (VL réelle)
+var _perfChartInstance=null;
+function setPerfSort(k){
+  if(_perfSortKey===k)_perfSortDir=-_perfSortDir;
+  else{_perfSortKey=k;_perfSortDir=1;}
+  renderSuiviPerf();
+}
+function setPerfChartMode(m,btn){
+  _perfChartMode=m;
+  ['perfChartModeAbs','perfChartModeBase'].forEach(function(id){
+    var b=document.getElementById(id);if(b){b.style.background='';b.style.color='';b.style.borderColor='';}
+  });
+  if(btn){btn.style.background='var(--text)';btn.style.color='var(--surface)';btn.style.borderColor='var(--text)';}
+  renderSuiviPerf();
+}
+// Aggregate all products across SDG fournisseurs that have vlHistory (= have been imported).
+function _collectPerfProducts(){
+  var out=[];
+  fourn_db.forEach(function(f){
+    if(f.famille!=='SDG'||!Array.isArray(f.products))return;
+    f.products.forEach(function(p){
+      if(!p||!p.isin)return;
+      if(!Array.isArray(p.vlHistory)||!p.vlHistory.length)return;
+      out.push({fourn:f,product:p});
+    });
+  });
+  return out;
+}
+// For a given (fourn, isin) — sum up matching codifications across all active deals.
+function _perfDealMatches(fournName,isin){
+  if(!fournName||!isin)return [];
+  var matches=[];
+  deals.forEach(function(d){
+    if(d.archived||!Array.isArray(d.codifications))return;
+    d.codifications.forEach(function(c,idx){
+      if(c.fourn===fournName&&c.isin===isin&&(c.nominal||0)>0){
+        matches.push({deal:d,codif:c,idx:idx});
+      }
+    });
+  });
+  return matches;
+}
+// Compute the over-performance perf fee for a product based on its VL evolution
+// AND any deals that reference it with a pf config.
+// Returns {grossPerfPct, totalNominal, totalGain, totalPerfFee, perDealBreakdown}.
+function _computePerfFees(fournName,isin,vl0,vl1){
+  var dealMatches=_perfDealMatches(fournName,isin);
+  if(!dealMatches.length||!vl0||!vl1||vl0===0)return{grossPerfPct:0,totalNominal:0,totalGain:0,totalPerfFee:0,perDealBreakdown:[]};
+  var grossPerfPct=((vl1-vl0)/vl0)*100;
+  var totalNominal=0,totalGain=0,totalPerfFee=0;
+  var breakdown=[];
+  dealMatches.forEach(function(m){
+    var nom=m.codif.nominal||0;
+    var nomEur=(m.deal.dev==='EUR'||!m.deal.dev)?nom:nom/(m.deal.fx||1);
+    var gain=nomEur*(grossPerfPct/100);
+    totalNominal+=nomEur;totalGain+=gain;
+    var pf=m.codif.pf||{};
+    var perfFee=0;
+    if(pf.mode==='pct'&&pf.rate>0){
+      var hurdle=pf.hurdle||0;
+      var overPerf=grossPerfPct-hurdle;
+      if(overPerf>0){
+        // Perf fee € = nominal × overPerf% × rate% / 10000
+        perfFee=nomEur*overPerf*pf.rate/10000;
+      }
+    } else if(pf.mode==='fixed'&&pf.amount>0){
+      // Fixed perf fee — applies once if over-performing
+      if(grossPerfPct>(pf.hurdle||0))perfFee=pf.amount;
+    }
+    totalPerfFee+=perfFee;
+    breakdown.push({deal:m.deal,nominal:nomEur,gain:gain,perfFee:perfFee,pf:pf});
+  });
+  return{grossPerfPct:grossPerfPct,totalNominal:totalNominal,totalGain:totalGain,totalPerfFee:totalPerfFee,perDealBreakdown:breakdown};
+}
+function renderSuiviPerf(){
+  if(!document.getElementById('p-suivi-perf'))return;
+  var allItems=_collectPerfProducts();
+  // Refresh filters
+  var fournSel=document.getElementById('perfFournFilter');
+  var prodSel=document.getElementById('perfProductFilter');
+  if(fournSel){
+    var prevFourn=fournSel.value;
+    var fournsWithData={};allItems.forEach(function(x){fournsWithData[x.fourn.name]=true;});
+    var fournNames=Object.keys(fournsWithData).sort();
+    fournSel.innerHTML='<option value="">Tous les fournisseurs ('+fournNames.length+')</option>'+
+      fournNames.map(function(n){return '<option value="'+escH(n)+'"'+(n===prevFourn?' selected':'')+'>'+escH(n)+'</option>';}).join('');
+  }
+  var fournFilter=fournSel?fournSel.value:'';
+  // Product filter — populated based on the selected fournisseur (or all if no filter)
+  if(prodSel){
+    var prevProd=prodSel.value;
+    var prodOptions=allItems
+      .filter(function(x){return !fournFilter||x.fourn.name===fournFilter;})
+      .map(function(x){return{isin:x.product.isin,label:x.fourn.name+' · '+(x.product.part||'(sans nom)')+' · '+x.product.isin};});
+    prodSel.innerHTML='<option value="">Tous les produits ('+prodOptions.length+')</option>'+
+      prodOptions.map(function(p){return '<option value="'+escH(p.isin)+'"'+(p.isin===prevProd?' selected':'')+'>'+escH(p.label)+'</option>';}).join('');
+  }
+  var prodFilter=prodSel?prodSel.value:'';
+  // Apply filters
+  var filtered=allItems.filter(function(x){
+    if(fournFilter&&x.fourn.name!==fournFilter)return false;
+    if(prodFilter&&x.product.isin!==prodFilter)return false;
+    return true;
+  });
+  // Build rows with metrics
+  var rows=filtered.map(function(x){
+    var h=x.product.vlHistory||[];
+    var first=h[0]||{};
+    var last=h[h.length-1]||{};
+    var vl0=first.vl||0,vl1=last.vl||0;
+    var perfPct=vl0?((vl1-vl0)/vl0)*100:0;
+    var pfCalc=_computePerfFees(x.fourn.name,x.product.isin,vl0,vl1);
+    return{
+      fourn:x.fourn.name,isin:x.product.isin,part:x.product.part||'',unit:x.product.unit||'part',
+      vl0:vl0,vl1:vl1,perfPct:perfPct,
+      nominal:pfCalc.totalNominal,gain:pfCalc.totalGain,perfFee:pfCalc.totalPerfFee,
+      date:last.date||x.product.latestVLDate||'',
+      currency:x.product.currency||'EUR',
+      vlHistory:h
+    };
+  });
+  // Sort
+  rows.sort(function(a,b){
+    var k=_perfSortKey;
+    var av=a[k],bv=b[k];
+    if(typeof av==='string')return av.localeCompare(bv||'')*_perfSortDir;
+    return ((av||0)-(bv||0))*_perfSortDir;
+  });
+  // Render summary
+  var totalNom=rows.reduce(function(s,r){return s+(r.nominal||0);},0);
+  var totalGain=rows.reduce(function(s,r){return s+(r.gain||0);},0);
+  var totalPerfFee=rows.reduce(function(s,r){return s+(r.perfFee||0);},0);
+  var sumEl=document.getElementById('perfImportSummary');
+  if(sumEl){
+    sumEl.innerHTML=rows.length+' produit'+(rows.length!==1?'s':'')+' · Total nominal : '+fE(totalNom)+' · Gain brut : '+(totalGain>=0?'+':'')+fE(Math.round(totalGain))+' · <b style="color:var(--purple);">Perf fees dues : '+fE(Math.round(totalPerfFee))+'</b>';
+  }
+  document.getElementById('perfTableCount').textContent=rows.length+' lignes';
+  // Render table
+  var t=document.getElementById('perfTable');
+  while(t.rows.length>1)t.deleteRow(1);
+  document.getElementById('perfTableEmpty').style.display=rows.length?'none':'block';
+  rows.forEach(function(r){
+    var tr=t.insertRow();
+    var perfColor=r.perfPct>0?'var(--green)':r.perfPct<0?'var(--red)':'var(--text2)';
+    var unitBadge=r.unit==='share'?'<span class="badge bp" style="font-size:9px;">Share</span>':'<span class="badge bb" style="font-size:9px;">Part</span>';
+    tr.innerHTML=
+      '<td style="font-weight:500;">'+escH(r.fourn)+'</td>'+
+      '<td class="mono" style="font-size:11px;">'+escH(r.isin)+'</td>'+
+      '<td style="white-space:nowrap;">'+unitBadge+' <span style="color:var(--text2);font-size:12px;">'+escH(r.part)+'</span></td>'+
+      '<td class="mono" style="text-align:right;">'+(r.vl0?r.vl0.toFixed(4):'—')+'</td>'+
+      '<td class="mono" style="text-align:right;font-weight:500;">'+(r.vl1?r.vl1.toFixed(4):'—')+'</td>'+
+      '<td style="text-align:right;font-weight:600;color:'+perfColor+';">'+(r.perfPct?(r.perfPct>0?'+':'')+r.perfPct.toFixed(2)+'%':'—')+'</td>'+
+      '<td style="text-align:right;">'+(r.nominal?fE(Math.round(r.nominal)):'—')+'</td>'+
+      '<td style="text-align:right;color:'+perfColor+';">'+(r.gain?(r.gain>=0?'+':'')+fE(Math.round(r.gain)):'—')+'</td>'+
+      '<td style="text-align:right;color:var(--purple);font-weight:600;">'+(r.perfFee>0?fE(Math.round(r.perfFee)):'—')+'</td>'+
+      '<td class="mono" style="text-align:right;color:var(--text2);font-size:11px;">'+escH(r.date)+'</td>';
+  });
+  // Render chart
+  _renderPerfChart(rows);
+}
+function _renderPerfChart(rows){
+  var canvas=document.getElementById('perfChart');
+  if(!canvas||!window.Chart)return;
+  if(_perfChartInstance){_perfChartInstance.destroy();_perfChartInstance=null;}
+  if(!rows.length){document.getElementById('perfChartLegend').innerHTML='<span style="color:var(--text3);">Aucune donnée à afficher.</span>';return;}
+  // Collect all unique dates across all rows
+  var dateSet={};
+  rows.forEach(function(r){(r.vlHistory||[]).forEach(function(h){if(h.date)dateSet[h.date]=true;});});
+  var dates=Object.keys(dateSet).sort();
+  if(!dates.length)return;
+  var palette=PALETTE||['#1d5fd4','#1a8a4a','#6b4fc4','#b07a10','#c23b3b','#0ea5e9','#ec4899','#10b981','#8b5cf6','#f59e0b'];
+  var datasets=rows.map(function(r,i){
+    var color=palette[i%palette.length];
+    var histByDate={};
+    (r.vlHistory||[]).forEach(function(h){if(h.date)histByDate[h.date]=h.vl;});
+    var vl0=r.vl0||0;
+    var data=dates.map(function(d){
+      var v=histByDate[d];
+      if(v==null)return null;
+      if(_perfChartMode==='base'&&vl0)return (v/vl0)*100;
+      return v;
+    });
+    return{
+      label:r.fourn+' / '+(r.part||r.isin),
+      data:data,
+      borderColor:color,
+      backgroundColor:color+'22',
+      tension:0.25,
+      spanGaps:true,
+      pointRadius:3,
+      pointHoverRadius:5,
+      borderWidth:2
+    };
+  });
+  document.getElementById('perfChartScope').textContent=(rows.length===1)?'— '+rows[0].fourn+' / '+rows[0].part:'';
+  _perfChartInstance=new Chart(canvas,{
+    type:'line',
+    data:{labels:dates,datasets:datasets},
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      interaction:{mode:'nearest',axis:'x',intersect:false},
+      plugins:{
+        legend:{display:false},
+        tooltip:Object.assign({},CHART_DEFAULTS.tooltip,{callbacks:{
+          label:function(c){
+            var v=c.parsed.y;if(v==null)return c.dataset.label+' : —';
+            if(_perfChartMode==='base'){
+              return c.dataset.label+' : '+v.toFixed(2)+' (base 100)'+(v>=100?' = +'+(v-100).toFixed(2)+'%':' = '+(v-100).toFixed(2)+'%');
+            }
+            return c.dataset.label+' : '+v.toFixed(4);
+          }
+        }})
+      },
+      scales:{
+        x:{grid:{display:false,drawBorder:false},ticks:{color:'#6b6b65',font:CHART_DEFAULTS.font,maxRotation:0,autoSkipPadding:20}},
+        y:{grid:{color:CHART_DEFAULTS.gridSoft,drawBorder:false},ticks:{color:'#9aa0a6',font:CHART_DEFAULTS.font,callback:function(v){return _perfChartMode==='base'?v.toFixed(0):v.toFixed(2);}}}
+      }
+    }
+  });
+  // Legend
+  document.getElementById('perfChartLegend').innerHTML=datasets.map(function(ds){
+    return '<span style="display:inline-flex;align-items:center;gap:5px;padding:2px 8px;background:var(--surface2);border-radius:999px;"><span style="width:8px;height:8px;border-radius:2px;background:'+ds.borderColor+';display:inline-block;"></span><span>'+escH(ds.label)+'</span></span>';
+  }).join('');
 }
 function deleteClientFromModal(){var o=document.getElementById('cName').dataset.original;if(!o)return;closeClientModal();deleteClient(o);}
 // Returns {contract, prod} if a Suivi-Contrats investissement is linked to this deal, else null.

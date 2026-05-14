@@ -4652,6 +4652,21 @@ function _clientClassifBadge(cl){
 function renderClients(){
   var db=loadClientDB();
   var filtered=clientTab==='ALL'?db.slice():db.filter(c=>c.type===clientTab);
+  // Search filter — matches name / email / vendeur référent / classification / notes
+  var qEl=document.getElementById('clientSearch');
+  var q=qEl?(qEl.value||'').toLowerCase().trim():'';
+  if(q){
+    filtered=filtered.filter(function(c){
+      if((c.name||'').toLowerCase().indexOf(q)!==-1)return true;
+      if((c.email||'').toLowerCase().indexOf(q)!==-1)return true;
+      if((c.vendeur||'').toLowerCase().indexOf(q)!==-1)return true;
+      if((c.classification||'').toLowerCase().indexOf(q)!==-1)return true;
+      if((c.notes||'').toLowerCase().indexOf(q)!==-1)return true;
+      return false;
+    });
+  }
+  var countEl=document.getElementById('clientsCount');
+  if(countEl)countEl.textContent=filtered.length+' client'+(filtered.length>1?'s':'')+(q?' (filtrés)':'');
   // Sort: default by name; click on Classif. header → sort by classification (NULL last)
   if(clientSortKey==='classif'){
     filtered.sort(function(a,b){
@@ -5709,7 +5724,27 @@ function setFournTab(t,btn){
 function renderFourn(){
   var all=loadFourn().slice().sort((a,b)=>a.name.localeCompare(b.name,undefined,{sensitivity:'base'}));
   var list=fournTab==='ALL'?all:all.filter(f=>f.famille===fournTab);
-  document.getElementById('fournCount').textContent=list.length+' fournisseur'+(list.length>1?'s':'');
+  // Search filter — matches name / contact / email / addr / any product ISIN or part label
+  var qEl=document.getElementById('fournSearch');
+  var q=qEl?(qEl.value||'').toLowerCase().trim():'';
+  if(q){
+    list=list.filter(function(f){
+      if((f.name||'').toLowerCase().indexOf(q)!==-1)return true;
+      if((f.contact||'').toLowerCase().indexOf(q)!==-1)return true;
+      if((f.email||'').toLowerCase().indexOf(q)!==-1)return true;
+      if((f.addr1||'').toLowerCase().indexOf(q)!==-1)return true;
+      if((f.addr2||'').toLowerCase().indexOf(q)!==-1)return true;
+      if(Array.isArray(f.products)){
+        for(var i=0;i<f.products.length;i++){
+          var p=f.products[i];
+          if((p.isin||'').toLowerCase().indexOf(q)!==-1)return true;
+          if((p.part||'').toLowerCase().indexOf(q)!==-1)return true;
+        }
+      }
+      return false;
+    });
+  }
+  document.getElementById('fournCount').textContent=list.length+' fournisseur'+(list.length>1?'s':'')+(q?' (filtrés)':'');
   var t=document.getElementById('fournT');
   while(t.rows.length>1)t.deleteRow(1);
   document.getElementById('fournEmpty').style.display=list.length?'none':'block';
@@ -6102,7 +6137,11 @@ function loadBrokers(){return brokers_db.map(b=>b.name);}
 function saveBrokerList(list){/* handled async */}
 function renderBrokers(){
   var list=brokers_db.slice().sort((a,b)=>a.name.localeCompare(b.name,undefined,{sensitivity:'base'})).map(b=>b.name);
-  document.getElementById('brokerCount').textContent=list.length+' broker'+(list.length>1?'s':'');
+  // Same search bar as Fournisseurs — filter brokers by name
+  var qEl=document.getElementById('fournSearch');
+  var q=qEl?(qEl.value||'').toLowerCase().trim():'';
+  if(q)list=list.filter(function(n){return n.toLowerCase().indexOf(q)!==-1;});
+  document.getElementById('brokerCount').textContent=list.length+' broker'+(list.length>1?'s':'')+(q?' (filtrés)':'');
   var t=document.getElementById('brokerT');
   while(t.rows.length>1)t.deleteRow(1);
   document.getElementById('brokerEmpty').style.display=list.length?'none':'block';

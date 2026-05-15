@@ -405,6 +405,16 @@ async function seedDefaultTemplates(){
   try{await saveTemplate(wealins);}catch(e){console.warn('Seed Wealins template failed',e);}
 }
 function templateByName(name){return templates_db.find(function(t){return t.name===name;});}
+// Phase B.2 — pick the template that should drive an investment's step pack.
+// Preference: the fournisseur's own template_name → fallback to the contract's.
+// Returns the template name (string) or empty string if nothing's set.
+function _pickPackTemplate(fournName,contractTemplateName){
+  if(fournName){
+    var f=fourn_db.find(function(x){return x.name===fournName;});
+    if(f && f.template_name) return f.template_name;
+  }
+  return contractTemplateName||'';
+}
 function templatePrelimCopy(name){
   var t=templateByName(name);if(!t)return[];
   return t.prelim.map(function(s){return{id:newStepId(),label:s.label,done:false};});
@@ -472,10 +482,13 @@ async function _syncContractProduitsForDealEdit(deal){
   // Pass 2 : add new produits for codifs that don't have a matching produit yet
   newCodifs.forEach(function(c,i){
     if(existingIdx[i])return;
-    var pickedPack=null,steps=[];
-    if(contract.template_name){
-      pickedPack=templatePackForType(contract.template_name,c.type||deal.produit_type);
-      if(pickedPack)steps=templatePackCopy(contract.template_name,pickedPack.id);
+    // Phase B.2 — Investment pack comes from the FOURNISSEUR's template (if it has one),
+    // not the contract's. Falls back to contract.template_name when the fourn has none.
+    // Preliminary steps still come from the contract template (untouched).
+    var pickedPack=null,steps=[],tplUsed=_pickPackTemplate(c.fourn,contract.template_name);
+    if(tplUsed){
+      pickedPack=templatePackForType(tplUsed,c.type||deal.produit_type);
+      if(pickedPack)steps=templatePackCopy(tplUsed,pickedPack.id);
     }
     var notesParts=[];
     if(c.fourn)notesParts.push('Fournisseur: '+c.fourn);
@@ -577,10 +590,11 @@ async function autoLinkDealToContract(deal){
     if(item.broker)notesParts.push('Broker: '+item.broker);
     if(deal.contrat)notesParts.push('Contrat: '+deal.contrat);
     if(item.maturite)notesParts.push('Maturité: '+item.maturite);
-    var pickedPack=null,steps=[];
-    if(contract.template_name){
-      pickedPack=templatePackForType(contract.template_name,item.type);
-      if(pickedPack)steps=templatePackCopy(contract.template_name,pickedPack.id);
+    // Phase B.2 — same routing as the codif-sync path above.
+    var pickedPack=null,steps=[],tplUsed=_pickPackTemplate(item.fourn,contract.template_name);
+    if(tplUsed){
+      pickedPack=templatePackForType(tplUsed,item.type);
+      if(pickedPack)steps=templatePackCopy(tplUsed,pickedPack.id);
     }
     var prod={
       id:newStepId(),
@@ -1040,20 +1054,23 @@ function renderCAChart(){
     var mStr=yr+'-'+pad+String(m+1);
     var tUF=0, tRun=0, seen={};
 
-    for(var di=0;di<deals.length;di++){
-      var d=deals[di];
-      if(d.fSt!=='Pay\xe9') continue;
-      var inv=d.inv||'';
+    // Phase D.3 — iterate codif-level entries so a deal with mixed UF+Run
+    // fournisseurs contributes correctly to each side of the monthly cumul.
+    var monthEntries=billingEntries(deals);
+    for(var di=0;di<monthEntries.length;di++){
+      var e=monthEntries[di];
+      if(e.fSt!=='Pay\xe9') continue;
+      var inv=e.inv||'';
       if(inv.substring(0,7)!==mStr) continue;
-      if(d.ct==='UF'||d.ct==='BOTH') tUF+=(d.ufE||0);
-      if(d.ct==='RUN'||d.ct==='BOTH'){
-        if(!d.invS) continue;
-        var t=Math.ceil(parseInt(d.invS.substring(5,7))/3);
-        var rKey='T'+t+'_'+yr;
+      if(e.ct==='UF'||e.ct==='BOTH') tUF+=(e.ufE||0);
+      if(e.ct==='RUN'||e.ct==='BOTH'){
+        if(!e.invS) continue;
+        var t=Math.ceil(parseInt(e.invS.substring(5,7))/3);
+        var rKey='T'+t+'_'+yr+'__'+e.fourn; // dedup per (period, fourn) — different fournisseurs add independently
         if(seen[rKey]) continue; seen[rKey]=1;
-        var rv=rapprFind(d.fourn,'run',rKey);
+        var rv=rapprFind(e.fourn,'run',rKey.split('__')[0]);
         if(rv&&rv.paid&&rv.declared) tRun+=rv.declared;
-        else tRun+=(d.runE||0)/4;
+        else tRun+=(e.runE||0)/4;
       }
     }
 
@@ -1435,7 +1452,17 @@ function openDet(d){
     codifsBlock='<div class="form-sep" style="margin-top:14px;">Fournisseurs du contrat</div>';
     codifsBlock+='<div style="display:flex;flex-direction:column;gap:6px;">'+
       d.codifications.map(function(c){
-        var feeStr=(c.feeSnapshot&&c.feeSnapshot.length)?c.feeSnapshot.map(function(f){return escH(f.kind||'?')+' '+(f.pct||0)+'%';}).join(' · '):'—';
+        // Phase G — display feeSnapshot using the canonical label even when the
+        // stored kind is a legacy string (Gestion/Entrée). The cycle mapping is
+        // the source of truth, not the label string. F.3 re-sync migrates the
+        // stored data; this guard ensures the UI is consistent in the meantime.
+        var feeStr=(c.feeSnapshot&&c.feeSnapshot.length)?c.feeSnapshot.map(function(f){
+          var cycles=(typeof feeKindCycles==='function')?feeKindCycles(f.kind):{uf:false,run:false};
+          var canon=(cycles.uf&&cycles.run)?'UF+Run':(cycles.run?'Run':(cycles.uf?'UF':(f.kind||'?')));
+          var pctTxt=(f.pct||0)+'%';
+          if(f.kind==='UF+Run' && f.runPct!=null && f.runPct!=='') pctTxt='UF '+f.pct+'% / Run '+f.runPct+'%';
+          return escH(canon)+' '+escH(pctTxt);
+        }).join(' · '):'—';
         var pfStr=(c.pf&&c.pf.mode&&c.pf.mode!=='none')?(c.pf.mode==='pct'?(c.pf.rate||0)+'% sur perf'+(c.pf.hurdle?' (hurdle '+c.pf.hurdle+'%)':''):fE(c.pf.amount||0)+' fixe')+' · '+(c.pf.freq||'annuel'):null;
         var amtStr=c.nominal?fE(c.nominal):'—';
         // Batch A.3 — billing mode badge
@@ -1559,33 +1586,51 @@ function arbFournSelectHTML(selected){
   return '<option value="">— Fournisseur —</option>'+fourn_db.map(function(f){return '<option value="'+escH(f.name)+'"'+(f.name===selected?' selected':'')+'>'+escH(f.name)+'</option>';}).join('');
 }
 
+// Counter used to make per-row datalist IDs unique (one ISIN-style datalist per row,
+// repopulated when the fournisseur is changed).
+var _arbDestLineCounter=0;
 function addArbDestLine(){
   // Outer wrapper holds main grid row + optional parts/cours sub-row
   var wrap=document.createElement('div');
   wrap.className='arb-dest-row';
   wrap.style.cssText='margin-bottom:8px;';
-  // Main grid row (existing layout)
+  var counter=++_arbDestLineCounter;
+  var prodListId='arbProdList-'+counter;
+  var isinListId='arbIsinList-'+counter;
+  wrap.dataset.prodListId=prodListId;
+  wrap.dataset.isinListId=isinListId;
+  // Phase F.5 \u2014 grid extended to include ISIN. Cols : Fourn \u00b7 Produit \u00b7 ISIN \u00b7
+  // Contrat \u00b7 D\u00e9positaire \u00b7 Montant \u00b7 Type \u00b7 Taux \u00b7 \u00d7. Both Produit and ISIN
+  // are datalist-backed inputs (typing OR picking works), and they cross-fill
+  // each other when one is picked.
   var div=document.createElement('div');
-  div.style.cssText='display:grid;grid-template-columns:1fr 1fr 120px 120px 80px 80px 80px auto;gap:6px;align-items:center;';
+  div.style.cssText='display:grid;grid-template-columns:1.2fr 1.3fr 120px 130px 130px 110px 100px 85px auto;gap:6px;align-items:center;';
   div.innerHTML=
-    '<select class="arbFournSel" style="min-width:0;" onchange="updateArbSummary()">'+arbFournSelectHTML('')+'</select>'+
-    '<input type="text" class="arbProduitSel" placeholder="Produit" style="min-width:0;"/>'+
+    '<select class="arbFournSel" style="min-width:0;" onchange="_onArbFournChange(this);updateArbSummary()">'+arbFournSelectHTML('')+'</select>'+
+    '<input list="'+prodListId+'" type="text" class="arbProduitSel" placeholder="Produit (auto-suggest)" style="min-width:0;" oninput="_onArbProduitChange(this)" onchange="_onArbProduitChange(this)"/>'+
+    // Phase F.5 \u2014 ISIN input. Datalist sourced from the picked fournisseur's catalogue.
+    // Picking an ISIN auto-fills produit/type/taux (reverse direction of Produit picker).
+    // User can still type a custom ISIN manually \u2014 the datalist is suggestions, not gate.
+    '<input list="'+isinListId+'" type="text" class="arbIsinSel" placeholder="ISIN" title="ISIN (auto-suggest catalogue, ou saisie manuelle)" style="min-width:0;font-family:monospace;font-size:11px;" oninput="_onArbIsinChange(this)" onchange="_onArbIsinChange(this)"/>'+
     '<select class="arbContratSel" style="min-width:0;">'+contratSelectHTML('Assurance Vie Lux')+'</select>'+
     '<select class="arbDepSel" style="min-width:0;">'+depositaireSelectHTML('')+'</select>'+
     '<input type="number" class="arbMontantSel" placeholder="Nominal" style="min-width:0;" oninput="_onArbMontantChange(this)"/>'+
-    '<select class="arbTypeSel" style="min-width:0;" onchange="updateArbTypeRow(this)">'+
+    '<select class="arbTypeSel" style="min-width:0;" onchange="updateArbTypeRow(this);updateArbSummary()">'+
       '<option value="RUN">Running</option>'+
       '<option value="UF">UF</option>'+
       '<option value="BOTH">UF+Run</option>'+
       '<option value="PF">Perf fees</option>'+
     '</select>'+
     '<input type="number" class="arbTauxSel" placeholder="%" step="0.01" style="min-width:0;" title="Taux UF ou Running (%)" oninput="updateArbSummary()"/>'+
-    '<button type="button" class="btn btn-sm" onclick="this.closest(\'.arb-dest-row\').remove();updateArbSummary();" style="color:var(--red);border-color:var(--red-bg);">\u2715</button>';
+    '<button type="button" class="btn btn-sm" onclick="this.closest(\'.arb-dest-row\').remove();updateArbSummary();" style="color:var(--red);border-color:var(--red-bg);">\u2715</button>'+
+    // Datalists \u2014 initially empty until a fournisseur is picked. Filled by _onArbFournChange.
+    '<datalist id="'+prodListId+'"></datalist>'+
+    '<datalist id="'+isinListId+'"></datalist>';
   // Batch D.3 \u2014 parts \u00d7 cours sub-row (auto-computes montant when both filled)
   var subRow=document.createElement('div');
-  subRow.style.cssText='display:grid;grid-template-columns:1fr 1fr 120px 120px 80px 80px 80px auto;gap:6px;align-items:center;margin-top:3px;padding-top:3px;border-top:1px dashed var(--border);font-size:10px;color:var(--text3);';
+  subRow.style.cssText='display:grid;grid-template-columns:1.2fr 1.3fr 120px 130px 130px 110px 100px 85px auto;gap:6px;align-items:center;margin-top:3px;padding-top:3px;border-top:1px dashed var(--border);font-size:10px;color:var(--text3);';
   subRow.innerHTML=
-    '<span></span><span></span><span></span>'+
+    '<span></span><span></span><span></span><span></span>'+
     '<span style="text-align:right;color:var(--text3);">Nb parts \u00d7 cours :</span>'+
     '<input type="number" class="arbNbPartsSel" placeholder="Nb" step="0.0001" style="min-width:0;font-size:10px;padding:3px 6px;" oninput="_onArbPartsChange(this)"/>'+
     '<span style="text-align:center;color:var(--text3);">\u00d7</span>'+
@@ -1594,6 +1639,90 @@ function addArbDestLine(){
   wrap.appendChild(div);
   wrap.appendChild(subRow);
   document.getElementById('arbDestLines').appendChild(wrap);
+  updateArbSummary();
+}
+
+// Phase C.3 / F.5 \u2014 when the fournisseur changes, repopulate BOTH datalists
+// (produit + ISIN) from that fournisseur's catalogue. Same pattern as deal modal.
+function _onArbFournChange(sel){
+  var wrap=sel.closest('.arb-dest-row');
+  if(!wrap)return;
+  var fournName=sel.value;
+  var prodListId=wrap.dataset.prodListId;
+  if(prodListId){
+    var dl=wrap.querySelector('datalist#'+prodListId);
+    if(dl) dl.innerHTML=_prodDatalistInnerHtml(fournName);
+  }
+  // Phase F.5 \u2014 ISIN datalist too
+  var isinListId=wrap.dataset.isinListId;
+  if(isinListId){
+    var idl=wrap.querySelector('datalist#'+isinListId);
+    if(idl) idl.innerHTML=_isinDatalistInnerHtml(fournName);
+  }
+}
+
+// Phase C.3 \u2014 when the user picks (or types) a product, look it up in the
+// fournisseur's catalogue. If found, auto-fill the type+taux from its fees.
+// First fee row wins (covers the 99% case of one fee per product); user can
+// override after.
+function _onArbProduitChange(input){
+  var wrap=input.closest('.arb-dest-row');
+  if(!wrap)return;
+  var fournSel=wrap.querySelector('.arbFournSel');
+  var fournName=fournSel?fournSel.value:'';
+  if(!fournName)return;
+  var partLabel=(input.value||'').trim();
+  if(!partLabel)return;
+  // Find a product with a matching `part` label in this fournisseur's catalog.
+  var products=getFournProducts(fournName);
+  var prod=products.find(function(p){return (p.part||'').trim()===partLabel;});
+  if(!prod)return;
+  // Phase F.5 \u2014 also cross-fill the ISIN input if it's empty (user picked produit first)
+  var isinInput=wrap.querySelector('.arbIsinSel');
+  if(isinInput && !isinInput.value && prod.isin) isinInput.value=prod.isin;
+  // Auto-fill type/taux from the fees catalogue (Phase A.3 vocabulary).
+  if(!prod.fees||!prod.fees.length)return;
+  _applyArbProductFees(wrap, prod);
+}
+// Phase F.5 \u2014 reverse direction: user picks an ISIN, we look up the product by ISIN
+// and cross-fill produit + type + taux. Same idempotency rules as the produit picker.
+function _onArbIsinChange(input){
+  var wrap=input.closest('.arb-dest-row');
+  if(!wrap)return;
+  var fournSel=wrap.querySelector('.arbFournSel');
+  var fournName=fournSel?fournSel.value:'';
+  if(!fournName)return;
+  var isin=(input.value||'').trim();
+  if(!isin)return;
+  var prod=getFournProductByIsin(fournName, isin);
+  if(!prod)return; // user typed a custom ISIN not in catalogue \u2014 that's allowed, just don't auto-fill
+  // Cross-fill produit if empty
+  var prodInput=wrap.querySelector('.arbProduitSel');
+  if(prodInput && !prodInput.value && prod.part) prodInput.value=prod.part;
+  // Auto-fill type/taux
+  if(prod.fees && prod.fees.length) _applyArbProductFees(wrap, prod);
+}
+// Phase F.5 \u2014 shared application of a product's fees onto an arb dest line.
+// Factored out so the produit picker and the ISIN picker call the same logic.
+function _applyArbProductFees(wrap, prod){
+  if(!wrap || !prod || !prod.fees) return;
+  var rates=_feesToCycleRates(prod.fees);
+  var typeSel=wrap.querySelector('.arbTypeSel');
+  var tauxInput=wrap.querySelector('.arbTauxSel');
+  if(!typeSel||!tauxInput)return;
+  // Only fill the rate if the user hasn't typed one already.
+  var hasManualRate=tauxInput.value&&parseFloat(tauxInput.value)>0;
+  if(rates.ufR>0 && rates.runR>0){
+    typeSel.value='BOTH';
+    if(!hasManualRate) tauxInput.value=rates.runR; // BOTH convention: displayed taux is the running rate
+  } else if(rates.runR>0){
+    typeSel.value='RUN';
+    if(!hasManualRate) tauxInput.value=rates.runR;
+  } else if(rates.ufR>0){
+    typeSel.value='UF';
+    if(!hasManualRate) tauxInput.value=rates.ufR;
+  }
+  updateArbTypeRow(typeSel);
   updateArbSummary();
 }
 // Batch D.3 \u2014 arb dest line: auto-compute montant from nb \u00d7 cours when both > 0
@@ -2023,7 +2152,12 @@ function setUFDealTab(tab,btn){
 }
 
 function renderUFDeals(){
-  var all=deals.filter(d=>(d.ct==='UF'||d.ct==='BOTH')&&d.ufE>0);
+  // Phase D.3 — iterate codification-level entries, not raw deals. A deal with
+  // Amundi (Run) + Wealins (UF) on the same contract now lands here ONLY for
+  // its UF codification(s), not the whole deal. `d.ufR` / `d.fourn` etc. on
+  // the entry refer to codif-level values; `d._id` and other deal-level
+  // passthrough fields work as before.
+  var all=billingUFEntries();
   var filtered=ufDealTab==='all'?all
     :ufDealTab==='aE'?all.filter(d=>!d.fSt||d.fSt==='À émettre')
     :ufDealTab==='fact'?all.filter(d=>d.fSt==='Facturé')
@@ -2032,14 +2166,16 @@ function renderUFDeals(){
   while(t.rows.length>1)t.deleteRow(1);
   document.getElementById('ufDealsEmpty').style.display=filtered.length?'none':'block';
   filtered.slice().sort((a,b)=>a.fourn.localeCompare(b.fourn)||(b.date||'').localeCompare(a.date||'')).forEach(function(d){
-    var idx=deals.indexOf(d);
+    // For per-row actions, idx must point to the parent deal in `deals` array.
+    var idx=deals.indexOf(d.deal);
     var statut=d.fSt==='Payé'?'<span class="badge bg">Payée</span>':d.fSt==='Facturé'?'<span class="badge bb">Facturée</span>':'<span class="badge ba">À émettre</span>';
     var btn=d.fSt==='Payé'
       ?'<span style="font-size:11px;color:var(--green);">✓ Payé</span>'
       :d.fSt==='Facturé'
         ?'<button class="btn btn-sm" style="background:var(--green);color:white;border-color:var(--green);" onclick="markUFInvPaid('+idx+')">Marquer payé</button>'
         :'<button class="btn btn-sm" style="background:var(--green);color:white;border-color:var(--green);" onclick="openUFFactModalDeal('+idx+')">Facturer</button>';
-    var nomE=_dealNomEur(d);
+    // Use codif's nominal for the line (not the deal total). Convert to EUR using deal fx.
+    var nomE=Math.round((d.nominal||0)/(d.fx||1));
     var r=t.insertRow();
     r.innerHTML=
       '<td style="font-weight:500;">'+d.fourn+'</td>'+
@@ -2107,14 +2243,26 @@ function getTrimDates(trim,year){
   };
 }
 function calcRunProrataTrim(d,trimDates){
-  if(!d.runE||d.runE===0)return 0;
+  // Phase D.4 — prefer the codif's CURRENT runE (= post-retraits/arbitrages) when
+  // available via a billing entry. This means : if 100k EUR was withdrawn from
+  // an Amundi position before the trim, future quarters bill on what's left,
+  // not on the initial nominal. The entry shape carries .codif and .deal back-
+  // pointers so we can resolve the current value.
+  // Known limitation: when a retrait happens DURING this trim, we use the
+  // end-of-trim nominal for the whole period — slightly under-bills that one
+  // quarter. Accurate intra-quarter prorata is a Phase D.5 refinement.
+  var baseRun = d.runE;
+  if(d.codif && d.deal && typeof codifCurrentRunE==='function'){
+    baseRun = codifCurrentRunE(d.codif, d.deal);
+  }
+  if(!baseRun || baseRun===0) return 0;
   var tradeStr=d.issue||d.date;
-  if(!tradeStr)return d.runE/4;
+  if(!tradeStr)return baseRun/4;
   var trade=new Date(tradeStr);
   if(trade>trimDates.end)return 0;
   var effStart=trade>trimDates.start?trade:trimDates.start;
   var days=Math.round((trimDates.end-effStart)/(1000*60*60*24))+1;
-  return d.runE*(days/365);
+  return baseRun*(days/365);
 }
 
 function renderRecapFourn(){
@@ -2133,15 +2281,23 @@ function renderRecapFourn(){
   filteredFourns.sort((a,b)=>a.name.localeCompare(b.name,undefined,{sensitivity:'base'}));
 
   // ── RUNNING TABLE ──
+  // Phase D.3 — switch to codif-level entries. A deal with Amundi (Run) +
+  // Wealins (UF) on the same contract now shows Amundi's Run portion under
+  // Amundi here (and Wealins's UF portion in the UF table below), instead of
+  // miscategorising the whole deal based on its top-level ct.
   var tRUN=document.getElementById('recapRUNT');
   while(tRUN.rows.length>1)tRUN.deleteRow(1);
 
+  var entriesAll=billingEntries(data);
   var runRows=[];
   filteredFourns.forEach(f=>{
-    var fDeals=data.filter(d=>(d.ct==='RUN'||d.ct==='BOTH')&&d.fourn===f.name&&(d.issue||d.date||'')<=trimDates.endStr);
+    var fDeals=entriesAll.filter(d=>(d.ct==='RUN'||d.ct==='BOTH')&&d.fourn===f.name&&(d.issue||d.date||'')<=trimDates.endStr);
     if(!fDeals.length)return;
-    var nomEUR=fDeals.reduce((s,d)=>s+(_dealNomEur(d)),0);
+    // Per-codif EUR-equivalent nominal (using deal FX).
+    var nomEUR=fDeals.reduce((s,d)=>s+Math.round((d.nominal||0)/(d.fx||1)),0);
     var runAn=fDeals.reduce((s,d)=>s+(d.runE||0),0);
+    // calcRunProrataTrim takes a deal; our entry exposes the deal-level fields
+    // it reads (date/issue/runE/runStart) at the top level, so it works as-is.
     var theoTrim=fDeals.reduce((s,d)=>s+calcRunProrataTrim(d,trimDates),0);
     var saved=loadRecapFact(f.name);
     runRows.push({fourn:f,nb:fDeals.length,nomEUR,runAn,theoTrim,declared:saved?saved.declared:null,comment:saved?saved.comment:'',facture:saved?saved.facture:false});
@@ -2193,10 +2349,10 @@ function renderRecapFourn(){
     kH('En écart',nbEcart>0?nbEcart+' fourn.':'Aucun',nbEcart>0?'à vérifier':'',nbEcart>0?'danger':'');
 
   // ── UF TABLE ──
-  // ── UF TABLE — une ligne par deal ──
+  // ── UF TABLE — une ligne par codification UF (Phase D.3) ──
   var tUF=document.getElementById('recapUFT');
   while(tUF.rows.length>1)tUF.deleteRow(1);
-  var ufDeals=data.filter(d=>(d.ct==='UF'||d.ct==='BOTH')&&d.ufE>0&&(recapFam==='ALL'||fourns.find(f=>f.name===d.fourn&&f.famille===recapFam)));
+  var ufDeals=entriesAll.filter(d=>(d.ct==='UF'||d.ct==='BOTH')&&d.ufE>0&&(recapFam==='ALL'||fourns.find(f=>f.name===d.fourn&&f.famille===recapFam)));
   ufDeals.sort((a,b)=>a.fourn.localeCompare(b.fourn)||(b.date||'').localeCompare(a.date||''));
   document.getElementById('recapUFEmpty').style.display=ufDeals.length?'none':'block';
   var ufCommTotal=0;
@@ -2205,11 +2361,11 @@ function renderRecapFourn(){
     var bc=FAMILLE_BADGE[f.famille]||'bgr';var bl=FAMILLE_LABELS[f.famille]||f.famille||'—';
     var statut=d.fSt==='Payé'?'<span class="badge bg">Payée</span>':d.fSt==='Facturé'?'<span class="badge bb">Facturée</span>':'<span class="badge ba">À émettre</span>';
     var safeName=d.fourn.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
-    var idx=deals.indexOf(d);
+    var idx=deals.indexOf(d.deal); // entry → parent deal index
     var actionBtn=d.fSt==='Payé'
       ?'<span style="font-size:11px;color:var(--green);font-weight:600;">✓ Payé</span>'
       :'<button class="btn btn-sm" style="background:var(--green);color:white;border-color:var(--green);" onclick="openUFFactModalDeal('+idx+')">Facturer</button>';
-    var nomE=_dealNomEur(d);
+    var nomE=Math.round((d.nominal||0)/(d.fx||1));
     var r=tUF.insertRow();
     r.innerHTML=
       '<td style="font-weight:500;">'+d.fourn+'</td>'+
@@ -2290,7 +2446,13 @@ async function markRunInvPaid(fourn,trim,year){
     var trimNum=parseInt(trim.replace('T',''));
     var yearNum=parseInt(year);
     var trimDates=getTrimDates(trimNum,yearNum);
-    var toUpdate=deals.filter(function(d){return(d.ct==='RUN'||d.ct==='BOTH')&&d.fourn===fourn&&d.fSt==='Facturé'&&d.invS===trimDates.endStr;});
+    // Phase D.3 — find parent deals that have at least one Run codif from this
+    // fournisseur AND are in 'Facturé' state for this trim. dedupe to deals so
+    // we update each deal's fSt only once even if it has multiple Run codifs
+    // from the same fournisseur.
+    var matchEntries=billingEntries(deals).filter(function(e){return(e.ct==='RUN'||e.ct==='BOTH')&&e.fourn===fourn&&e.fSt==='Facturé'&&e.invS===trimDates.endStr;});
+    var toUpdateSet=new Set();matchEntries.forEach(function(e){toUpdateSet.add(e.deal);});
+    var toUpdate=Array.from(toUpdateSet);
     for(var i=0;i<toUpdate.length;i++){
       var d=toUpdate[i];
       d.fSt='Payé';d.stat='Deal payé';d.inv=paidDate;
@@ -2298,6 +2460,15 @@ async function markRunInvPaid(fourn,trim,year){
       if(d._id)await sbUpdate('deals',d._id,d);
     }
     renderRunInvTable();renderFact();renderKpis();updateAlertBadge();
+    // Phase H — auto-refresh the commissions page if it's open (or its drill).
+    // Marking a running rapprochement paid is the trigger for commission Running
+    // to update — the drill needs to re-render to pick up the new amount.
+    if(typeof renderCommissions==='function' && document.getElementById('p-commissions')&&document.getElementById('p-commissions').classList.contains('on')){
+      renderCommissions();
+    }
+    if(typeof renderDrill==='function' && typeof commDrillVendeur!=='undefined' && commDrillVendeur){
+      renderDrill();
+    }
     toast('Facture '+fourn+' '+trim+' '+year+' marquée comme payée. Commissions mises à jour.');
   }catch(e){toast('Erreur lors de la mise à jour.');}
 }
@@ -2493,11 +2664,15 @@ function loadUFRappr(fourn){var r=rapprFind(fourn,'uf',null);return r?{declared:
 async function saveUFRapprData(fourn,data){await rapprSave(fourn,'uf',null,data);}
 
 function renderUFRappr(){
-  var data=filt();
+  // Phase D.3 — flatten to codif-level entries before filtering so a deal with
+  // Amundi (Run) + Wealins (UF) shows ONLY its UF codif here. Grouping by
+  // fournisseur uses codif.fourn (the codif's own SDG/Banque/Assureur).
+  var dataDeals=filt();
+  var data=billingEntries(dataDeals);
   var fourns=loadFourn();
   var filteredFourns=ufFam==='ALL'?fourns:fourns.filter(f=>f.famille===ufFam);
 
-  // KPIs
+  // KPIs — sum UF amounts at codif level.
   var allUF=data.filter(d=>(d.ct==='UF'||d.ct==='BOTH')&&d.ufE>0);
   var toFact=allUF.filter(d=>!d.fSt||d.fSt==='À émettre');
   var factured=allUF.filter(d=>d.fSt==='Facturé');
@@ -2507,14 +2682,15 @@ function renderUFRappr(){
     kH('Facturé','' ,fE(factured.reduce((s,d)=>s+(d.ufE||0),0)),factured.length+' facture'+(factured.length!==1?'s':''))+
     kH('Payé','blue',fE(paid.reduce((s,d)=>s+(d.ufE||0),0)),paid.length+' facture'+(paid.length!==1?'s':''));
 
-  // Rapprochement table
+  // Rapprochement table — group by codif.fourn (= the fournisseur supplying the UF product)
   var t=document.getElementById('ufRapprT');
   while(t.rows.length>1)t.deleteRow(1);
   var rows=[];
   filteredFourns.forEach(f=>{
     var fDeals=data.filter(d=>(d.ct==='UF'||d.ct==='BOTH')&&d.fourn===f.name&&(!d.fSt||d.fSt==='À émettre'));
     if(!fDeals.length)return;
-    var nomTotal=fDeals.reduce((s,d)=>s+(_dealNomEur(d)),0);
+    // Use codif nominal converted to EUR via deal fx (not deal.nom — that's the full contract).
+    var nomTotal=fDeals.reduce((s,d)=>s+Math.round((d.nominal||0)/(d.fx||1)),0);
     var theo=fDeals.reduce((s,d)=>s+(d.ufE||0),0);
     var saved=loadUFRappr(f.name);
     rows.push({fourn:f,nb:fDeals.length,nomTotal,theo,declared:saved?saved.declared:null,facture:saved?saved.facture:false,deals:fDeals});
@@ -2542,7 +2718,8 @@ function renderUFRappr(){
 }
 
 function openUFRapprModal(fournName){
-  var data=filt();
+  // Phase D.3 — codif-level entries, filtered to the UF codifs of the picked fournisseur.
+  var data=billingEntries(filt());
   var fDeals=data.filter(d=>(d.ct==='UF'||d.ct==='BOTH')&&d.fourn===fournName&&(!d.fSt||d.fSt==='À émettre'));
   ufRapprCurrentFourn=fournName;
   ufRapprCurrentTheo=fDeals.reduce((s,d)=>s+(d.ufE||0),0);
@@ -2593,7 +2770,9 @@ async function genUFRapprFacture(){
   if(isNaN(declared)||declared===0){alert('Veuillez saisir le montant avant de générer la facture.');return;}
   var comment=document.getElementById('ufRmComment').value;
   await saveUFRapprData(ufRapprCurrentFourn,{declared:declared,comment:comment,facture:true,factureDate:new Date().toISOString().split('T')[0]});
-  var fDeals=filt().filter(function(d){return(d.ct==='UF'||d.ct==='BOTH')&&d.fourn===ufRapprCurrentFourn&&(!d.fSt||d.fSt==='À émettre');});
+  // Phase D.3 — entries view to find every UF codif of this fournisseur waiting to be invoiced.
+  // markUFFacturé below operates on the parent deal (still deal-level state for now).
+  var fDeals=billingEntries(filt()).filter(function(d){return(d.ct==='UF'||d.ct==='BOTH')&&d.fourn===ufRapprCurrentFourn&&(!d.fSt||d.fSt==='À émettre');});
   for(var i=0;i<fDeals.length;i++){
     var d=fDeals[i];
     d.fSt='Facturé';d.invS=new Date().toISOString().split('T')[0];
@@ -2669,16 +2848,18 @@ function _kickFactStandbyTimer(){
 }
 
 function renderUFInvTable(){
-  var all=deals.filter(d=>(d.ct==='UF'||d.ct==='BOTH')&&d.ufE>0);
+  // Phase D.3 — codif-level entries so UF lists exactly the codifs that carry UF
+  // fees, never the whole deal.
+  var all=billingUFEntries();
   // Audit fix — restart standby timer if rows are still in the 60s window (e.g. after page reload)
-  if(all.some(_isPaidStandby))_kickFactStandbyTimer();
+  if(all.some(function(e){return _isPaidStandby(e.deal);}))_kickFactStandbyTimer();
   var filtered=_filterInvByTab(all,ufInvTab);
   // Archives tab: search box filters by client/fourn/produit
   if(ufInvTab==='archives'){
     var q=((document.getElementById('ufInvSearch')||{}).value||'').toLowerCase().trim();
     if(q)filtered=filtered.filter(function(d){return (d.client||'').toLowerCase().indexOf(q)!==-1||(d.fourn||'').toLowerCase().indexOf(q)!==-1||(d.produit||'').toLowerCase().indexOf(q)!==-1;});
     // Sort archives by paidAt desc (most recently archived first)
-    filtered.sort(function(a,b){return (b.paidAt||'').localeCompare(a.paidAt||'');});
+    filtered.sort(function(a,b){return ((b.deal&&b.deal.paidAt)||'').localeCompare((a.deal&&a.deal.paidAt)||'');});
   } else {
     filtered.sort(function(a,b){return b.date.localeCompare(a.date);});
   }
@@ -2687,7 +2868,7 @@ function renderUFInvTable(){
   while(t.rows.length>1)t.deleteRow(1);
   document.getElementById('ufInvEmpty').style.display=filtered.length?'none':'block';
   filtered.forEach(function(d){
-    var idx=deals.indexOf(d);
+    var idx=deals.indexOf(d.deal); // entry → parent deal idx
     var statut=d.fSt==='Payé'?'<span class="badge bg">Payée</span>':d.fSt==='Facturé'?'<span class="badge bb">Facturée</span>':'<span class="badge ba">À émettre</span>';
     var btn;
     if(d.fSt==='Payé'){btn=_renderStandbyBtn(idx,d,'unMarkUFInvPaid');}
@@ -2800,7 +2981,11 @@ async function genFactureRecap(){
   var trimDates=getTrimDates(recapTrim,year);
   var trimLabel='T'+recapTrim+' '+year;
   await saveRecapFactData(recapCurrentFourn,{declared:declared,comment:comment,facture:true,factureDate:new Date().toISOString().split('T')[0],paid:false,paidDate:'',theoTrim:recapCurrentTheo});
-  var fDeals=filt().filter(function(d){return(d.ct==='RUN'||d.ct==='BOTH')&&d.fourn===recapCurrentFourn;});
+  // Phase D.3 — find parent deals that have at least one Running codif from this fournisseur,
+  // then mark each such deal as Facturé. (Per-codif facture status is a Phase D.4 concern.)
+  var fEntries=billingEntries(filt()).filter(function(e){return(e.ct==='RUN'||e.ct==='BOTH')&&e.fourn===recapCurrentFourn;});
+  var fDealsSet=new Set();fEntries.forEach(function(e){fDealsSet.add(e.deal);});
+  var fDeals=Array.from(fDealsSet);
   var updated=0;
   for(var i=0;i<fDeals.length;i++){
     var d=fDeals[i];
@@ -2812,17 +2997,21 @@ async function genFactureRecap(){
 }
 
 function renderFact(){
-  // Include archived deals on the Facturation page so the trace of past invoices stays visible
-  var data=filtIncludingArchived();
-  var ufDeals=data.filter(d=>d.ct==='UF'||d.ct==='BOTH');
+  // Phase D.3 — switch to codif-level entries so KPIs only count codifs that
+  // carry the relevant fee type. A deal with Amundi (Run) + Wealins (UF) on
+  // the same contract contributes its UF codif to UF KPIs AND its Run codif
+  // to Run KPIs, instead of double-counting based on the deal's top-level ct.
+  var dataDeals=filtIncludingArchived();
+  var entries=billingEntries(dataDeals);
+  var ufDeals=entries.filter(d=>d.ct==='UF'||d.ct==='BOTH');
   var aE=ufDeals.filter(d=>d.fSt==='À émettre');
   var fa=ufDeals.filter(d=>d.fSt==='Facturé');
   var pa=ufDeals.filter(d=>d.fSt==='Payé');
   var li=ufDeals.filter(d=>d.fSt==='Litige');
   var totalFact=[...fa,...pa].reduce((s,d)=>s+d.ufE,0);
   var totalPaye=pa.reduce((s,d)=>s+d.ufE,0);
-  var totalRun=data.filter(d=>d.ct==='RUN'||d.ct==='BOTH').reduce((s,d)=>s+d.runE,0);
-  var runDeals=data.filter(d=>d.ct==='RUN'||d.ct==='BOTH');
+  var totalRun=entries.filter(d=>d.ct==='RUN'||d.ct==='BOTH').reduce((s,d)=>s+d.runE,0);
+  var runDeals=entries.filter(d=>d.ct==='RUN'||d.ct==='BOTH');
   var runFact=runDeals.filter(d=>d.fSt==='Facturé');
   var runPaye=runDeals.filter(d=>d.fSt==='Payé');
   var totalRunFact=0;
@@ -3553,6 +3742,136 @@ var PRODUIT_TYPES=['Action','Obligation','Produit Structuré','Private Equity','
 function produitTypeOptHtml(selected){
   return '<option value="">— Choisir —</option>'+PRODUIT_TYPES.map(function(t){return '<option'+(t===(selected||'')?' selected':'')+'>'+t+'</option>';}).join('');
 }
+// Closed set of fee kinds — aligned with the deal-level cycle vocabulary
+// (deal.ct ∈ UF | RUN | BOTH | PF) AND the Facturation page tabs
+// (Up-Front / Running / Perf fees). Single source of truth used in every "type
+// de frais" select (fournisseur product line, deal custom fee row, arbitrage
+// product picker). Keeps display & matching consistent across the app — no
+// casing drift, no typos, no orphan fee strings.
+//
+// Semantics:
+//   UF      → fee charged once up-front at closing       → drives deal.ufR
+//   Run     → fee charged annually (running, prorata trim) → drives deal.runR
+//   UF+Run  → same percentage applies to BOTH cycles      → drives ufR AND runR
+//             (shortcut for products with identical up-front and running rates;
+//              for differing rates, add 2 separate rows — one UF, one Run)
+//
+// IMPORTANT — stored values vs displayed labels:
+//   - Stored value: 'UF' | 'Run' | 'UF+Run'  (legacy data compatibility, never changed)
+//   - Displayed label: 'Up-Front' | 'Running' | 'Up-Front + Running'  (matches
+//     the Facturation page tabs Oscar sees — vocabulary alignment).
+// Perf fees are a separate concept with their own params (rate, hurdle, freq, mode)
+// and live in a dedicated section of the product card / deal modal (`pf` field),
+// not in this dropdown.
+// ═══════════════════════════════════════════════════════════════════════════
+// FEE CALCULATION REFERENCE — source of truth for "how is each fee billed?"
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Three fee types map 1:1 to the three Facturation page tabs (Up-Front, Running,
+// Perf fees). Each has its own calculation, billing cadence and data dependencies.
+//
+// ┌──────────────┬───────────────────────────────────────────────────────────────┐
+// │ UP-FRONT     │ Formula : codif.nominal × codif.ufR / 100                     │
+// │   ↳ ufE      │ Cadence : ONE-SHOT at closing (signature of the deal)         │
+// │              │ Source  : codifEffectiveUfE(codif, deal)                      │
+// │              │ Storage : rapprochement_db row { type:'uf',  fourn, period }  │
+// │              │ Note    : nominal here = INITIAL (not currentNominal) — the   │
+// │              │           up-front is charged once, never re-billed.          │
+// ├──────────────┼───────────────────────────────────────────────────────────────┤
+// │ RUNNING      │ Annual  : codif.nominal × codif.runR / 100  (runR is /an)     │
+// │   ↳ runE     │ Per trim: annual_runE × (days_in_trim / 365)                  │
+// │              │ Cadence : 4 invoices per year (T1, T2, T3, T4)                │
+// │              │ Source  : calcRunProrataTrim(entry, trimDates)                │
+// │              │ Storage : rapprochement_db row { type:'run', fourn, period:   │
+// │              │           'T1_2026' etc, declared, facture, paid }            │
+// │              │ Adjusts : uses codifCurrentNominal(codif, deal) for forward   │
+// │              │           trims — so retraits/arbitrages reduce future bills. │
+// │              │ Known gap : retrait mid-trim under-bills that one trim slightly│
+// │              │             (we use end-of-trim nominal) — refine in Phase D.5│
+// ├──────────────┼───────────────────────────────────────────────────────────────┤
+// │ PERF FEES    │ Inputs  : VL history imported from Excel (vlHistory on the    │
+// │   ↳ pf       │           product) gives gross perf % = (vl1-vl0)/vl0 × 100   │
+// │              │ Pct mode: fee = nominal × (perf% - hurdle%) × rate% / 10000   │
+// │              │           — only triggers when perf% > hurdle%                │
+// │              │ Fixed   : fee = pf.amount when perf% > hurdle% else 0         │
+// │              │ Cadence : per pf.freq (annuel/cloture/valorisation/variable)  │
+// │              │ Source  : _computePerfFees(fournName, isin, vl0, vl1)         │
+// │              │ Storage : rapprochement_db row { type:'pf', fourn, period }   │
+// │              │ Display : "Suivi Perf" page shows computed perf fees per      │
+// │              │           product. Facturation Perf fees tab lists deals      │
+// │              │           with pf.amount > 0 ready to invoice.                │
+// └──────────────┴───────────────────────────────────────────────────────────────┘
+//
+// Storage shape on a product (catalogue level — set on the fournisseur, copied
+// into the deal codification on save):
+//   product = {
+//     isin, part, type, unit, currency,
+//     fees: [ { kind: 'UF'|'Run'|'UF+Run', pct: number } ],
+//     pf:   { mode: 'none'|'pct'|'fixed',
+//             rate?:   number,   // %  (pct mode)
+//             hurdle?: number,   // %  (both pct and fixed)
+//             amount?: number,   // €  (fixed mode)
+//             freq?: 'annuel'|'cloture'|'valorisation'|'variable' }
+//   }
+//
+// Storage shape on a codification (deal level):
+//   codification = {
+//     fourn, produit, type, isin, nominal, currency, billingMode,
+//     feeSnapshot: [...fees from product...],   // Snapshotted at deal creation
+//     ct: 'UF'|'RUN'|'BOTH',                    // Phase D.1
+//     ufR, runR,                                // Derived from feeSnapshot
+//     ufE, runE,                                // = nominal × rate/100
+//     pf: { ...copied from product.pf... }      // Phase E.3
+//   }
+//
+// Phase A.3 / E.3 — Auto-fill chain on product pick :
+//   user picks ISIN → onDealIsinChange()
+//     → fees auto-fill contract-level ufR/runR/ct (via _autofillContractRatesFromFees)
+//     → pf  auto-fills the deal-fourn-block's dfPfBlock (via _autofillDealPfFromProductPf)
+//   On save → codifications enriched (_enrichCodifWithRates) → persisted on the deal.
+// ═══════════════════════════════════════════════════════════════════════════
+
+var FEE_TYPES=[
+  {value:'UF',      label:'Up-Front'},
+  {value:'Run',     label:'Running'},
+  {value:'UF+Run',  label:'Up-Front + Running'}
+];
+function feeKindOptHtml(selected){
+  var sel=(selected||'').trim().toLowerCase();
+  return '<option value="">— Type —</option>'+FEE_TYPES.map(function(t){
+    return '<option value="'+t.value+'"'+(t.value.toLowerCase()===sel?' selected':'')+'>'+t.label+'</option>';
+  }).join('');
+}
+// Translate a fee row's kind to which cycle(s) the percentage applies to.
+// Returns {uf:boolean, run:boolean}. Used by the deal-level auto-fill that
+// computes ufR/runR from the picked product's fees array.
+//
+// Backward compatibility (Phase F.4) — deals saved before the Phase A.1 rename
+// stored kinds like "Gestion" / "Surperformance" / "Entrée". We map them to
+// the closest cycle equivalent so legacy data keeps computing instead of
+// silently falling back to ct='UF' / ufR=runR=0.
+//   "Gestion"        → Run    (management fee, billed annually)
+//   "Entrée"         → UF     (entry fee, one-shot at signature)
+//   "Surperformance" → no UF/Run mapping (it's a perf concept — should be in
+//                      product.pf, not in fees[]). Returns {uf:false,run:false}
+//                      so it doesn't pollute the cycle rates. F.3 re-sync from
+//                      catalogue is the right path to clean these up.
+function feeKindCycles(kind){
+  var k=(kind||'').trim().toLowerCase();
+  // Current vocabulary (Phase A.1+)
+  if(k==='uf' || k==='up-front' || k==='upfront' || k==='up front')return {uf:true,run:false};
+  if(k==='run' || k==='running')return {uf:false,run:true};
+  if(k==='uf+run' || k==='ufrun' || k==='both' || k==='les deux' || k==='up-front + running' || k==='upfront+running')return {uf:true,run:true};
+  // Legacy vocabulary (pre-A.1) — kept as aliases for unmigrated deals.
+  if(k==='gestion')return {uf:false,run:true};   // management fee = Running
+  if(k==='entrée' || k==='entree')return {uf:true,run:false}; // entry fee = UF
+  // 'surperformance' intentionally not mapped — it's a perf concept, doesn't fit UF/Run.
+  return {uf:false,run:false}; // unknown — don't auto-fill
+}
+// Product types that carry a maturity date. Others (Action, ETF, UCITS…) don't —
+// hiding the field on those types cuts visual noise in the deal modal.
+var TYPES_WITH_MATURITY=['Obligation','Produit Structuré'];
+function typeHasMaturity(t){return TYPES_WITH_MATURITY.indexOf(t||'')!==-1;}
 // ── Phase 1B — Codif line cascade Fournisseur → ISIN (datalist) + fee snapshot
 var _codifLineCounter=0;
 function _isinDatalistInnerHtml(fournName){
@@ -3564,6 +3883,21 @@ function _isinDatalistInnerHtml(fournName){
     return '<option value="'+escH(p.isin||'')+'">'+escH(label)+'</option>';
   }).join('');
 }
+// Produit/Support datalist — same idea as the ISIN one but keyed on the part label.
+// Lets the user type "A acc" and see real matches from the fournisseur's catalogue
+// instead of inventing a new spelling each time.
+function _prodDatalistInnerHtml(fournName){
+  var products=getFournProducts(fournName);
+  if(!products.length)return '';
+  var seen={};
+  return products.map(function(p){
+    var part=(p.part||'').trim();
+    if(!part||seen[part])return '';
+    seen[part]=1;
+    var hint=[p.isin,p.currency].filter(Boolean).join(' · ');
+    return '<option value="'+escH(part)+'">'+escH(hint)+'</option>';
+  }).filter(Boolean).join('');
+}
 // Catalog picker — used in the FRAIS block when mode=auto & fournisseur has products.
 // One option per ISIN, with the full descriptor : ISIN · Part/Share label · fees summary.
 function _renderAutoPickerOptions(fournName,currentIsin){
@@ -3573,7 +3907,11 @@ function _renderAutoPickerOptions(fournName,currentIsin){
   prods.forEach(function(p){
     var unitLbl=p.unit==='share'?'Share':'Part';
     var feesSummary=(p.fees&&p.fees.length)
-      ? p.fees.map(function(f){return f.kind+' '+(f.pct||0)+'%';}).join(' · ')
+      ? p.fees.map(function(f){
+          // Phase F.2 — show both rates on UF+Run if runPct is set.
+          if(f.kind==='UF+Run' && f.runPct!=null && f.runPct!=='') return 'UF '+f.pct+'% / Run '+f.runPct+'%';
+          return f.kind+' '+(f.pct||0)+'%';
+        }).join(' · ')
       : '(aucun frais)';
     var label=p.isin+' · '+unitLbl+': '+(p.part||'(sans nom)')+' · '+feesSummary;
     opts+='<option value="'+escH(p.isin||'')+'"'+(p.isin===currentIsin?' selected':'')+'>'+escH(label)+'</option>';
@@ -3592,6 +3930,12 @@ function _renderFeeSnapshotInline(fees){
   if(!fees||!fees.length)return '';
   return 'Frais produit : '+fees.map(function(f){
     var pct=(f.pct||f.pct===0)?f.pct+'%':'—';
+    // Phase F.2 — UF+Run rows can carry separate ufPct (= f.pct) and runPct.
+    // Render as "UF+Run UF2% / Run1.5%" when both are present; fallback to
+    // single "% only" for legacy data or single-cycle rows.
+    if(f.kind==='UF+Run' && f.runPct!=null && f.runPct!==''){
+      pct='UF '+f.pct+'% / Run '+f.runPct+'%';
+    }
     return '<b>'+escH(f.kind||'?')+'</b> '+escH(pct);
   }).join(' · ');
 }
@@ -4002,6 +4346,36 @@ async function saveDeal(){
     // NEW mode — insert N rows (1 per client × contract) sharing a fresh dealGroupId
     var groupId=tree.length>1?_genGroupId():null;
     var autoLinked=0;
+    // Phase G.4 — anti-doublon : avant d'insérer, on cherche un deal déjà
+    // existant qui aurait la même signature (client + contract + first codif's
+    // fourn + first codif's ISIN + same nominal total + same trade date). Si
+    // match, on demande confirmation à l'utilisateur. Évite les doubles-clics
+    // sur Save + les recréations par mégarde.
+    var duplicates=[];
+    for(var j=0;j<tree.length;j++){
+      var pair=tree[j];
+      var pc=pair.contractData;
+      var firstCodif=(pc.codifications&&pc.codifications[0])||{};
+      var dup=deals.find(function(x){
+        if(x.client!==pair.client)return false;
+        if((x.contrat||'')!==(pc.contrat||''))return false;
+        if((x.date||'')!==(date||''))return false;
+        if(Math.abs((x.nom||0)-(pc.nom||0))>0.5)return false;
+        if((x.fourn||'')!==(firstCodif.fourn||''))return false;
+        if((x.isin||'')!==(firstCodif.isin||''))return false;
+        return true;
+      });
+      if(dup)duplicates.push({pair:pair, existing:dup});
+    }
+    if(duplicates.length){
+      var dupSummary=duplicates.map(function(d){
+        return '· '+d.pair.client+' / '+(d.pair.contractData.contrat||'?')+' / '+f0(d.pair.contractData.nom||0)+' '+(d.pair.contractData.dev||'EUR')+' au '+date;
+      }).join('\n');
+      if(!confirm(duplicates.length+' deal'+(duplicates.length>1?'s':'')+' identique'+(duplicates.length>1?'s':'')+' existe'+(duplicates.length>1?'nt':'')+' déjà :\n\n'+dupSummary+'\n\nCréer un duplicate ?')){
+        toast('Création annulée — '+duplicates.length+' doublon'+(duplicates.length>1?'s':'')+' détecté'+(duplicates.length>1?'s':'')+'.');
+        return;
+      }
+    }
     for(var j=0;j<tree.length;j++){
       var rowPayload=_buildDealRowFromContract(tree[j],vendor,date,stat,notes,groupId,fxByDev);
       rowPayload.hist=[{ts:nowS(),a:'Deal créé',by:vendor}];
@@ -4044,6 +4418,14 @@ function _buildDealRowFromContract(pair,vendor,date,stat,notes,groupId,fxByDev){
   }
   // EUR-equivalent of the contract total — derived but useful for KPIs that need a single base
   var nomEur=Math.round(nom/fxRate);
+  // Phase H.2 — Sum codif-level ufE/runE (already in EUR-equivalent from enrichment)
+  // instead of recomputing nom × deal-level rate. This makes the deal row mirror
+  // exactly what the catalogue says per codif.
+  var sumUfE=0, sumRunE=0;
+  (c.codifications||[]).forEach(function(cd){ sumUfE+=cd.ufE||0; sumRunE+=cd.runE||0; });
+  // Fallback : if codif enrichment didn't run (legacy data), use nom × rate.
+  if(sumUfE===0 && ufP>0)  sumUfE  = Math.round(nomEur*ufP);
+  if(sumRunE===0 && runP>0)sumRunE = Math.round(nomEur*runP);
   return{
     v:vendor,date:date,stat:stat,
     client:pair.client,contrat:c.contrat||'Assurance Vie Lux',
@@ -4056,8 +4438,7 @@ function _buildDealRowFromContract(pair,vendor,date,stat,notes,groupId,fxByDev){
     fxDate:fxDate,
     issue:'',invS:'',inv:'',
     ct:c.ct||'UF',ufR:parseFloat(c.ufR)||0,runR:parseFloat(c.runR)||0,tva:parseFloat(c.tva)||0,
-    // UF/Run EUR-equivalents apply the snapshotted FX rate
-    ufE:Math.round(nomEur*ufP),runE:Math.round(nomEur*runP),
+    ufE:sumUfE, runE:sumRunE,
     pf:legacyPf,
     fSt:'À émettre',fRef:'',
     notes:notes||'',
@@ -4135,10 +4516,36 @@ function _collectContractBlock(ctb){
       pf:pf
     });
   });
+  // Phase D.1 — enrich every codification with its own ct/ufR/runR/ufE/runE
+  // derived from its feeSnapshot. Billing pages will iter on these per-codif
+  // fields, so we persist them at save time. Deal-level ct/ufR/runR is kept
+  // for backward compat + KPIs that still need a single contract aggregate.
+  enrichDealCodifications(codifications);
+  // Phase H.2 — derive deal-level aggregates from the codif sums, OVERRIDING
+  // whatever the user typed at contract level. The codifs are the source of
+  // truth (= fees come from product catalogue); the contract-level fields
+  // become a computed snapshot. If user typed manual contract rates AND has
+  // codifs, the codifs win (= the auto-calc reflects what's actually billed).
+  var derived={ct:ct,ufR:ufR,runR:runR}; // start from user-typed values
+  if(codifications.length){
+    var sumUfE=0, sumRunE=0, sumNomUf=0, sumNomRun=0, wUfR=0, wRunR=0;
+    var hasUf=false, hasRun=false;
+    codifications.forEach(function(c){
+      var nm=parseFloat(c.nominal)||0;
+      sumUfE += c.ufE||0;
+      sumRunE+= c.runE||0;
+      if((c.ufR||0)>0){ wUfR += (c.ufR||0)*nm; sumNomUf += nm; hasUf=true; }
+      if((c.runR||0)>0){wRunR+= (c.runR||0)*nm; sumNomRun+= nm; hasRun=true; }
+      if(c.ct==='BOTH'){hasUf=true; hasRun=true;}
+    });
+    derived.ufR  = sumNomUf >0 ? Math.round(wUfR /sumNomUf *10000)/10000 : 0;
+    derived.runR = sumNomRun>0 ? Math.round(wRunR/sumNomRun*10000)/10000 : 0;
+    derived.ct   = (hasUf&&hasRun) ? 'BOTH' : hasRun ? 'RUN' : hasUf ? 'UF' : ct;
+  }
   return{
     _id:ctb.dataset.origDealId||null,
     contrat:contrat,nom:nom,dev:dev,depositaire:depo,
-    ct:ct,ufR:ufR,runR:runR,tva:tva,
+    ct:derived.ct, ufR:derived.ufR, runR:derived.runR, tva:tva,
     codifications:codifications
   };
 }
@@ -4274,10 +4681,12 @@ function _appendDealFournBlock(contractBlock,data){
   },data||{});
   var fournsContainer=contractBlock.querySelector('.contract-fourns');
   var listId='dealIsinList-'+(++_codifLineCounter);
+  var prodListId='dealProdList-'+_codifLineCounter;
   var fournBlock=document.createElement('div');
   fournBlock.className='deal-fourn-block';
   fournBlock.style.cssText='background:#fff;border:1px solid var(--border);border-radius:5px;padding:8px 9px;margin-bottom:6px;';
   fournBlock.dataset.isinListId=listId;
+  fournBlock.dataset.prodListId=prodListId;
   fournBlock.dataset.feeSnapshot=JSON.stringify(data.feeSnapshot||[]);
   var pf=data.pf||{mode:'none'};
   var pfMode=pf.mode||(pf.type?pf.type:'none');
@@ -4285,25 +4694,28 @@ function _appendDealFournBlock(contractBlock,data){
   var showFixed=pfMode==='fixed';
   var showFreq=pfMode!=='none'&&pfMode;
   var feesMode=data.feesMode||'auto';
-  // Labels — small caption rows above each input row
-  var lbl='font-size:9px;color:var(--text3);font-weight:600;letter-spacing:.3px;text-transform:uppercase;';
+  // Caption rows use the shared .field-caption class (declared in style.css).
+  // Was: 4+ identical inline style strings duplicated through this template.
   fournBlock.innerHTML=
     // Row 1 labels
-    '<div style="display:grid;grid-template-columns:1.3fr 1.3fr 130px 110px 1fr 130px 28px;gap:6px;margin-bottom:2px;'+lbl+'">'+
+    '<div class="field-caption" style="display:grid;grid-template-columns:1.3fr 1.3fr 130px 110px 1fr 130px 28px;gap:6px;margin-bottom:2px;">'+
       '<span>Fournisseur (SDG)</span><span>Produit / Support</span><span>Type</span><span>ISIN</span><span>Broker</span><span>Maturité</span><span></span>'+
     '</div>'+
     // Row 1 inputs
     '<div style="display:grid;grid-template-columns:1.3fr 1.3fr 130px 110px 1fr 130px 28px;gap:6px;align-items:center;margin-bottom:6px;">'+
       '<select class="dfFourn" onchange="onDealFournChange(this)">'+fournOptHtml(data.fourn)+'</select>'+
-      '<input type="text" class="dfProduit" value="'+(data.produit||'')+'" placeholder="ex: A acc EUR"/>'+
-      '<select class="dfType">'+produitTypeOptHtml(data.type)+'</select>'+
+      // Phase G.3 — produit input fires onProduitChange so picking a catalogue
+      // produit (via datalist or matching text) auto-fills ISIN + type + fees
+      // on the deal modal too (mirror of the arbitrage flow F.5).
+      '<input list="'+prodListId+'" type="text" class="dfProduit" value="'+(data.produit||'')+'" placeholder="ex: A acc EUR" oninput="_onDealProduitChange(this)" onchange="_onDealProduitChange(this)"/>'+
+      '<select class="dfType" onchange="onDealTypeChange(this)">'+produitTypeOptHtml(data.type)+'</select>'+
       '<input list="'+listId+'" type="text" class="dfISIN" value="'+(data.isin||'')+'" placeholder="FR00…" style="font-family:monospace;font-size:11px;" onchange="onDealIsinChange(this)" oninput="onDealIsinChange(this)"/>'+
       '<select class="dfBroker">'+brokerOptHtml(data.broker)+'</select>'+
-      '<input type="date" class="dfMaturite" value="'+(data.maturite||'')+'"/>'+
+      '<input type="date" class="dfMaturite" value="'+(data.maturite||'')+'" style="'+(typeHasMaturity(data.type)?'':'visibility:hidden;')+'"/>'+
       '<button type="button" onclick="removeDealFournBlock(this)" title="Retirer ce fournisseur" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:18px;padding:0;line-height:1;">×</button>'+
     '</div>'+
     // Row 2 labels (no currency — handled at contract level)
-    '<div style="display:grid;grid-template-columns:1.5fr 1.5fr 150px;gap:6px;margin-bottom:2px;'+lbl+'">'+
+    '<div class="field-caption" style="display:grid;grid-template-columns:1.5fr 1.5fr 150px;gap:6px;margin-bottom:2px;">'+
       '<span>Assureur</span><span>Banque</span><span>Nominal</span>'+
     '</div>'+
     // Row 2 inputs
@@ -4313,9 +4725,17 @@ function _appendDealFournBlock(contractBlock,data){
       '<input type="number" class="dfNominal" value="'+(data.nominal||'')+'" placeholder="Nominal" step="0.01" min="0" oninput="_updateContractSum(this)"/>'+
     '</div>'+
     '<datalist id="'+listId+'">'+_isinDatalistInnerHtml(data.fourn||'')+'</datalist>'+
-    // ── Mode facturation (Fast / Feed) ──
-    '<div class="dfBillingBlock" style="margin-top:6px;padding:5px 8px;background:var(--surface);border-radius:4px;border-top:1px dashed var(--border);display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'+
-      '<span style="font-size:10px;color:var(--text3);font-weight:600;letter-spacing:.3px;">FACTURATION</span>'+
+    '<datalist id="'+prodListId+'">'+_prodDatalistInnerHtml(data.fourn||'')+'</datalist>'+
+    // ── Paramètres facturation & frais (FACTURATION + FRAIS + PERF FEES) ──
+    // Wrapped under a single named group instead of 3 visually-equal siblings of the
+    // row inputs above. The group title makes the relationship explicit, and the
+    // .df-group container provides ONE visual boundary instead of three dashed
+    // top-borders fighting for attention.
+    '<div class="df-group">'+
+    '<div class="df-group-hd">Facturation & frais</div>'+
+    // Mode facturation (Fast / Feed)
+    '<div class="dfBillingBlock df-subblock-in-group" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'+
+      '<span class="field-caption-sm">FACTURATION</span>'+
       '<select class="dfBillingMode" onchange="_onDfBillingModeChange(this)" style="font-size:11px;">'+
         '<option value="fast"'+((data.billingMode||'fast')==='fast'?' selected':'')+'>Fast — facture unique au closing</option>'+
         '<option value="feed"'+(data.billingMode==='feed'?' selected':'')+'>Feed — running annuel facturé à la SDG</option>'+
@@ -4325,9 +4745,9 @@ function _appendDealFournBlock(contractBlock,data){
     // ── Fees block (auto from ISIN / personnaliser / aucun) ──
     // Quand mode=auto ET le fournisseur a des produits → un sélecteur de catalogue
     // explicite apparaît : pick d'un produit → fill auto ISIN + Part + Type + fees.
-    '<div class="dfFeesBlock" style="margin-top:6px;padding:5px 8px;background:var(--surface);border-radius:4px;border-top:1px dashed var(--border);">'+
+    '<div class="dfFeesBlock df-subblock-in-group">'+
       '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'+
-        '<span style="font-size:10px;color:var(--text3);font-weight:600;letter-spacing:.3px;">FRAIS</span>'+
+        '<span class="field-caption-sm">FRAIS</span>'+
         '<select class="dfFeesMode" onchange="_onDfFeesModeChange(this)" style="font-size:11px;">'+
           '<option value="auto"'+(feesMode==='auto'?' selected':'')+'>Auto (depuis ISIN)</option>'+
           '<option value="custom"'+(feesMode==='custom'?' selected':'')+'>Personnaliser</option>'+
@@ -4342,12 +4762,12 @@ function _appendDealFournBlock(contractBlock,data){
       '</div>'+
       '<div class="dfFeesCustomWrap" style="margin-top:6px;display:'+(feesMode==='custom'?'':'none')+';">'+
         '<div class="dfFeesCustomRows"></div>'+
-        '<button type="button" class="btn btn-sm" onclick="_addDfCustomFeeRow(this)" style="font-size:10px;padding:2px 8px;margin-top:2px;">+ frais</button>'+
+        '<button type="button" class="btn-add-xs" onclick="_addDfCustomFeeRow(this)" style="margin-top:2px;">+ frais</button>'+
       '</div>'+
     '</div>'+
-    // ── Perf fees per fourn ──
-    '<div class="dfPfBlock" style="margin-top:4px;padding:5px 8px;background:var(--surface);border-radius:4px;border-top:1px dashed var(--border);display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'+
-      '<span style="font-size:10px;color:var(--text3);font-weight:600;letter-spacing:.3px;">PERF FEES</span>'+
+    // Perf fees per fourn
+    '<div class="dfPfBlock df-subblock-in-group" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'+
+      '<span class="field-caption-sm">PERF FEES</span>'+
       '<select class="dfPfMode" onchange="_onDfPfModeChange(this)" style="font-size:11px;">'+
         '<option value="none"'+(pfMode==='none'?' selected':'')+'>Aucun</option>'+
         '<option value="pct"'+(pfMode==='pct'?' selected':'')+'>% sur perf</option>'+
@@ -4366,7 +4786,8 @@ function _appendDealFournBlock(contractBlock,data){
         '<option value="valorisation"'+(pf.freq==='valorisation'?' selected':'')+'>Valorisation</option>'+
         '<option value="variable"'+(pf.freq==='variable'?' selected':'')+'>Variable</option>'+
       '</select>'+
-    '</div>';
+    '</div>'+
+    '</div>';  // /df-group
   fournsContainer.appendChild(fournBlock);
   // Custom fees mode — populate rows from feeSnapshot
   if(feesMode==='custom'){
@@ -4445,10 +4866,14 @@ function _addDfCustomFeeRow(btn){
 function _appendDfCustomFeeRow(container,fee){
   var row=document.createElement('div');
   row.className='dfCustomFeeRow';
-  row.style.cssText='display:grid;grid-template-columns:1fr 80px 24px;gap:4px;margin-bottom:3px;align-items:center;';
+  // Phase F.2 — grid extended for the secondary Run% input. Hidden unless kind=UF+Run.
+  var isCombo=(fee.kind==='UF+Run');
+  row.style.cssText='display:grid;grid-template-columns:1fr 64px 64px 24px;gap:4px;margin-bottom:3px;align-items:center;';
+  var primaryLbl=isCombo?'UF %':'%';
   row.innerHTML=
-    '<input type="text" class="dfCfKind" value="'+(fee.kind||'')+'" placeholder="Type (gestion, perf, entrée…)" style="font-size:11px;"/>'+
-    '<input type="number" class="dfCfPct" value="'+(fee.pct||fee.pct===0?fee.pct:'')+'" placeholder="%" step="0.01" min="0" style="font-size:11px;"/>'+
+    '<select class="dfCfKind" onchange="_onFfKindChange(this)" style="font-size:11px;">'+feeKindOptHtml(fee.kind)+'</select>'+
+    '<input type="number" class="dfCfPct" value="'+(fee.pct||fee.pct===0?fee.pct:'')+'" placeholder="'+primaryLbl+'" title="'+(isCombo?'Taux UF (%)':'Taux (%)')+'" step="0.01" min="0" style="font-size:11px;"/>'+
+    '<input type="number" class="dfCfRunPct" value="'+(fee.runPct||fee.runPct===0?fee.runPct:'')+'" placeholder="Run %" title="Taux Running (%/an)" step="0.01" min="0" style="font-size:11px;display:'+(isCombo?'':'none')+';"/>'+
     '<button type="button" onclick="_removeDfCustomFeeRow(this)" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:14px;padding:0;line-height:1;">×</button>';
   container.appendChild(row);
 }
@@ -4461,7 +4886,13 @@ function _readDfCustomFees(fournBlock){
   fournBlock.querySelectorAll('.dfCustomFeeRow').forEach(function(r){
     var k=(r.querySelector('.dfCfKind').value||'').trim();
     var p=parseFloat(r.querySelector('.dfCfPct').value);
-    if(k||!isNaN(p))out.push({kind:k,pct:isNaN(p)?0:p});
+    // Phase F.2 — UF+Run rows carry a secondary runPct field.
+    var entry={kind:k,pct:isNaN(p)?0:p};
+    if(k==='UF+Run'){
+      var runPct=parseFloat((r.querySelector('.dfCfRunPct')||{}).value);
+      if(!isNaN(runPct))entry.runPct=runPct;
+    }
+    if(k||!isNaN(p))out.push(entry);
   });
   return out;
 }
@@ -4479,8 +4910,23 @@ function _onDfBillingModeChange(sel){
 function removeDealFournBlock(btn){
   var block=btn.closest('.deal-fourn-block');
   var contract=btn.closest('.deal-contract-block');
+  // Cheap misclick protection: only ask for confirmation if the block has data
+  // worth losing (fournisseur picked, ISIN typed, nominal entered, fees customised…).
+  // Empty rows just disappear silently — no friction added when there's nothing at stake.
+  if(block && _dealFournBlockHasData(block)){
+    if(!confirm('Retirer ce fournisseur du deal ? Les saisies seront perdues.'))return;
+  }
   if(block)block.remove();
   if(contract)_updateContractSum(contract);
+}
+function _dealFournBlockHasData(block){
+  if(!block)return false;
+  var fourn=(block.querySelector('.dfFourn')||{}).value;
+  var prod=((block.querySelector('.dfProduit')||{}).value||'').trim();
+  var isin=((block.querySelector('.dfISIN')||{}).value||'').trim();
+  var nom=((block.querySelector('.dfNominal')||{}).value||'').trim();
+  var hasCustomFee=block.querySelectorAll('.dfCustomFeeRow').length>0;
+  return !!(fourn||prod||isin||nom||hasCustomFee);
 }
 function onDealFournChange(sel){
   var fournBlock=sel.closest('.deal-fourn-block');
@@ -4489,6 +4935,13 @@ function onDealFournChange(sel){
   var listId=fournBlock.dataset.isinListId;
   var dl=fournBlock.querySelector('datalist#'+listId);
   if(dl)dl.innerHTML=_isinDatalistInnerHtml(fournName);
+  // Same treatment for the produit/support datalist: switching fournisseur should
+  // immediately surface that fournisseur's catalogue, not stale options.
+  var prodListId=fournBlock.dataset.prodListId;
+  if(prodListId){
+    var pdl=fournBlock.querySelector('datalist#'+prodListId);
+    if(pdl)pdl.innerHTML=_prodDatalistInnerHtml(fournName);
+  }
   // Refresh the auto picker dropdown — populated from the new fourn's catalog,
   // visible only if mode=auto AND there are products.
   var picker=fournBlock.querySelector('.dfFeesAutoPicker');
@@ -4501,6 +4954,43 @@ function onDealFournChange(sel){
   }
   var isinInput=fournBlock.querySelector('.dfISIN');
   if(isinInput)onDealIsinChange(isinInput);
+}
+// Toggle the Maturité field's visibility based on the selected product type.
+// Maturité only makes sense for products that have one — Obligation, Produit Structuré.
+// For Action / UCITS / ETF / etc, the field is hidden (visibility:hidden keeps the
+// grid layout intact, so the row doesn't reshuffle).
+function onDealTypeChange(sel){
+  var fournBlock=sel.closest('.deal-fourn-block');
+  if(!fournBlock)return;
+  var matInput=fournBlock.querySelector('.dfMaturite');
+  if(matInput) matInput.style.visibility=typeHasMaturity(sel.value)?'':'hidden';
+}
+// Phase G.3 — bidirectional cascade : picking the produit/part input on a deal
+// fourn block also auto-fills the ISIN + everything downstream (type, fees,
+// contract-level ufR/runR/ct, pf config). Symmetric with onDealIsinChange.
+// Looks up the product by `part` label in the picked fournisseur's catalogue.
+// If found and the ISIN slot is empty, fills the ISIN and triggers
+// onDealIsinChange to propagate everything else through the existing pipeline.
+function _onDealProduitChange(input){
+  var fournBlock=input.closest('.deal-fourn-block');
+  if(!fournBlock)return;
+  var fournSel=fournBlock.querySelector('.dfFourn');
+  var fournName=fournSel?fournSel.value:'';
+  if(!fournName)return;
+  var partLabel=(input.value||'').trim();
+  if(!partLabel)return;
+  var products=getFournProducts(fournName);
+  var prod=products.find(function(p){return (p.part||'').trim()===partLabel;});
+  if(!prod || !prod.isin) return; // typed value not in catalogue or no ISIN — let user keep typing
+  var isinInput=fournBlock.querySelector('.dfISIN');
+  if(!isinInput) return;
+  // Only auto-fill if the ISIN field is empty (= user hasn't already set one).
+  // Avoids overwriting a deliberate manual ISIN.
+  if(!isinInput.value){
+    isinInput.value=prod.isin;
+    // Trigger the full ISIN cascade — type/fees/contract rates/pf auto-fill etc.
+    onDealIsinChange(isinInput);
+  }
 }
 function onDealIsinChange(input){
   var fournBlock=input.closest('.deal-fourn-block');
@@ -4533,8 +5023,407 @@ function onDealIsinChange(input){
     var match=Array.prototype.find.call(autoPicker.options,function(o){return o.value===isin;});
     autoPicker.value=match?isin:'';
   }
+  // NEW (Phase A.3) — auto-fill the deal's contract-level cycle/rates from the
+  // product's fees catalogue, so picking a product end-to-end-populates ufR/runR/ct
+  // without manual re-entry. Only fills when those fields are still empty (0)
+  // so we never overwrite a deliberate user edit.
   var contract=input.closest('.deal-contract-block');
+  if(contract && product && fees.length){
+    _autofillContractRatesFromFees(contract,fees);
+  }
+  // Phase E.3 — auto-fill the deal's Perf fees block from the product's pf config
+  // (mirror of the UF/Run auto-fill above). Only fills when the deal-level pf mode
+  // is still 'none' (= untouched by the user) — preserves manual edits.
+  if(product && product.pf && product.pf.mode && product.pf.mode!=='none'){
+    _autofillDealPfFromProductPf(fournBlock, product.pf);
+  }
   if(contract)_updateContractSum(contract);
+}
+// Phase E.3 — copy a product's perf config into the deal-fourn-block's dfPfBlock UI.
+// Read-then-write: only fills when the dfPfMode is still 'none' so we don't clobber
+// a deliberate manual config. Updates display visibility just like _onDfPfModeChange.
+function _autofillDealPfFromProductPf(fournBlock, prodPf){
+  if(!fournBlock || !prodPf || !prodPf.mode || prodPf.mode==='none') return;
+  var modeEl=fournBlock.querySelector('.dfPfMode');
+  if(!modeEl) return;
+  if(modeEl.value && modeEl.value!=='none') return; // user already set something
+  modeEl.value=prodPf.mode;
+  var setV=function(cls,v){var el=fournBlock.querySelector(cls);if(el && v!=null) el.value=v;};
+  if(prodPf.mode==='pct'){
+    setV('.dfPfRate',   prodPf.rate);
+    setV('.dfPfHurdle', prodPf.hurdle);
+  } else if(prodPf.mode==='fixed'){
+    setV('.dfPfFixed',  prodPf.amount);
+    setV('.dfPfHurdle', prodPf.hurdle);
+  }
+  setV('.dfPfFreq', prodPf.freq||'annuel');
+  // Re-run the visibility toggle so the right rows show.
+  if(typeof _onDfPfModeChange==='function') _onDfPfModeChange(modeEl);
+  if(typeof toast==='function') toast('Perf fees auto-remplies depuis le catalogue ('+prodPf.mode+(prodPf.rate?' '+prodPf.rate+'%':'')+(prodPf.hurdle?' hurdle '+prodPf.hurdle+'%':'')+')');
+}
+
+// Translate a fees array into deal-level cycle rates.
+// Each fee row has shape:
+//   {kind:'UF',     pct:X}            → adds X to ufR
+//   {kind:'Run',    pct:X}            → adds X to runR
+//   {kind:'UF+Run', pct:X, runPct:Y}  → adds X to ufR AND Y to runR (Phase F.2)
+//     · Legacy: if runPct undefined on a UF+Run row, fallback to pct on BOTH
+//       cycles (Phase A.1 behavior — pre-F.2 data still computes correctly).
+// Multiple rows of the same kind accumulate (rare but supported).
+// Returns {ufR, runR, ct} ready to drop into the contract inputs.
+function _feesToCycleRates(fees){
+  var ufR=0, runR=0;
+  (fees||[]).forEach(function(f){
+    var pct=parseFloat(f.pct);
+    var hasUfPct=!isNaN(pct)&&pct>0;
+    var c=feeKindCycles(f.kind);
+    // Phase F.2 — UF+Run can carry a separate runPct. If it exists we use it,
+    // else we fall back to legacy "same pct on both cycles".
+    var isCombo=(c.uf && c.run);
+    var runPctRaw=isCombo?parseFloat(f.runPct):NaN;
+    var hasRunPct=!isNaN(runPctRaw)&&runPctRaw>0;
+    if(c.uf && hasUfPct) ufR+=pct;
+    if(c.run){
+      if(isCombo && hasRunPct) runR+=runPctRaw;       // F.2 path : separate rates
+      else if(hasUfPct)        runR+=pct;             // legacy : same pct for both
+    }
+  });
+  // Round to 4 decimals to avoid binary-float artifacts (1.5+0.0 = 1.5000000001 etc).
+  ufR=Math.round(ufR*10000)/10000;
+  runR=Math.round(runR*10000)/10000;
+  var ct=(ufR>0 && runR>0)?'BOTH':(runR>0?'RUN':(ufR>0?'UF':'UF'));
+  return {ufR:ufR, runR:runR, ct:ct};
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Phase D.1 — Per-codification fee resolution
+// ═══════════════════════════════════════════════════════════════════════════
+// Each codification (= one fournisseur+produit slot on a deal) now carries its
+// own ct/ufR/runR/ufE/runE — derived from its feeSnapshot and nominal, not from
+// the deal-level rates. This is the model change that lets a single deal mix
+// Amundi (Run) + Wealins (UF) on the same contract while categorising each
+// correctly on the billing pages.
+//
+// Two paths:
+//   _enrichCodifWithRates(codif)        — MUTATES the codif at save time,
+//                                          adding ct/ufR/runR/ufE/runE fields.
+//   codifEffective{Ct,UfR,RunR,UfE,RunE}(codif, deal)
+//                                       — READS effective values with legacy
+//                                          fallback: if the codif doesn't have
+//                                          the field (= deal predates Phase D),
+//                                          falls back to the deal-level value
+//                                          scaled by codif's nominal share.
+//
+// Backward compat: any deal saved before Phase D has codifications without these
+// fields. Reading via the getters keeps the UI consistent until that deal is
+// re-saved (which will re-run _enrichCodifWithRates and persist the fields).
+
+function _enrichCodifWithRates(codif){
+  if(!codif) return codif;
+  var fees=Array.isArray(codif.feeSnapshot)?codif.feeSnapshot:[];
+  var rates=_feesToCycleRates(fees);
+  var nom=parseFloat(codif.nominal)||0;
+  codif.ct  = rates.ct;
+  codif.ufR = rates.ufR;
+  codif.runR= rates.runR;
+  // EUR-equivalent amounts. The currency is contract-level (per Oscar) so codif's
+  // currency matches the deal's dev; we don't apply FX here — same as deal-level
+  // ufE/runE, that's done at the deal row level.
+  codif.ufE  = Math.round(nom * (rates.ufR/100));
+  codif.runE = Math.round(nom * (rates.runR/100));
+  return codif;
+}
+
+// Helper getters used by billing pages — codif first, deal-level fallback.
+// `deal` arg is needed for the legacy fallback (where the codif doesn't carry
+// its own rate and we apportion the deal-level rate by codif/deal nominal ratio).
+function codifEffectiveCt(codif, deal){
+  if(codif && codif.ct) return codif.ct;
+  return (deal && deal.ct) || 'UF';
+}
+function codifEffectiveUfR(codif, deal){
+  if(codif && typeof codif.ufR==='number') return codif.ufR;
+  return (deal && deal.ufR) || 0;
+}
+function codifEffectiveRunR(codif, deal){
+  if(codif && typeof codif.runR==='number') return codif.runR;
+  return (deal && deal.runR) || 0;
+}
+// EUR amounts: prefer the codif's stored value; if missing, compute on-the-fly
+// from its nominal × its rate. Last resort: apportion deal.ufE/runE by share.
+function codifEffectiveUfE(codif, deal){
+  if(codif && typeof codif.ufE==='number') return codif.ufE;
+  var nom=parseFloat(codif&&codif.nominal)||0;
+  var rate=codifEffectiveUfR(codif, deal);
+  if(nom>0 && rate>0) return Math.round(nom * (rate/100));
+  // Legacy fallback : apportion deal.ufE by codif's share of deal.nom
+  if(deal && deal.nom>0 && nom>0) return Math.round((deal.ufE||0) * (nom/deal.nom));
+  return 0;
+}
+function codifEffectiveRunE(codif, deal){
+  if(codif && typeof codif.runE==='number') return codif.runE;
+  var nom=parseFloat(codif&&codif.nominal)||0;
+  var rate=codifEffectiveRunR(codif, deal);
+  if(nom>0 && rate>0) return Math.round(nom * (rate/100));
+  if(deal && deal.nom>0 && nom>0) return Math.round((deal.runE||0) * (nom/deal.nom));
+  return 0;
+}
+// Convenience : returns all codifications of a deal, each enriched on-the-fly
+// (without mutating storage) — so iterating billing pages can read uniformly.
+// Use this everywhere the billing pages query deals — it normalizes the legacy
+// vs Phase D shape.
+function dealCodifsEffective(deal){
+  if(!deal || !Array.isArray(deal.codifications) || !deal.codifications.length){
+    // Legacy deals without codifications: synthesize one virtual codif from
+    // the deal's top-level fields so iterators don't choke.
+    if(!deal) return [];
+    return [{
+      fourn:deal.fourn||'',produit:deal.produit||'',type:deal.produit_type||'',
+      isin:deal.isin||'',broker:deal.broker||'',
+      nominal:deal.nom||0,currency:deal.dev||'EUR',
+      ct:deal.ct||'UF', ufR:deal.ufR||0, runR:deal.runR||0,
+      ufE:deal.ufE||0, runE:deal.runE||0,
+      _virtual:true // marker so callers can branch if needed (rare)
+    }];
+  }
+  return deal.codifications.map(function(c){
+    return {
+      fourn:c.fourn||'',produit:c.produit||'',type:c.type||'',
+      isin:c.isin||'',broker:c.broker||'',
+      nominal:c.nominal||0,currency:c.currency||deal.dev||'EUR',
+      ct:codifEffectiveCt(c,deal),
+      ufR:codifEffectiveUfR(c,deal),
+      runR:codifEffectiveRunR(c,deal),
+      ufE:codifEffectiveUfE(c,deal),
+      runE:codifEffectiveRunE(c,deal),
+      assureur:c.assureur||'',banque:c.banque||'',
+      billingMode:c.billingMode||'fast',
+      pf:c.pf||{mode:'none'},
+      feeSnapshot:c.feeSnapshot||[],
+      maturite:c.maturite||null,
+      // Keep a reference to the parent deal for upstream filters (client/date/etc.)
+      _deal:deal
+    };
+  });
+}
+// Phase D.1 — persist enriched rates on the codifications array of a deal.
+// Mutates `codifs` in place. Idempotent.
+function enrichDealCodifications(codifs){
+  if(!Array.isArray(codifs)) return codifs;
+  codifs.forEach(function(c){_enrichCodifWithRates(c);});
+  return codifs;
+}
+
+// Phase H.2 — propagate codif-level aggregates back to deal-level fields.
+// Reason: many legacy renderers (commissions, fournisseur référentiel, alerts,
+// CSV export) read `d.ufE / d.runE / d.ct / d.ufR / d.runR` directly. If we only
+// enrich codifs and leave deal fields stale, those renderers display 0.
+//
+// Aggregation rules :
+//   d.ufE  = sum of codif.ufE  across all codifs
+//   d.runE = sum of codif.runE across all codifs
+//   d.ct   = UF if all codifs are UF, RUN if all codifs are RUN, BOTH if mixed,
+//            otherwise leave existing (defensive : never blank).
+//   d.ufR  = weighted-average rate by nominal (representative for the contract)
+//   d.runR = weighted-average rate by nominal
+//
+// Idempotent. Safe to call multiple times. Doesn't write to DB (in-memory only —
+// the deal save flow re-saves naturally on next save_collect cycle).
+function _recomputeDealAggregates(d){
+  if(!d || !Array.isArray(d.codifications) || !d.codifications.length) return d;
+  var sumUfE=0, sumRunE=0, sumNomUf=0, sumNomRun=0, weightedUfR=0, weightedRunR=0;
+  var ctSeen={UF:false, RUN:false, BOTH:false};
+  d.codifications.forEach(function(c){
+    var nom=parseFloat(c.nominal)||0;
+    sumUfE += c.ufE||0;
+    sumRunE+= c.runE||0;
+    if((c.ufR||0)>0){ weightedUfR  += (c.ufR||0)*nom;  sumNomUf  += nom; }
+    if((c.runR||0)>0){weightedRunR += (c.runR||0)*nom; sumNomRun += nom; }
+    if(c.ct==='UF') ctSeen.UF=true;
+    if(c.ct==='RUN') ctSeen.RUN=true;
+    if(c.ct==='BOTH'){ctSeen.UF=true; ctSeen.RUN=true;}
+  });
+  d.ufE = sumUfE;
+  d.runE= sumRunE;
+  d.ufR = sumNomUf >0 ? Math.round(weightedUfR /sumNomUf *10000)/10000 : 0;
+  d.runR= sumNomRun>0 ? Math.round(weightedRunR/sumNomRun*10000)/10000 : 0;
+  if(ctSeen.UF && ctSeen.RUN) d.ct='BOTH';
+  else if(ctSeen.RUN) d.ct='RUN';
+  else if(ctSeen.UF) d.ct='UF';
+  // else leave d.ct as-is (no codif had a recognized type — likely empty kind data)
+  return d;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Phase D.2 — currentNominal per codification
+// ═══════════════════════════════════════════════════════════════════════════
+// A codification's effective base for fee calculation is NOT its initial
+// nominal forever — it shrinks when capital is withdrawn or arbitraged out.
+// Sources of reduction:
+//   1. Retraits → stored on contract.produits[].retraits[]; linkage to a codif
+//      is via (deal_id, codif_idx) on the produit entry.
+//   2. Arbitrages out → a new deal exists with arbSrc=this.deal._id; the new
+//      deal's nominal is what was moved out. (TODO Phase D.4 : track codif-level
+//      arbitrage source via arbSrcCodifIdx — for now, arbitrages reduce the
+//      whole deal proportionally across codifs.)
+//
+// Returns the current nominal (number, EUR-equivalent in the deal's currency).
+function codifCurrentNominal(codif, deal){
+  if(!codif) return 0;
+  var initial=parseFloat(codif.nominal)||0;
+  if(!deal||!deal._id) return initial;
+  var codifIdx=(deal.codifications||[]).indexOf(codif);
+  // Retraits reduction — look up the matching contract.produits row by
+  // (deal_id, codif_idx) and sum montant on its retraits.
+  var retraitTotal=0;
+  if(typeof contracts_db!=='undefined' && Array.isArray(contracts_db)){
+    contracts_db.forEach(function(ct){
+      if(!ct||!Array.isArray(ct.produits))return;
+      ct.produits.forEach(function(p){
+        if(p.deal_id!==deal._id)return;
+        var pidx=(p.codif_idx==null)?0:p.codif_idx;
+        if(pidx!==codifIdx&&!(codifIdx===-1&&pidx===0))return; // legacy match: codif #0 if not found
+        (p.retraits||[]).forEach(function(r){retraitTotal+=(r.montant||0);});
+      });
+    });
+  }
+  // Arbitrage-out reduction — find downstream deals (arbSrc === deal._id) and
+  // currently apportion their nominal proportionally to codifs (since we don't
+  // yet track arbSrcCodifIdx). Once D.4 lands, this becomes exact.
+  var arbOut=0;
+  if(typeof deals!=='undefined' && Array.isArray(deals)){
+    var downstream=deals.filter(function(x){return x.arbSrc===deal._id;});
+    var totalDownstream=downstream.reduce(function(s,x){return s+(x.nom||0);},0);
+    if(totalDownstream>0 && deal.nom>0){
+      // Proportional to this codif's share of the deal's initial total.
+      var shareOfDeal=(deal.nom>0)?(initial/deal.nom):0;
+      arbOut=Math.round(totalDownstream*shareOfDeal);
+    }
+  }
+  var cur=initial-retraitTotal-arbOut;
+  return cur<0?0:cur; // floor at 0 — can't have negative nominal
+}
+
+// Per-codification EUR amounts using CURRENT nominal (post-retraits/arbitrages)
+// instead of initial. Used by the billing pages for ongoing periods. For closed
+// historical periods, use codifEffectiveRunE/UfE with the initial nominal.
+function codifCurrentRunE(codif, deal){
+  var nom=codifCurrentNominal(codif, deal);
+  var rate=codifEffectiveRunR(codif, deal);
+  return Math.round(nom * (rate/100));
+}
+function codifCurrentUfE(codif, deal){
+  // UF is one-shot at closing — usually computed from INITIAL nominal, not current.
+  // Only useful if you ever decide to bill UF on top-ups (rare). Kept for symmetry.
+  var nom=codifCurrentNominal(codif, deal);
+  var rate=codifEffectiveUfR(codif, deal);
+  return Math.round(nom * (rate/100));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Phase D.3 — Billing entries (flatten deals → codif-level rows)
+// ═══════════════════════════════════════════════════════════════════════════
+// Returns a flat array of { deal, codif, fourn, produit, ct, ufR, runR, ufE, runE, ... }
+// — one entry per (deal × codif) combination. Each entry carries a reference
+// back to its parent deal for client/date/status filtering at the top level,
+// plus codif-level fields for fee categorisation and amounts.
+//
+// This is the new canonical iterator for billing pages. Old code that filtered
+// `deals.filter(d => d.ct==='UF')` becomes `billingEntries().filter(e => e.ct==='UF')`.
+// Aggregations by fournisseur use `e.fourn` (codif-level, not deal-level).
+function billingEntries(dealList){
+  var src=Array.isArray(dealList)?dealList:(typeof deals!=='undefined'?deals:[]);
+  var out=[];
+  src.forEach(function(d){
+    var codifs=dealCodifsEffective(d);
+    codifs.forEach(function(c){
+      out.push({
+        deal:d,
+        codif:c,
+        // Codif-level (the parts that VARY per fournisseur on the same deal)
+        fourn:c.fourn||d.fourn||'',
+        produit:c.produit||d.produit||'',
+        isin:c.isin||d.isin||'',
+        type:c.type||d.produit_type||'',
+        ct:c.ct,
+        ufR:c.ufR,
+        runR:c.runR,
+        ufE:c.ufE,
+        runE:c.runE,
+        nominal:c.nominal||0,
+        currency:c.currency||d.dev||'EUR',
+        billingMode:c.billingMode||'fast',
+        pf:c.pf||{mode:'none'},
+        broker:c.broker||d.broker||'',
+        maturite:c.maturite||d.maturite||null,
+        // Deal-level passthrough — keep same field names so existing downstream
+        // code that read `d.client / d.date / d.fSt / d.ufE / d._id` continues
+        // to work after replacing the source iterator. `nom` here is the DEAL
+        // total; use `nominal` for codif's share.
+        _id:d._id,
+        client:d.client||'',
+        contrat:d.contrat||'',
+        date:d.date||'',
+        issue:d.issue||'',
+        v:d.v||'',
+        stat:d.stat||'',
+        fSt:d.fSt||'',
+        inv:d.inv||'',
+        invS:d.invS||'',
+        nom:d.nom||0,
+        dev:d.dev||'EUR',
+        fx:d.fx||1,
+        tva:d.tva||0,
+        depositaire:d.depositaire||'',
+        runStart:d.runStart||'',
+        arbId:d.arbId||null,
+        arbSrc:d.arbSrc||null,
+        notes:d.notes||''
+      });
+    });
+  });
+  return out;
+}
+// Convenience filters — billing-by-type. These accept either an entry stream
+// or default to all current billing entries.
+function billingUFEntries(entries){
+  var src=entries||billingEntries();
+  return src.filter(function(e){return (e.ct==='UF'||e.ct==='BOTH')&&e.ufE>0;});
+}
+function billingRunEntries(entries){
+  var src=entries||billingEntries();
+  return src.filter(function(e){return (e.ct==='RUN'||e.ct==='BOTH')&&e.runE>0;});
+}
+
+// Apply derived rates to the contract block. Will NOT overwrite a non-zero
+// value that the user typed manually — first wins. This keeps the auto-fill
+// helpful without being annoying.
+function _autofillContractRatesFromFees(contractBlock,fees){
+  if(!contractBlock||!fees)return;
+  var rates=_feesToCycleRates(fees);
+  var ufREl=contractBlock.querySelector('.contractUFR');
+  var runREl=contractBlock.querySelector('.contractRunR');
+  var ctEl=contractBlock.querySelector('.contractCT');
+  var changed=false;
+  if(ufREl && rates.ufR>0 && (!ufREl.value || parseFloat(ufREl.value)===0)){
+    ufREl.value=rates.ufR;
+    changed=true;
+  }
+  if(runREl && rates.runR>0 && (!runREl.value || parseFloat(runREl.value)===0)){
+    runREl.value=rates.runR;
+    changed=true;
+  }
+  if(ctEl && (!ctEl.value || ctEl.value==='UF') && rates.ct!=='UF'){
+    // Only upgrade the default 'UF' to RUN or BOTH; don't downgrade.
+    ctEl.value=rates.ct;
+    changed=true;
+  } else if(ctEl && !ctEl.value){
+    ctEl.value=rates.ct;
+    changed=true;
+  }
+  if(changed && typeof toast==='function'){
+    toast('Frais auto-remplis depuis le catalogue '+(rates.ufR>0?'UF '+rates.ufR+'% ':'')+(rates.runR>0?'Run '+rates.runR+'%':''));
+  }
 }
 function _onDfPfModeChange(sel){
   var fournBlock=sel.closest('.deal-fourn-block');
@@ -4765,10 +5654,18 @@ function openAddClientModal(name){
       var html='';
       Object.entries(byContrat).forEach(function(entry){
         var contrat=entry[0],cDeals=entry[1];
-        // Stats du contrat
+        // Stats du contrat — sum across ALL codifs of all deals in this contract,
+        // so a deal with mixed UF+Run codifs contributes correctly to each side
+        // (Phase G.2 fix — was summing deal-level ufE/runE which was wrong for
+        // mixed deals).
         var sumNomEUR=cDeals.reduce(function(s,d){return s+(_dealNomEur(d));},0);
-        var sumUF=cDeals.reduce(function(s,d){return s+(d.ufE||0);},0);
-        var sumRun=cDeals.reduce(function(s,d){return s+(d.runE||0);},0);
+        var sumUF=0, sumRun=0;
+        cDeals.forEach(function(d){
+          dealCodifsEffective(d).forEach(function(c){
+            sumUF += (c.ufE||0);
+            sumRun+= (c.runE||0);
+          });
+        });
 
         html+='<div style="margin-bottom:14px;">'+
           // En-tête contrat avec récap
@@ -4787,45 +5684,107 @@ function openAddClientModal(name){
             var stMap={'Payé':{cls:'bg',color:'var(--green)'},'Facturé':{cls:'bb',color:'var(--blue)'},'À émettre':{cls:'ba',color:'var(--amber)'},'Litige':{cls:'br',color:'var(--red)'}};
             var st=stMap[d.fSt]||{cls:'bgr',color:'var(--text3)'};
             var statusBadge='<span class="badge '+st.cls+'">'+escH(d.fSt||'')+'</span>';
-            var typeBadge=d.ct==='UF'?'<span class="badge bb">UF</span>':d.ct==='RUN'?'<span class="badge bg">Running</span>':d.ct==='BOTH'?'<span class="badge bb">UF</span><span class="badge bg" style="margin-left:3px;">Run</span>':'';
-            var feesParts=[];
-            if(d.ufE>0)feesParts.push('<span style="color:var(--blue);font-weight:500;">'+fE(d.ufE)+'</span> UF');
-            if(d.runE>0)feesParts.push('<span style="color:var(--green);font-weight:500;">'+fE(d.runE)+'</span>/an');
-            if(d.pf&&d.pf.amount)feesParts.push('<span style="color:var(--purple);font-weight:500;">'+fE(d.pf.amount)+'</span> PF');
+            // Phase G.2 — iterate codif-level entries so each product is shown
+            // on its own line with its OWN fourn/produit/ct/fees. Replaces the
+            // old "1 row per deal showing only the first codif" rendering.
+            var codifEntries=dealCodifsEffective(d);
+            var isMulti=codifEntries.length>1;
             var depChip=d.depositaire?'<span style="font-size:10px;color:var(--text3);background:var(--surface2);padding:1px 6px;border-radius:3px;white-space:nowrap;">📍 '+escH(d.depositaire)+'</span>':'';
             var isLast=i===cDeals.length-1;
             var idx=deals.indexOf(d);
-            return '<div style="display:flex;border-bottom:'+(isLast?'none':'1px solid var(--border)')+';transition:background .12s;" onmouseover="this.style.background=\'var(--surface2)\'" onmouseout="this.style.background=\'\'">'+
-              // Bandeau couleur statut
-              '<div style="width:3px;background:'+st.color+';flex-shrink:0;border-radius:0 0 0 0;"></div>'+
-              '<div style="flex:1;padding:10px 12px;min-width:0;cursor:pointer;" onclick="closeClientModal();openDet(deals['+idx+'])">'+
-                // Ligne 1 : fournisseur + produit + depositaire (gauche) | nominal + status (droite)
-                '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:5px;">'+
-                  '<div style="display:flex;align-items:center;gap:8px;min-width:0;flex:1;">'+
-                    '<span style="font-weight:600;font-size:13px;color:var(--text);white-space:nowrap;">'+escH(d.fourn||'')+'</span>'+
-                    '<span style="color:var(--text2);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;">'+escH(d.produit||'')+'</span>'+
-                    depChip+
-                  '</div>'+
-                  '<div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">'+
-                    '<span style="font-weight:600;font-size:13px;color:var(--text);" class="mono">'+f0(d.nom)+' '+escH(d.dev||'')+'</span>'+
-                    statusBadge+
-                  '</div>'+
+            // Build the codif sub-rows.
+            var subRows=codifEntries.map(function(c){
+              var ctBadge=c.ct==='UF'?'<span class="badge bb">UF</span>':
+                          c.ct==='RUN'?'<span class="badge bg">Running</span>':
+                          c.ct==='BOTH'?'<span class="badge bb">UF</span><span class="badge bg" style="margin-left:3px;">Run</span>':'';
+              var feesParts=[];
+              if(c.ufE>0)  feesParts.push('<span style="color:var(--blue);font-weight:500;">'+fE(c.ufE)+'</span> UF ('+c.ufR+'%)');
+              if(c.runE>0) feesParts.push('<span style="color:var(--green);font-weight:500;">'+fE(c.runE)+'</span>/an ('+c.runR+'%)');
+              if(c.pf && c.pf.amount) feesParts.push('<span style="color:var(--purple);font-weight:500;">'+fE(c.pf.amount)+'</span> PF');
+              var nomEur=Math.round((c.nominal||0)/(d.fx||1));
+              return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px dashed var(--border);">'+
+                '<div style="flex:1;min-width:0;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'+
+                  '<span style="font-weight:600;font-size:12px;color:var(--text);">'+escH(c.fourn||'')+'</span>'+
+                  '<span style="color:var(--text2);font-size:12px;">'+escH(c.produit||'(produit ?)')+'</span>'+
+                  (c.isin?'<span class="mono" style="font-size:10px;color:var(--text3);">'+escH(c.isin)+'</span>':'')+
+                  ctBadge+
+                  (feesParts.length?'<span style="font-size:11px;color:var(--text2);">'+feesParts.join(' · ')+'</span>':'<span style="font-size:11px;color:var(--red);font-style:italic;">⚠ aucun frais</span>')+
                 '</div>'+
-                // Ligne 2 : type + commissions + ISIN/maturité
-                '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:11px;">'+
-                  '<div style="display:flex;align-items:center;gap:8px;min-width:0;">'+
-                    typeBadge+
-                    (feesParts.length?'<span style="color:var(--text2);">'+feesParts.join(' · ')+'</span>':'')+
+                '<div style="flex-shrink:0;font-weight:600;font-size:12px;color:var(--text);" class="mono">'+f0(nomEur)+' '+escH(d.dev||'EUR')+'</div>'+
+              '</div>';
+            }).join('');
+            // Header — when multi, surfaces the "X produits — cliquer pour détail" indicator.
+            // When single, summary collapses to the codif's own row at the top (no need to
+            // duplicate it as a sub-row).
+            var headerInfo;
+            if(isMulti){
+              headerInfo=
+                '<div style="display:flex;align-items:center;gap:8px;min-width:0;flex:1;">'+
+                  '<span class="client-deal-chev" style="display:inline-block;transition:transform .15s ease;font-size:10px;color:var(--text3);">▶</span>'+
+                  '<span style="font-weight:600;font-size:13px;color:var(--text);">'+codifEntries.length+' produits</span>'+
+                  '<span style="font-size:11px;color:var(--text3);font-style:italic;">cliquer pour détail</span>'+
+                  depChip+
+                '</div>';
+            } else {
+              // Single codif: show its data directly in the header (no expand needed
+              // for content, just for actions). Same shape as before, but data from codif.
+              var c0=codifEntries[0]||{};
+              headerInfo=
+                '<div style="display:flex;align-items:center;gap:8px;min-width:0;flex:1;">'+
+                  '<span class="client-deal-chev" style="display:inline-block;transition:transform .15s ease;font-size:10px;color:var(--text3);">▶</span>'+
+                  '<span style="font-weight:600;font-size:13px;color:var(--text);">'+escH(c0.fourn||'')+'</span>'+
+                  '<span style="color:var(--text2);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;">'+escH(c0.produit||'(produit ?)')+'</span>'+
+                  (c0.isin?'<span class="mono" style="font-size:10px;color:var(--text3);">'+escH(c0.isin)+'</span>':'')+
+                  depChip+
+                '</div>';
+            }
+            // For the right-side header data: amount + status. Use deal total nominal.
+            var nomEurTotal=_dealNomEur(d);
+            return '<div class="client-deal-row" data-deal-idx="'+idx+'" data-multi="'+(isMulti?'1':'0')+'" style="border-bottom:'+(isLast?'none':'1px solid var(--border)')+';transition:background .12s;">'+
+              '<div style="display:flex;cursor:pointer;" onclick="toggleClientDealRow(this.parentElement)" onmouseover="this.style.background=\'var(--surface2)\'" onmouseout="this.style.background=\'\'">'+
+                // Bandeau couleur statut
+                '<div style="width:3px;background:'+st.color+';flex-shrink:0;"></div>'+
+                '<div style="flex:1;padding:10px 12px;min-width:0;">'+
+                  '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:'+(isMulti?'0':'5px')+';">'+
+                    headerInfo+
+                    '<div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">'+
+                      '<span style="font-weight:600;font-size:13px;color:var(--text);" class="mono">'+f0(nomEurTotal)+' '+escH(d.dev||'')+'</span>'+
+                      statusBadge+
+                    '</div>'+
                   '</div>'+
-                  '<div style="display:flex;align-items:center;gap:8px;color:var(--text3);font-size:10px;">'+
-                    (d.isin?'<span class="mono">'+escH(d.isin)+'</span>':'')+
-                    (d.maturite||d.terme?'<span>échéance '+escH(d.maturite||d.terme)+'</span>':'')+
-                  '</div>'+
+                  // Single-codif quick stats line (multi-codif gets stats on expand only)
+                  (!isMulti?
+                    (function(){
+                      var c0=codifEntries[0]||{};
+                      var ctBadge=c0.ct==='UF'?'<span class="badge bb">UF</span>':
+                                  c0.ct==='RUN'?'<span class="badge bg">Running</span>':
+                                  c0.ct==='BOTH'?'<span class="badge bb">UF</span><span class="badge bg" style="margin-left:3px;">Run</span>':'';
+                      var fp=[];
+                      if(c0.ufE>0)  fp.push('<span style="color:var(--blue);font-weight:500;">'+fE(c0.ufE)+'</span> UF ('+c0.ufR+'%)');
+                      if(c0.runE>0) fp.push('<span style="color:var(--green);font-weight:500;">'+fE(c0.runE)+'</span>/an ('+c0.runR+'%)');
+                      if(c0.pf && c0.pf.amount) fp.push('<span style="color:var(--purple);font-weight:500;">'+fE(c0.pf.amount)+'</span> PF');
+                      return '<div style="display:flex;align-items:center;gap:8px;font-size:11px;padding-left:18px;">'+
+                        ctBadge+
+                        (fp.length?'<span style="color:var(--text2);">'+fp.join(' · ')+'</span>':'<span style="color:var(--red);font-style:italic;">⚠ aucun frais — vérifier le catalogue produit</span>')+
+                      '</div>';
+                    })()
+                  :'')+
                 '</div>'+
               '</div>'+
-              '<div style="display:flex;flex-direction:column;align-items:stretch;gap:4px;padding:0 10px;flex-shrink:0;">'+
-                '<button class="btn btn-sm" onclick="event.stopPropagation();closeClientModal();openArbitrage('+idx+')" style="font-size:11px;padding:4px 10px;white-space:nowrap;" title="Arbitrer ce deal">⇄ Arbitrer</button>'+
-                '<button class="btn btn-sm" onclick="event.stopPropagation();closeClientModal();openRetrait('+idx+')" style="font-size:11px;padding:4px 10px;white-space:nowrap;color:var(--amber-t);border-color:rgba(176,122,16,.3);background:var(--amber-bg);" title="Retrait de cash sur ce deal">↓ Retirer</button>'+
+              // Codif sub-rows panel (always rendered, visible only when expanded)
+              // — for multi, this is the "details des produits". For single, it's
+              // hidden because the header already shows the data.
+              (isMulti?
+                '<div class="client-deal-subrows" style="display:none;padding:6px 12px 4px 18px;background:var(--surface);border-top:1px dashed var(--border);">'+subRows+'</div>'
+              :'')+
+              // Action panel — Arbitrer / Retirer / Détail. Per-deal (not per-codif).
+              '<div class="client-deal-actions" style="display:none;padding:8px 12px 12px 18px;background:var(--surface2);border-top:1px dashed var(--border);">'+
+                '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">'+
+                  '<span style="font-size:11px;color:var(--text3);margin-right:4px;">Actions :</span>'+
+                  '<button class="btn btn-sm" onclick="event.stopPropagation();closeClientModal();openDet(deals['+idx+'])" style="font-size:11px;padding:4px 10px;white-space:nowrap;" title="Voir le détail complet du deal">📄 Détail</button>'+
+                  '<button class="btn btn-sm" onclick="event.stopPropagation();closeClientModal();openArbitrage('+idx+')" style="font-size:11px;padding:4px 10px;white-space:nowrap;" title="Arbitrer ce deal">⇄ Arbitrer</button>'+
+                  '<button class="btn btn-sm" onclick="event.stopPropagation();closeClientModal();openRetrait('+idx+')" style="font-size:11px;padding:4px 10px;white-space:nowrap;color:var(--amber-t);border-color:rgba(176,122,16,.3);background:var(--amber-bg);" title="Retrait de cash sur ce deal">↓ Retirer</button>'+
+                '</div>'+
               '</div>'+
             '</div>';
           }).join('')+
@@ -4843,12 +5802,58 @@ function openAddClientModal(name){
   }
   // Historique des opérations — extracted to renderClientHistory() so the
   // "Masquer les payés" toggle can re-render without re-opening the modal.
+  // Per Oscar's request (Phase C.1): history is COLLAPSED by default each time
+  // the modal opens. The user clicks the header to expand. The "Masquer payés"
+  // checkbox shows only when the section is expanded.
   _currentClientHistName=name||null;
   _clientHistShowPaid=false; // reset unfold-override per client
+  _clientHistExpanded=false; // collapsed by default on each open
   var hpCb=document.getElementById('cHidePaid');if(hpCb)hpCb.checked=false; // default = show all
+  _applyClientHistExpandedState();
   renderClientHistory();
   setTimeout(()=>document.getElementById('cName').focus(),50);
   document.getElementById('clientModal').classList.add('on');
+}
+// Phase C.1 — collapsible history. State lives in _clientHistExpanded (boolean).
+var _clientHistExpanded=false;
+function toggleClientHistory(){
+  _clientHistExpanded=!_clientHistExpanded;
+  _applyClientHistExpandedState();
+}
+// Phase C.2 — toggle the action panel on a portfolio row. Collapses any other
+// expanded row in the same list so only one is open at a time (less visual noise).
+// Phase G.2 — also reveals the codif sub-rows (.client-deal-subrows) when the
+// row is a multi-codif deal. Hidden by default, visible when expanded.
+function toggleClientDealRow(row){
+  if(!row)return;
+  var panel=row.querySelector('.client-deal-actions');
+  var subrows=row.querySelector('.client-deal-subrows');
+  var chev=row.querySelector('.client-deal-chev');
+  var isOpen=panel&&panel.style.display!=='none';
+  // Collapse all others first
+  var list=row.parentElement;
+  if(list){
+    list.querySelectorAll('.client-deal-row').forEach(function(r){
+      var p=r.querySelector('.client-deal-actions');
+      var s=r.querySelector('.client-deal-subrows');
+      var c=r.querySelector('.client-deal-chev');
+      if(p)p.style.display='none';
+      if(s)s.style.display='none';
+      if(c)c.style.transform='rotate(0deg)';
+    });
+  }
+  // Toggle the clicked one (opens if it was closed, stays closed if user re-clicks an already-open)
+  if(panel) panel.style.display=isOpen?'none':'block';
+  if(subrows) subrows.style.display=isOpen?'none':'block';
+  if(chev) chev.style.transform=isOpen?'rotate(0deg)':'rotate(90deg)';
+}
+function _applyClientHistExpandedState(){
+  var lines=document.getElementById('clientHistLines');
+  var chev=document.getElementById('clientHistChevron');
+  var hpLbl=document.getElementById('clientHistHidePaidLbl');
+  if(lines) lines.style.display=_clientHistExpanded?'block':'none';
+  if(chev) chev.style.transform=_clientHistExpanded?'rotate(90deg)':'rotate(0deg)';
+  if(hpLbl) hpLbl.style.display=_clientHistExpanded?'flex':'none';
 }
 function closeClientModal(){document.getElementById('clientModal').classList.remove('on');document.getElementById('cName').dataset.original='';_currentClientHistName=null;}
 
@@ -4938,6 +5943,9 @@ function renderClientHistory(){
   });
   if(!events.length){histSection.style.display='none';return;}
   histSection.style.display='block';
+  // Surface the count on the collapsed header so Oscar knows there's content waiting.
+  var countEl=document.getElementById('clientHistCount');
+  if(countEl) countEl.textContent='('+events.length+' opération'+(events.length>1?'s':'')+')';
   events.sort(function(a,b){return (b.date||'').localeCompare(a.date||'');});
   // Filter logic — checkbox "Masquer les payés" + override flag set by the unfold link
   var cb=document.getElementById('cHidePaid');
@@ -5231,9 +6239,151 @@ function _computePerfFees(fournName,isin,vl0,vl1){
       if(grossPerfPct>(pf.hurdle||0))perfFee=pf.amount;
     }
     totalPerfFee+=perfFee;
-    breakdown.push({deal:m.deal,nominal:nomEur,gain:gain,perfFee:perfFee,pf:pf});
+    // Include codif + codifIdx so callers (Phase E.5 push action) can write back the
+    // computed perfFee onto the exact codification it applies to.
+    breakdown.push({deal:m.deal,codif:m.codif,codifIdx:m.idx,nominal:nomEur,gain:gain,perfFee:perfFee,pf:pf});
   });
   return{grossPerfPct:grossPerfPct,totalNominal:totalNominal,totalGain:totalGain,totalPerfFee:totalPerfFee,perDealBreakdown:breakdown};
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Phase E.5 — Push computed perf fees from Suivi Perf into the Facturation tab.
+// ═══════════════════════════════════════════════════════════════════════════
+// What this does:
+//   1. Walk every imported product (= has vlHistory).
+//   2. Compute its perf fee via _computePerfFees(fourn, isin, vl0, vl1).
+//   3. For each deal × codification matching (fourn, isin), set
+//      codif.pf.amount = computed perfFee (rounded to €).
+//      Also mirror to deal-level d.pf.amount for the first matching codif so
+//      legacy Facturation Perf-fees-tab filter (d.pf.amount > 0) catches it.
+//   4. Save updated deals to Supabase via sbUpdate.
+//   5. Toast summary + refresh Facturation page.
+//
+// Idempotency:
+//   - If a deal's codif already has a non-zero pf.amount AND it's currently in
+//     state 'Facturé' or 'Payé' on the perf side, we DON'T overwrite (don't
+//     re-bill what's already invoiced).
+//   - If the computed perfFee is 0 (= perf hasn't crossed hurdle yet), we DON'T
+//     clear an existing non-zero pf.amount (the user might be in mid-cycle).
+//   - User gets prompted to confirm before any DB write.
+//
+// Returns: a summary object with counts, surfaced in a toast.
+async function pushPerfFeesToFacturation(){
+  // Gather every product with VL history → compute perf fee → collect breakdown rows
+  var allItems = (typeof _collectPerfProducts==='function')?_collectPerfProducts():[];
+  var rowsToPush = [];
+  allItems.forEach(function(x){
+    var h = x.product.vlHistory||[];
+    if(h.length<2) return; // need at least 2 VL points to compute a perf
+    var vl0 = (h[0]||{}).vl||0;
+    var vl1 = (h[h.length-1]||{}).vl||0;
+    if(!vl0) return;
+    var calc = _computePerfFees(x.fourn.name, x.product.isin, vl0, vl1);
+    (calc.perDealBreakdown||[]).forEach(function(b){
+      if(!b.perfFee || b.perfFee<=0) return; // skip rows below hurdle
+      rowsToPush.push({
+        fourn: x.fourn.name,
+        isin:  x.product.isin,
+        part:  x.product.part||'',
+        deal:  b.deal,
+        codif: b.codif,
+        codifIdx: b.codifIdx,
+        perfFee: Math.round(b.perfFee),
+        perfPct: calc.grossPerfPct
+      });
+    });
+  });
+  if(!rowsToPush.length){
+    toast('Rien à pousser — aucun produit n\'a généré de perf fee (hurdle non franchi ou pas de deals).');
+    return;
+  }
+  // Aggregate by deal so we save each deal once even if multiple codifs change.
+  var perDeal = new Map();
+  rowsToPush.forEach(function(r){
+    if(!perDeal.has(r.deal)) perDeal.set(r.deal, []);
+    perDeal.get(r.deal).push(r);
+  });
+  // Idempotency check — count rows that would actually change
+  var willChange = 0, willSkipFacturé = 0, willSkipSame = 0;
+  rowsToPush.forEach(function(r){
+    var c = r.codif;
+    var existing = (c&&c.pf&&c.pf.amount)||0;
+    // Skip if the codif's deal is already at Facturé/Payé state on the PF side
+    // (= already invoiced, don't overwrite). For now we use deal-level fSt because
+    // per-codif fSt is a Phase D.5 concern.
+    if(r.deal && (r.deal.fSt==='Facturé' || r.deal.fSt==='Payé') && existing>0){
+      willSkipFacturé++; return;
+    }
+    if(existing===r.perfFee){ willSkipSame++; return; }
+    willChange++;
+  });
+  var totalPushed = rowsToPush.reduce(function(s,r){return s+r.perfFee;},0);
+  var msg = 'Pousser '+willChange+' perf fee'+(willChange>1?'s':'')+' vers la facturation ?\n\n'+
+            '· Total à pousser : '+fE(totalPushed)+' €\n'+
+            '· Deals concernés : '+perDeal.size+'\n'+
+            (willSkipFacturé?'· Skip (déjà facturé/payé) : '+willSkipFacturé+'\n':'')+
+            (willSkipSame?'· Skip (montant identique) : '+willSkipSame+'\n':'')+
+            '\nLes deals modifiés apparaîtront sur l\'onglet Facturation > Perf fees.';
+  if(!confirm(msg)) return;
+  // Execute — write codif.pf.amount on each row and persist the parent deal.
+  var savedDeals = 0, errors = 0;
+  for(var [dealRef, dealRows] of perDeal){
+    if(!dealRef) continue;
+    // Skip if facturé/payé and an amount already exists
+    var skipDeal = false;
+    dealRows.forEach(function(r){
+      if(dealRef.fSt==='Facturé' || dealRef.fSt==='Payé'){
+        var ex=(r.codif&&r.codif.pf&&r.codif.pf.amount)||0;
+        if(ex>0) skipDeal=true;
+      }
+    });
+    if(skipDeal) continue;
+    var changed = false;
+    dealRows.forEach(function(r){
+      var c = r.codif; if(!c) return;
+      c.pf = c.pf || {mode:'pct'};
+      if(c.pf.amount === r.perfFee) return;
+      c.pf.amount = r.perfFee;
+      c.pf.lastComputed = new Date().toISOString();
+      changed = true;
+    });
+    // Mirror to deal-level pf so the legacy Facturation filter (d.pf.amount > 0)
+    // catches it. Use the first changed codif's pf as the deal-level summary.
+    if(changed){
+      var firstChanged = dealRows.find(function(r){return r.codif && r.codif.pf && r.codif.pf.amount>0;});
+      if(firstChanged){
+        dealRef.pf = dealRef.pf || {mode:firstChanged.codif.pf.mode||'pct'};
+        // Sum every codif's perf fee on this deal for the deal-level amount
+        var sumPf = (dealRef.codifications||[]).reduce(function(s,c){
+          return s + ((c.pf && c.pf.amount)||0);
+        },0);
+        dealRef.pf.amount = sumPf;
+        if(firstChanged.codif.pf.mode) dealRef.pf.mode = firstChanged.codif.pf.mode;
+      }
+      // Push history entry on the deal
+      dealRef.hist = dealRef.hist || [];
+      dealRef.hist.push({
+        ts: (typeof nowS==='function'?nowS():new Date().toISOString()),
+        a: 'Perf fees poussées depuis Suivi Perf — '+dealRows.length+' codif·s (total '+fE(dealRows.reduce(function(s,r){return s+r.perfFee;},0))+' €)',
+        by: 'Système'
+      });
+      // Save to Supabase
+      if(dealRef._id){
+        try{ await sbUpdate('deals', dealRef._id, dealRef); savedDeals++; }
+        catch(e){ console.error('pushPerfFees save failed for deal '+dealRef._id, e); errors++; }
+      } else {
+        savedDeals++; // in-memory only (legacy local deals)
+      }
+    }
+  }
+  // Refresh affected pages
+  if(typeof renderSuiviPerf==='function') renderSuiviPerf();
+  if(typeof renderFact==='function') renderFact();
+  if(typeof renderPFInvTable==='function') renderPFInvTable();
+  if(typeof renderKpis==='function') renderKpis();
+  var summary = '↗ '+savedDeals+' deal'+(savedDeals>1?'s':'')+' mis à jour · '+fE(totalPushed)+' € de perf fees poussées';
+  if(errors) summary += ' ('+errors+' erreur'+(errors>1?'s':'')+')';
+  toast(summary);
 }
 function renderSuiviPerf(){
   if(!document.getElementById('p-suivi-perf'))return;
@@ -5435,6 +6585,13 @@ function ddcAction(action){
 async function deleteDeal(idx){
   if(idx<0||idx>=deals.length)return;
   var d=deals[idx];
+  if(!d){console.error('deleteDeal called with stale idx',idx);return;}
+  // Phase G.5 — extra safety : the actual destructive operation uses `d._id`
+  // and `deals.splice(deals.indexOf(d), 1)`, both of which match by object
+  // reference / by ID. So even if `idx` gets stale between render and click
+  // (e.g. concurrent filter/sort), we delete the captured `d`, not a sibling.
+  // The reverse-lookup `deals.indexOf(d)` further guarantees we splice the
+  // exact object — not "deal at position X" which could now be someone else.
   showDealDeleteConfirm(d,async function(action,link){
     if(action==='cancel')return;
     if(action==='view'){
@@ -5748,13 +6905,29 @@ function renderFourn(){
   var t=document.getElementById('fournT');
   while(t.rows.length>1)t.deleteRow(1);
   document.getElementById('fournEmpty').style.display=list.length?'none':'block';
+  // Phase H.3 — pre-compute per-fournisseur aggregates from codif-level entries
+  // so a deal with multiple fournisseurs in its codifications contributes to
+  // each fournisseur's totals separately (was deal-level `d.fourn` which only
+  // counted the FIRST fournisseur of the deal).
+  var entries=billingEntries(filt());
+  var byFourn={};
+  var dealsTouched={};
+  entries.forEach(function(e){
+    var name=e.fourn||'';
+    if(!name) return;
+    if(!byFourn[name]) byFourn[name]={ufE:0,runE:0,lastDate:'',dealIds:new Set()};
+    byFourn[name].ufE  += e.ufE||0;
+    byFourn[name].runE += e.runE||0;
+    byFourn[name].dealIds.add(e._id||e.deal);
+    var dt=e.date||'';
+    if(dt>byFourn[name].lastDate) byFourn[name].lastDate=dt;
+  });
   list.forEach(function(f){
-    // Audit fix — per-fournisseur KPIs respect vendor filter
-    var dDeals=filt().filter(d=>d.fourn===f.name);
-    var nb=dDeals.length;
-    var tUF=dDeals.reduce((s,d)=>s+d.ufE,0);
-    var tRun=dDeals.reduce((s,d)=>s+d.runE,0);
-    var last=dDeals.length?dDeals.slice().sort((a,b)=>b.date.localeCompare(a.date))[0].date:'—';
+    var agg = byFourn[f.name] || {ufE:0,runE:0,lastDate:'',dealIds:new Set()};
+    var nb = agg.dealIds.size;
+    var tUF = agg.ufE;
+    var tRun = agg.runE;
+    var last = agg.lastDate || '—';
     var bc=FAMILLE_BADGE[f.famille]||'bgr';
     var bl=FAMILLE_LABELS[f.famille]||f.famille;
     var r=t.insertRow();
@@ -5770,6 +6943,12 @@ function rebuildFournSelect(){
 function openFournModal(name){
   document.getElementById('fournModalTitle').textContent=name?'Modifier le fournisseur':'Nouveau fournisseur';
   var existingProducts=[];
+  // Populate the template picker first (same options as the contract modal's).
+  var tplSel=document.getElementById('fTemplate');
+  if(tplSel){
+    tplSel.innerHTML='<option value="">— Aucun (utilise le template du contrat) —</option>'+
+      (templates_db||[]).map(function(t){return '<option value="'+escH(t.name)+'">'+escH(t.name)+'</option>';}).join('');
+  }
   if(name){
     var f=loadFourn().find(x=>x.name===name)||{};
     document.getElementById('fName').value=name;
@@ -5778,6 +6957,7 @@ function openFournModal(name){
     document.getElementById('fAddr2').value=f.addr2||'';
     document.getElementById('fContact').value=f.contact||'';
     document.getElementById('fEmail').value=f.email||'';
+    if(tplSel)tplSel.value=f.template_name||'';
     document.getElementById('fName').dataset.original=name;
     existingProducts=Array.isArray(f.products)?f.products:[];
   } else {
@@ -5787,12 +6967,24 @@ function openFournModal(name){
     document.getElementById('fAddr2').value='';
     document.getElementById('fContact').value='';
     document.getElementById('fEmail').value='';
+    if(tplSel)tplSel.value='';
     document.getElementById('fName').dataset.original='';
   }
-  // Hydrate the products list (visibility toggled by onFournFamilleChange)
+  // Hydrate the products list. Products now apply to ALL families (SDG / Banque
+  // / Assureur) — every fournisseur referenced in a deal benefits from having
+  // a catalogue with fees. On a brand-new fournisseur (no name), pre-render
+  // one blank product line; edit mode preserves whatever's stored.
   document.getElementById('fProducts').innerHTML='';
-  existingProducts.forEach(function(p){addFournProductLine(p);});
-  document.getElementById('fProductsEmpty').style.display=existingProducts.length?'none':'';
+  if(existingProducts.length){
+    existingProducts.forEach(function(p){addFournProductLine(p);});
+    document.getElementById('fProductsEmpty').style.display='none';
+  } else if(!name){
+    // New fournisseur — auto-add an empty product slot regardless of family.
+    addFournProductLine();
+    document.getElementById('fProductsEmpty').style.display='none';
+  } else {
+    document.getElementById('fProductsEmpty').style.display='';
+  }
   onFournFamilleChange();
   document.getElementById('fournDeleteBtn').style.display=name?'':'none';
   document.getElementById('fournModal').classList.add('on');
@@ -5805,6 +6997,13 @@ function deleteFournFromModal(){
   deleteFourn(original);
 }
 function closeFournModal(){document.getElementById('fournModal').classList.remove('on');document.getElementById('fName').dataset.original='';}
+// ISIN soft-check — real ISINs are 12 chars, alphanumeric, country prefix.
+// We don't enforce the full check-digit algo (some legacy / partial codes might be
+// valid for now), just flag anything that's not obviously well-formed.
+function _isWellFormedIsin(s){
+  if(!s)return true; // empty is fine — just means "no ISIN yet"
+  return /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/i.test(s);
+}
 async function saveFourn(){
   var name=document.getElementById('fName').value.trim();
   var famille=document.getElementById('fFamille').value;
@@ -5814,9 +7013,40 @@ async function saveFourn(){
   var email=document.getElementById('fEmail').value.trim();
   var original=document.getElementById('fName').dataset.original||'';
   if(!name){alert('Nom requis.');return;}
-  // Products only carried for SDG family — defensive empty array for others.
-  var products=famille==='SDG'?getFournProductsFromModal():[];
-  var payload={name,famille,addr1,addr2,contact,email,products};
+  // Products carried for every family — SDG, Banque, Assureur all have catalogues.
+  var products=getFournProductsFromModal();
+  // Phase G.1 — VALIDATION (blocking): every fee row of every product must have
+  // a kind set (UF / Run / UF+Run). No empty "Type" allowed — that's the root of
+  // the "? 1.3%" rendering bug and the silent ct='UF' fallback on the deal.
+  // A product can be saved with ZERO fee rows (e.g. a placeholder product without
+  // a known structure yet), but it CAN'T have a row with a pct but no kind.
+  var badRows=[];
+  products.forEach(function(p,pi){
+    (p.fees||[]).forEach(function(f,fi){
+      var hasKind=(f.kind||'').trim()!=='';
+      var hasPct=!isNaN(parseFloat(f.pct))&&parseFloat(f.pct)>0;
+      // Either both empty (=> we'd drop the row at read-time anyway), or both set.
+      if(hasPct && !hasKind) badRows.push({prodLabel:(p.isin||p.part||'produit #'+(pi+1)), row:fi+1});
+    });
+  });
+  if(badRows.length){
+    var summary=badRows.slice(0,3).map(function(b){return b.prodLabel+' (frais #'+b.row+')';}).join(', ');
+    alert('Type de frais manquant sur : '+summary+(badRows.length>3?' …':'')+'\n\nChaque ligne de frais doit avoir un type (UF / Run / UF+Run). Sinon le calcul ne fonctionne pas.');
+    return;
+  }
+  // Phase B.1 — per-fournisseur template (drives the investment-pack steps when this
+  // fournisseur supplies a product on a contract). Empty string = use the contract's
+  // template as fallback.
+  var tplElSave=document.getElementById('fTemplate');
+  var template_name=tplElSave?(tplElSave.value||null):null;
+  // ISIN sanity check — non-blocking. Toast each malformed ISIN so the user sees
+  // them but doesn't get stopped from saving (some legacy / placeholder codes
+  // may not match the 12-char format yet).
+  var malformed=products.filter(function(p){return p.isin && !_isWellFormedIsin(p.isin);}).map(function(p){return p.isin;});
+  if(malformed.length){
+    toast('⚠ ISIN suspects (sauvegardé quand même) : '+malformed.slice(0,3).join(', ')+(malformed.length>3?'…':''));
+  }
+  var payload={name,famille,addr1,addr2,contact,email,products,template_name};
   if(original&&original!==name){
     var f=fourn_db.find(x=>x.name===original);
     if(f){Object.assign(f,payload);await sbUpdateFournSafe(f._id,payload,f);}
@@ -5841,12 +7071,14 @@ async function saveFourn(){
 }
 
 // ── Phase 1A — Fournisseur Products (catalogue ISIN per SDG row) ────────────
-// Defensive insert/update: if Supabase column `products` not yet migrated,
-// strip it and retry once. Warns the user via toast so the migration gets run.
+// Defensive insert/update: if Supabase column `products` or `template_name`
+// not yet migrated, strip it and retry once. Warns the user via toast so the
+// migration gets run.
 var _warnedNoProductsCol=false;
-function _isMissingProductsColErr(err){
+var _warnedNoTemplateNameCol=false;
+function _isMissingColErr(err,col){
   var m=String((err&&err.message)||err||'').toLowerCase();
-  return m.indexOf("'products'")!==-1||m.indexOf('"products"')!==-1||(m.indexOf('products')!==-1&&m.indexOf('column')!==-1);
+  return m.indexOf("'"+col+"'")!==-1||m.indexOf('"'+col+'"')!==-1||(m.indexOf(col)!==-1&&m.indexOf('column')!==-1);
 }
 function _warnNoProductsCol(){
   if(_warnedNoProductsCol)return;
@@ -5854,11 +7086,25 @@ function _warnNoProductsCol(){
   toast('Colonne "products" absente — sauvegardé sans. Lance 05_fournisseur_products.sql sur Supabase.');
   console.warn('[Schema] fournisseurs.products missing. Apply: alter table fournisseurs add column products jsonb default \'[]\'::jsonb;');
 }
+function _warnNoTemplateNameCol(){
+  if(_warnedNoTemplateNameCol)return;
+  _warnedNoTemplateNameCol=true;
+  toast('Colonne "template_name" absente sur fournisseurs — sauvegardé sans. Applique : alter table fournisseurs add column template_name text;');
+  console.warn('[Schema] fournisseurs.template_name missing. Apply: alter table fournisseurs add column template_name text;');
+}
+// Try saving; if the DB rejects an unknown column, strip & retry. Handles both
+// `products` and `template_name` columns the same way — keeps the UI usable
+// in-session even when a migration hasn't been applied yet.
 async function sbInsertFournSafe(payload){
   var res=await sb.from('fournisseurs').insert(payload).select();
-  if(res.error&&_isMissingProductsColErr(res.error)){
+  if(res.error&&_isMissingColErr(res.error,'template_name')){
+    _warnNoTemplateNameCol();
+    var p2=Object.assign({},payload);delete p2.template_name;
+    res=await sb.from('fournisseurs').insert(p2).select();
+  }
+  if(res.error&&_isMissingColErr(res.error,'products')){
     _warnNoProductsCol();
-    var stripped=Object.assign({},payload);delete stripped.products;
+    var stripped=Object.assign({},payload);delete stripped.products;delete stripped.template_name;
     res=await sb.from('fournisseurs').insert(stripped).select();
   }
   if(res.error){console.error('Fournisseur insert failed',res.error);throw res.error;}
@@ -5867,9 +7113,14 @@ async function sbInsertFournSafe(payload){
 async function sbUpdateFournSafe(id,payload,memRow){
   var data=Object.assign({},payload);delete data.id;delete data._id;delete data.created_at;
   var res=await sb.from('fournisseurs').update(data).eq('id',id).select();
-  if(res.error&&_isMissingProductsColErr(res.error)){
+  if(res.error&&_isMissingColErr(res.error,'template_name')){
+    _warnNoTemplateNameCol();
+    var d2=Object.assign({},data);delete d2.template_name;
+    res=await sb.from('fournisseurs').update(d2).eq('id',id).select();
+  }
+  if(res.error&&_isMissingColErr(res.error,'products')){
     _warnNoProductsCol();
-    var stripped=Object.assign({},data);delete stripped.products;
+    var stripped=Object.assign({},data);delete stripped.products;delete stripped.template_name;
     res=await sb.from('fournisseurs').update(stripped).eq('id',id).select();
     // Reflect: in-memory row still has products[] (so UI works this session),
     // but the DB row doesn't (until migration applied).
@@ -5879,12 +7130,22 @@ async function sbUpdateFournSafe(id,payload,memRow){
 }
 
 function onFournFamilleChange(){
+  // Products are now relevant for EVERY family (SDG manages funds, Banque manages
+  // structured products / accounts, Assureur manages life-insurance contracts that
+  // wrap underlying instruments). All can have a catalogue with fees.
   var fam=document.getElementById('fFamille').value;
-  document.getElementById('fProductsSection').style.display=fam==='SDG'?'':'none';
+  var section=document.getElementById('fProductsSection');
+  section.style.display=''; // always visible
+  // Auto-add an empty slot if the catalogue is empty — same constraint as before:
+  // a fournisseur without products is not useful to reference in a deal.
+  if(!document.querySelectorAll('#fProducts .fourn-product-card').length){
+    addFournProductLine();
+    document.getElementById('fProductsEmpty').style.display='none';
+  }
 }
 
 function addFournProductLine(prod){
-  prod=prod||{isin:'',part:'',type:'',unit:'part',currency:'EUR',fees:[{kind:'',pct:''}]};
+  prod=prod||{isin:'',part:'',type:'',unit:'part',currency:'EUR',fees:[{kind:'',pct:''}],pf:{mode:'none'}};
   var c=document.getElementById('fProducts');
   var card=document.createElement('div');
   card.className='fourn-product-card';
@@ -5892,29 +7153,68 @@ function addFournProductLine(prod){
   // Header row : ISIN, Unit, Label, Type, Currency, × remove product
   var curOpts=['EUR','USD','GBP','CHF','JPY'].map(function(c){return '<option'+(c===(prod.currency||'EUR')?' selected':'')+'>'+c+'</option>';}).join('');
   var unitVal=prod.unit||'part';
+  var pf=prod.pf||{mode:'none'};
+  var pfMode=pf.mode||'none';
+  // Two-row layout (was one cramped 6-col grid at modal-width 520px).
+  // Row 1: ISIN (prominent mono) · Part label (flex) · × close.
+  // Row 2: Unit · Type · Currency — categorization grouped together below.
   card.innerHTML=
-    '<div style="display:grid;grid-template-columns:1.2fr 70px 1fr 100px 60px 24px;gap:6px;margin-bottom:6px;align-items:center;">'+
-      '<input type="text" class="fpIsin" value="'+escH(prod.isin||'')+'" placeholder="ISIN (FR00...)" style="font-family:monospace;font-size:11px;"/>'+
-      '<select class="fpUnit" title="Type d\'unité — part de fonds ou action / share">'+
+    // Row 1 — identity
+    '<div style="display:grid;grid-template-columns:160px 1fr 24px;gap:6px;margin-bottom:4px;align-items:center;">'+
+      '<input type="text" class="fpIsin" value="'+escH(prod.isin||'')+'" placeholder="ISIN (FR00…)" style="font-family:monospace;font-size:11px;"/>'+
+      '<input type="text" class="fpPart" value="'+escH(prod.part||'')+'" placeholder="Nom du produit / part (ex: A acc EUR / AAPL)"/>'+
+      '<button type="button" onclick="removeFournProductLine(this)" title="Supprimer ce produit" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:18px;padding:0;line-height:1;">×</button>'+
+    '</div>'+
+    // Row 2 — categorization
+    '<div style="display:grid;grid-template-columns:90px 1fr 80px;gap:6px;margin-bottom:6px;align-items:center;">'+
+      '<select class="fpUnit" title="Type d\'unité — part de fonds ou action / share" style="font-size:11px;">'+
         '<option value="part"'+(unitVal==='part'?' selected':'')+'>Part</option>'+
         '<option value="share"'+(unitVal==='share'?' selected':'')+'>Share</option>'+
       '</select>'+
-      '<input type="text" class="fpPart" value="'+escH(prod.part||'')+'" placeholder="ex: A acc EUR / AAPL"/>'+
-      '<select class="fpType">'+produitTypeOptHtml(prod.type)+'</select>'+
-      '<select class="fpCurrency">'+curOpts+'</select>'+
-      '<button type="button" onclick="removeFournProductLine(this)" title="Supprimer ce produit" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:18px;padding:0;line-height:1;">×</button>'+
+      '<select class="fpType" style="font-size:11px;">'+produitTypeOptHtml(prod.type)+'</select>'+
+      '<select class="fpCurrency" style="font-size:11px;">'+curOpts+'</select>'+
     '</div>'+
-    '<div class="fp-fees-wrap" style="padding-left:8px;border-left:2px solid var(--border);"></div>';
+    '<div class="fp-fees-wrap" style="padding-left:8px;border-left:2px solid var(--border);"></div>'+
+    // Phase E.2 — Perf fees section, mirrors the deal modal's dfPfBlock so
+    // configs live on the product and auto-fill the deal on product pick.
+    // Hidden when mode=none unless the user toggles it on.
+    '<div class="fp-pf-block" style="margin-top:6px;padding:6px 9px;background:var(--surface);border-radius:4px;border-top:1px dashed var(--border);display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'+
+      '<span class="field-caption-sm" style="white-space:nowrap;">PERF FEES</span>'+
+      '<select class="fpPfMode" onchange="_onFpPfModeChange(this)" style="font-size:11px;">'+
+        '<option value="none"'+(pfMode==='none'?' selected':'')+'>Aucun</option>'+
+        '<option value="pct"'+(pfMode==='pct'?' selected':'')+'>% sur perf</option>'+
+        '<option value="fixed"'+(pfMode==='fixed'?' selected':'')+'>Montant fixe</option>'+
+      '</select>'+
+      '<span class="fpPfRateLbl" style="font-size:10px;color:var(--text3);display:'+(pfMode==='pct'?'':'none')+';">Rate%</span>'+
+      '<input type="number" class="fpPfRate" value="'+escH(String(pf.rate==null?'':pf.rate))+'" step="0.01" placeholder="ex: 20" style="width:64px;font-size:11px;display:'+(pfMode==='pct'?'':'none')+';"/>'+
+      '<span class="fpPfHurdleLbl" style="font-size:10px;color:var(--text3);display:'+(pfMode!=='none'?'':'none')+';">Hurdle%</span>'+
+      '<input type="number" class="fpPfHurdle" value="'+escH(String(pf.hurdle==null?'':pf.hurdle))+'" step="0.01" placeholder="ex: 8" style="width:64px;font-size:11px;display:'+(pfMode!=='none'?'':'none')+';"/>'+
+      '<span class="fpPfFixedLbl" style="font-size:10px;color:var(--text3);display:'+(pfMode==='fixed'?'':'none')+';">Montant</span>'+
+      '<input type="number" class="fpPfFixed" value="'+escH(String(pf.amount==null?'':pf.amount))+'" step="1" placeholder="ex: 50000" style="width:84px;font-size:11px;display:'+(pfMode==='fixed'?'':'none')+';"/>'+
+      '<span class="fpPfFreqLbl" style="font-size:10px;color:var(--text3);display:'+(pfMode!=='none'?'':'none')+';">Fréq.</span>'+
+      '<select class="fpPfFreq" style="font-size:11px;display:'+(pfMode!=='none'?'':'none')+';">'+
+        '<option value="annuel"'+(pf.freq==='annuel'?' selected':'')+'>Annuelle</option>'+
+        '<option value="cloture"'+(pf.freq==='cloture'?' selected':'')+'>Clôture</option>'+
+        '<option value="valorisation"'+(pf.freq==='valorisation'?' selected':'')+'>Valorisation</option>'+
+        '<option value="variable"'+(pf.freq==='variable'?' selected':'')+'>Variable</option>'+
+      '</select>'+
+    '</div>';
   c.appendChild(card);
   var feesWrap=card.querySelector('.fp-fees-wrap');
   var feesArr=(prod.fees&&prod.fees.length)?prod.fees:[{kind:'',pct:''}];
   feesArr.forEach(function(fee){_appendFpFeeRow(feesWrap,fee);});
+  // "+ frais" sits inline at the bottom-right of the fees wrap — visually anchored
+  // to the rows it adds to, instead of floating as a separate block element.
   var addFeeBtn=document.createElement('button');
-  addFeeBtn.type='button';addFeeBtn.className='fp-add-fee-btn';
-  addFeeBtn.style.cssText='background:none;border:1px dashed var(--border);color:var(--text2);cursor:pointer;font-size:10px;padding:2px 8px;border-radius:3px;margin-top:2px;';
+  addFeeBtn.type='button';addFeeBtn.className='fp-add-fee-btn btn-add-xs';
+  addFeeBtn.style.cssText='margin-top:2px;float:right;';
   addFeeBtn.textContent='+ frais';
   addFeeBtn.onclick=function(){_appendFpFeeRow(feesWrap,{kind:'',pct:''},addFeeBtn);};
-  feesWrap.appendChild(addFeeBtn);
+  // Wrap in a container so float doesn't break parent layout
+  var addFeeWrap=document.createElement('div');
+  addFeeWrap.style.cssText='overflow:hidden;';
+  addFeeWrap.appendChild(addFeeBtn);
+  feesWrap.appendChild(addFeeWrap);
   // Hide "empty" placeholder text once a product exists
   document.getElementById('fProductsEmpty').style.display='none';
 }
@@ -5922,18 +7222,63 @@ function addFournProductLine(prod){
 function _appendFpFeeRow(container,fee,beforeNode){
   var row=document.createElement('div');
   row.className='fp-fee-row';
-  row.style.cssText='display:grid;grid-template-columns:1fr 70px 24px;gap:4px;margin-bottom:3px;align-items:center;';
+  // Phase F.2 — grid expands when kind=UF+Run to fit a second % field. We use
+  // 1fr+spec instead of a fixed col to let the kind selector breathe even when
+  // the secondary input is visible.
+  var isCombo=(fee.kind==='UF+Run');
+  row.style.cssText='display:grid;grid-template-columns:1fr 56px 56px 24px;gap:4px;margin-bottom:3px;align-items:center;';
+  // Labels above the inputs only appear in combo mode for clarity (else the
+  // single % input is self-explanatory). Empty placeholders keep grid alignment.
+  // Build the secondary input slot. In combo mode → "Run%" input; else → empty span.
+  var primaryLbl=isCombo?'UF %':'%';
   row.innerHTML=
-    '<input type="text" class="ffKind" value="'+escH(fee.kind||'')+'" placeholder="Type (gestion, perf, entrée…)" style="font-size:11px;"/>'+
-    '<input type="number" class="ffPct" value="'+escH(String(fee.pct==null||fee.pct===''?'':fee.pct))+'" placeholder="%" step="0.01" min="0" style="font-size:11px;"/>'+
+    '<select class="ffKind" onchange="_onFfKindChange(this)" style="font-size:11px;">'+feeKindOptHtml(fee.kind)+'</select>'+
+    '<input type="number" class="ffPct" value="'+escH(String(fee.pct==null||fee.pct===''?'':fee.pct))+'" placeholder="'+primaryLbl+'" title="'+(isCombo?'Taux UF (%)':'Taux (%)')+'" step="0.01" min="0" style="font-size:11px;"/>'+
+    '<input type="number" class="ffRunPct" value="'+escH(String(fee.runPct==null||fee.runPct===''?'':fee.runPct))+'" placeholder="Run %" title="Taux Running (%/an)" step="0.01" min="0" style="font-size:11px;display:'+(isCombo?'':'none')+';"/>'+
     '<button type="button" onclick="removeFpFeeRow(this)" title="Retirer ce frais" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:14px;padding:0;line-height:1;">×</button>';
   if(beforeNode)container.insertBefore(row,beforeNode);else container.appendChild(row);
+}
+// Phase F.2 — toggle the secondary Run% input when the kind switches.
+// Updates placeholder + title on the primary input too (UF % vs %).
+function _onFfKindChange(sel){
+  var row=sel.closest('.fp-fee-row, .dfCustomFeeRow');
+  if(!row)return;
+  var isCombo=(sel.value==='UF+Run');
+  // Primary input label
+  var primary=row.querySelector('.ffPct, .dfCfPct');
+  if(primary){
+    primary.placeholder=isCombo?'UF %':'%';
+    primary.title=isCombo?'Taux UF (%)':'Taux (%)';
+  }
+  // Secondary input visibility
+  var secondary=row.querySelector('.ffRunPct, .dfCfRunPct');
+  if(secondary) secondary.style.display=isCombo?'':'none';
 }
 
 function removeFpFeeRow(btn){
   var row=btn.closest('.fp-fee-row');
   var container=row.parentElement;
   if(container.querySelectorAll('.fp-fee-row').length>1)row.remove();
+}
+
+// Phase E.2 — toggle Perf fee inputs visibility based on mode on a product card.
+// Mirrors _onDfPfModeChange behavior in the deal modal.
+function _onFpPfModeChange(sel){
+  var block=sel.closest('.fp-pf-block');
+  if(!block) return;
+  var mode=sel.value;
+  var showRate=(mode==='pct');
+  var showFixed=(mode==='fixed');
+  var showAny=(mode!=='none');
+  var setDisp=function(cls,show){var el=block.querySelector(cls);if(el)el.style.display=show?'':'none';};
+  setDisp('.fpPfRateLbl',showRate);
+  setDisp('.fpPfRate',   showRate);
+  setDisp('.fpPfHurdleLbl',showAny);
+  setDisp('.fpPfHurdle',   showAny);
+  setDisp('.fpPfFixedLbl',showFixed);
+  setDisp('.fpPfFixed',   showFixed);
+  setDisp('.fpPfFreqLbl',showAny);
+  setDisp('.fpPfFreq',   showAny);
 }
 
 function removeFournProductLine(btn){
@@ -5959,9 +7304,32 @@ function getFournProductsFromModal(){
       var kind=(row.querySelector('.ffKind').value||'').trim();
       var pctRaw=row.querySelector('.ffPct').value;
       var pct=parseFloat(pctRaw);
-      if(kind||!isNaN(pct))fees.push({kind:kind,pct:isNaN(pct)?0:pct});
+      // Phase F.2 — UF+Run rows carry an additional runPct for the Running cycle.
+      var entry={kind:kind,pct:isNaN(pct)?0:pct};
+      if(kind==='UF+Run'){
+        var runPctRaw=(row.querySelector('.ffRunPct')||{}).value;
+        var runPct=parseFloat(runPctRaw);
+        if(!isNaN(runPct))entry.runPct=runPct;
+      }
+      if(kind||!isNaN(pct))fees.push(entry);
     });
-    if(isin||part||type||fees.length)prods.push({isin:isin,part:part,type:type,unit:unit,currency:currency,fees:fees});
+    // Phase E.2 — read the perf fee config block.
+    var pf={mode:'none'};
+    var pfModeEl=card.querySelector('.fpPfMode');
+    if(pfModeEl){
+      pf.mode=pfModeEl.value||'none';
+      if(pf.mode==='pct'){
+        pf.rate=parseFloat((card.querySelector('.fpPfRate')||{}).value)||0;
+        pf.hurdle=parseFloat((card.querySelector('.fpPfHurdle')||{}).value)||0;
+        pf.freq=(card.querySelector('.fpPfFreq')||{}).value||'annuel';
+      } else if(pf.mode==='fixed'){
+        pf.amount=parseFloat((card.querySelector('.fpPfFixed')||{}).value)||0;
+        pf.hurdle=parseFloat((card.querySelector('.fpPfHurdle')||{}).value)||0;
+        pf.freq=(card.querySelector('.fpPfFreq')||{}).value||'annuel';
+      }
+    }
+    var hasPf=(pf.mode!=='none');
+    if(isin||part||type||fees.length||hasPf)prods.push({isin:isin,part:part,type:type,unit:unit,currency:currency,fees:fees,pf:pf});
   });
   return prods;
 }
@@ -6296,9 +7664,14 @@ function getCommDeals(){
   return deals.filter(function(d){
     // (A) Per-deal payments (UF / PF / one-off): require fSt='Payé' AND inv date in period
     if(d.fSt==='Payé'&&matchPeriod(d.inv,year,month,trim))return true;
-    // (B) Running contribution: include this deal if it has running and its fournisseur has a
-    // paid rapprochement in the period (running is tracked at trim+fourn level, independent of fSt)
-    if((d.ct==='RUN'||d.ct==='BOTH')&&d.runE>0&&paidRunFourns[d.fourn])return true;
+    // (B) Running contribution: include this deal if ANY of its codifications has
+    // Run fees AND that codif's fournisseur has a paid rapprochement in the period.
+    // (Phase D.3 — was deal-level d.ct/d.fourn which mis-routed deals with mixed codifs.)
+    var codifs=dealCodifsEffective(d);
+    for(var i=0;i<codifs.length;i++){
+      var c=codifs[i];
+      if((c.ct==='RUN'||c.ct==='BOTH') && c.runE>0 && paidRunFourns[c.fourn]) return true;
+    }
     return false;
   });
 }
@@ -6483,6 +7856,32 @@ function getRunProrata(d){
   });
   return contribution;
 }
+// Phase H.4 — codif-level version : returns the running contribution of a single
+// codification (not the whole deal). Used by the commission drill so a deal with
+// Amundi (Run) + Banque (UF) codifs only counts Amundi's share under Amundi —
+// instead of routing the whole deal to one fournisseur.
+function getCodifRunProrata(codif){
+  if(!codif || !codif.runE || codif.runE===0) return 0;
+  if(codif.ct!=='RUN' && codif.ct!=='BOTH') return 0;
+  if(!codif.fourn) return 0;
+  // Sum runE across ALL codifs at this fournisseur, all deals.
+  var totalRunE=0;
+  deals.forEach(function(d){
+    (d.codifications||[]).forEach(function(c){
+      if(c.fourn===codif.fourn && (c.ct==='RUN'||c.ct==='BOTH')){
+        totalRunE += c.runE||0;
+      }
+    });
+  });
+  if(!totalRunE) return 0;
+  var contribution=0;
+  rapprochement_db.forEach(function(r){
+    if(r.type!=='run' || r.fourn!==codif.fourn || !r.paid || !r.declared) return;
+    if(!rapprMatchesCommPeriod(r.period)) return;
+    contribution += r.declared * (codif.runE / totalRunE);
+  });
+  return contribution;
+}
 
 function renderDrill(){
   if(!commDrillVendeur)return;
@@ -6490,36 +7889,58 @@ function renderDrill(){
   var t=document.getElementById('commDrillT');
   t.innerHTML='';
   document.getElementById('commDrillEmpty').style.display=data.length?'none':'block';
-  var runCol=commPeriod==='annee'?'Running /an':commPeriod==='trimestre'?'Running trim.':'Running mois';
+  // Phase H — clarify the column header. The displayed value is the rapprochement-
+  // paid amount (= what the fournisseur actually declared & paid), NOT the
+  // theoretical annual run × rate. Was "Running /an" which was misleading.
+  var runCol='Running facturé & payé';
+  var runColTitle='Montant Running réellement déclaré et payé par le fournisseur pour la période (vient des rapprochements). Pas le théorique nominal×runR%.';
 
   if(commDrillTab==='fournisseur'){
-    t.innerHTML='<tr><th>Fournisseur</th><th>Nb deals</th><th>UF (EUR)</th><th>'+runCol+'</th><th>Perf fees</th><th>Total</th></tr>';
+    t.innerHTML='<tr><th>Fournisseur</th><th class="tc">Nb deals</th><th class="tr">UF (EUR)</th><th class="tr" title="'+escAttr(runColTitle)+'">'+runCol+'</th><th class="tr">Perf fees</th><th class="tr">Total</th></tr>';
+    // Phase H.4 — iterate codif-level so each fournisseur gets only its OWN
+    // codifs' contributions (not the whole deal). A deal Amundi(Run)+Banque(UF)
+    // splits between rows for Amundi and Banque correctly.
     var by={};
-    data.forEach(d=>{
-      if(!by[d.fourn])by[d.fourn]={nb:0,uf:0,run:0,pf:0};
-      by[d.fourn].nb++;by[d.fourn].uf+=d.ufE||0;
-      by[d.fourn].run+=getRunProrata(d);
-      by[d.fourn].pf+=(d.pf&&d.pf.amount?d.pf.amount:0);
+    data.forEach(function(d){
+      dealCodifsEffective(d).forEach(function(c){
+        var name=c.fourn||'?';
+        if(!by[name])by[name]={uf:0,run:0,pf:0,dealIds:new Set()};
+        by[name].dealIds.add(d._id||d);
+        by[name].uf  += c.ufE||0;
+        by[name].run += getCodifRunProrata(c);
+        by[name].pf  += (c.pf && c.pf.amount ? c.pf.amount : 0);
+      });
     });
-    Object.entries(by).sort((a,b)=>b[1].uf+b[1].run-(a[1].uf+a[1].run)).forEach(([f,v])=>{
-      var ht=v.uf+v.run;var r=t.insertRow();
-      r.innerHTML='<td style="font-weight:500;">'+escH(f)+'</td><td style="text-align:center;">'+v.nb+'</td><td style="text-align:right;color:var(--blue);font-weight:500;">'+fE(v.uf)+'</td><td style="text-align:right;color:var(--green);font-weight:500;">'+fE(v.run)+'</td><td style="text-align:right;color:var(--purple);">'+(v.pf>0?fE(v.pf):'—')+'</td><td style="text-align:right;font-weight:500;">'+fE(ht)+'</td>';
+    Object.entries(by).sort(function(a,b){return (b[1].uf+b[1].run)-(a[1].uf+a[1].run);}).forEach(function(entry){
+      var f=entry[0], v=entry[1];
+      var ht=v.uf+v.run;
+      var nb=v.dealIds.size;
+      var r=t.insertRow();
+      r.innerHTML='<td style="font-weight:500;">'+escH(f)+'</td><td style="text-align:center;">'+nb+'</td><td style="text-align:right;color:var(--blue);font-weight:500;">'+(v.uf>0?fE(v.uf):'—')+'</td><td style="text-align:right;color:var(--green);font-weight:500;">'+(v.run>0?fE(v.run):'—')+'</td><td style="text-align:right;color:var(--purple);">'+(v.pf>0?fE(v.pf):'—')+'</td><td style="text-align:right;font-weight:500;">'+(ht>0?fE(ht):'—')+'</td>';
     });
   } else if(commDrillTab==='client'){
-    t.innerHTML='<tr><th>Client</th><th>Nb deals</th><th>UF (EUR)</th><th>'+runCol+'</th><th>Perf fees</th><th>Total</th></tr>';
+    t.innerHTML='<tr><th>Client</th><th class="tc">Nb deals</th><th class="tr">UF (EUR)</th><th class="tr" title="'+escAttr(runColTitle)+'">'+runCol+'</th><th class="tr">Perf fees</th><th class="tr">Total</th></tr>';
+    // Phase H.4 — same approach for client grouping : sum across all codifs.
     var by={};
-    data.forEach(d=>{
-      if(!by[d.client])by[d.client]={nb:0,uf:0,run:0,pf:0};
-      by[d.client].nb++;by[d.client].uf+=d.ufE||0;
-      by[d.client].run+=getRunProrata(d);
-      by[d.client].pf+=(d.pf&&d.pf.amount?d.pf.amount:0);
+    data.forEach(function(d){
+      var cl=d.client||'?';
+      if(!by[cl])by[cl]={uf:0,run:0,pf:0,dealIds:new Set()};
+      by[cl].dealIds.add(d._id||d);
+      dealCodifsEffective(d).forEach(function(c){
+        by[cl].uf  += c.ufE||0;
+        by[cl].run += getCodifRunProrata(c);
+        by[cl].pf  += (c.pf && c.pf.amount ? c.pf.amount : 0);
+      });
     });
-    Object.entries(by).sort((a,b)=>b[1].uf+b[1].run-(a[1].uf+a[1].run)).forEach(([c,v])=>{
-      var ht=v.uf+v.run;var r=t.insertRow();
-      r.innerHTML='<td style="font-weight:500;">'+escH(c)+'</td><td style="text-align:center;">'+v.nb+'</td><td style="text-align:right;color:var(--blue);font-weight:500;">'+fE(v.uf)+'</td><td style="text-align:right;color:var(--green);font-weight:500;">'+fE(v.run)+'</td><td style="text-align:right;color:var(--purple);">'+(v.pf>0?fE(v.pf):'—')+'</td><td style="text-align:right;font-weight:500;">'+fE(ht)+'</td>';
+    Object.entries(by).sort(function(a,b){return (b[1].uf+b[1].run)-(a[1].uf+a[1].run);}).forEach(function(entry){
+      var c=entry[0], v=entry[1];
+      var ht=v.uf+v.run;
+      var nb=v.dealIds.size;
+      var r=t.insertRow();
+      r.innerHTML='<td style="font-weight:500;">'+escH(c)+'</td><td style="text-align:center;">'+nb+'</td><td style="text-align:right;color:var(--blue);font-weight:500;">'+(v.uf>0?fE(v.uf):'—')+'</td><td style="text-align:right;color:var(--green);font-weight:500;">'+(v.run>0?fE(v.run):'—')+'</td><td style="text-align:right;color:var(--purple);">'+(v.pf>0?fE(v.pf):'—')+'</td><td style="text-align:right;font-weight:500;">'+(ht>0?fE(ht):'—')+'</td>';
     });
   } else {
-    t.innerHTML='<tr><th>Date</th><th>Client</th><th>Fournisseur</th><th>Produit</th><th>Nominal</th><th>UF</th><th>'+runCol+'</th><th>Perf fees</th><th>Statut</th></tr>';
+    t.innerHTML='<tr><th>Date</th><th>Client</th><th>Fournisseur</th><th>Produit</th><th class="tr">Nominal</th><th class="tr">UF</th><th class="tr" title="'+escAttr(runColTitle)+'">'+runCol+'</th><th class="tr">Perf fees</th><th>Statut</th></tr>';
     data.sort((a,b)=>b.date.localeCompare(a.date)).forEach(d=>{
       var r=t.insertRow();r.className='cl';r.onclick=()=>openDet(d);
       var pf=d.pf&&d.pf.mode!=='none'&&d.pf.amount?fE(d.pf.amount):(d.pf&&d.pf.mode==='pct'&&d.pf.rate?d.pf.rate+'%':'—');
@@ -7511,6 +8932,11 @@ function _showStuckLoadingHelp(){
 async function initApp(){
   document.getElementById('loadingOverlay').style.display='flex';
   var stuckTimer=setTimeout(_showStuckLoadingHelp,10000);
+  // Tab-order hygiene: the × close button is in modal-hd, which is the first
+  // interactive element of every modal. Without this, Tab into a modal lands
+  // on close before the first input. Set tabindex=-1 on all close buttons so
+  // keyboard navigation starts at the first real field. Click still works.
+  document.querySelectorAll('.close-btn').forEach(function(b){b.tabIndex=-1;});
   try{
     var results=await withTimeout(Promise.all([
       sbGetAll('deals'),
@@ -7529,6 +8955,17 @@ async function initApp(){
     // Phase 1A backfill: ensure every fournisseur has a products[] (in-memory only;
     // DB-side default comes from the jsonb DEFAULT in migration 05).
     fourn_db.forEach(function(f){if(!Array.isArray(f.products))f.products=[];});
+    // Phase D.1 + H.2 backfill — enrich every deal's codifications with
+    // codif-level ct/ufR/runR/ufE/runE on read, AND propagate the aggregates
+    // back to deal-level fields so legacy renderers (commissions, référentiel
+    // fournisseur, alertes, CSV export) keep working without each one having
+    // to be refactored. In-memory only; persists on next save.
+    deals.forEach(function(d){
+      if(Array.isArray(d.codifications)&&d.codifications.length){
+        enrichDealCodifications(d.codifications);
+        _recomputeDealAggregates(d);
+      }
+    });
     if(results[4].error){console.error('Rapprochement fetch failed',results[4].error);toast('Erreur chargement rapprochement — facturation peut être incomplète.');rapprochement_db=[];}
     else rapprochement_db=((results[4].data)||[]).map(rapprRowToObj);
     if(results[5].error){

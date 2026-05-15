@@ -218,7 +218,7 @@
         </div>
         <div class="card" style="padding:0;overflow:hidden;">
           <div class="tw"><table id="dealsT">
-            <tr><th style="width:30px;"><input type="checkbox" id="bulkSelectAll" onclick="toggleSelectAllDeals(this)" title="Tout sélectionner / désélectionner"/></th><th><button class="sort-btn" onclick="sBy('date')">Date↕</button></th><th>Vendeur</th><th>Client</th><th>Contrat</th><th>Produit</th><th>Type produit</th><th>Fournisseur</th><th>Broker</th><th><button class="sort-btn" onclick="sBy('nom')">Nominal↕</button></th><th>Dev.</th><th>ISIN</th><th>Trade date</th><th>Invoice sending</th><th>Invoice payment</th><th>Terme</th><th>Type</th><th><button class="sort-btn" onclick="sBy('ufE')">UF€↕</button></th><th><button class="sort-btn" onclick="sBy('runE')">Run/an↕</button></th><th>Réf.</th><th>Facture</th><th>Notes</th><th></th></tr>
+            <tr><th style="width:30px;"><input type="checkbox" id="bulkSelectAll" onclick="toggleSelectAllDeals(this)" title="Tout sélectionner / désélectionner"/></th><th><button class="sort-btn" onclick="sBy('date')">Date↕</button></th><th>Vendeur</th><th>Client</th><th>Contrat</th><th>Produit</th><th>Type produit</th><th>Fournisseur</th><th>Broker</th><th class="tr"><button class="sort-btn" onclick="sBy('nom')">Nominal↕</button></th><th>Dev.</th><th>ISIN</th><th>Trade date</th><th>Invoice sending</th><th>Invoice payment</th><th>Terme</th><th>Type</th><th class="tr"><button class="sort-btn" onclick="sBy('ufE')">UF€↕</button></th><th class="tr"><button class="sort-btn" onclick="sBy('runE')">Run/an↕</button></th><th>Réf.</th><th>Facture</th><th>Notes</th><th></th></tr>
           </table></div>
           <div id="dealsEmpty" class="empty">Aucun deal correspondant.</div>
         </div>
@@ -257,7 +257,7 @@
           <div class="card" style="padding:0;overflow:hidden;margin-bottom:16px;">
             <div style="padding:14px 16px 8px;font-size:13px;font-weight:600;">Up-Front — Deals à facturer par fournisseur</div>
             <div class="tw" style="margin-top:4px;"><table id="ufRapprT">
-              <tr><th>Fournisseur</th><th>Famille</th><th>Nb deals</th><th>Nominal total</th><th>Montant UF théorique</th><th>Montant déclaré</th><th>Statut</th><th></th></tr>
+              <tr><th>Fournisseur</th><th>Famille</th><th class="tc">Nb deals</th><th class="tr">Nominal total</th><th class="tr">Montant UF théorique</th><th class="tr">Montant déclaré</th><th>Statut</th><th></th></tr>
             </table></div>
             <div id="ufRapprEmpty" class="empty">Aucun deal UF à facturer.</div>
           </div>
@@ -279,7 +279,7 @@
               <span style="font-size:10px;color:var(--text3);">Tri : date d'archivage ↓</span>
             </div>
             <div class="tw" style="margin-top:12px;"><table id="ufInvT">
-              <tr><th>Fournisseur</th><th>Client</th><th>Produit</th><th>Trade date</th><th>Montant UF</th><th>Date génération</th><th>Date paiement</th><th>Statut</th><th></th></tr>
+              <tr><th>Fournisseur</th><th>Client</th><th>Produit</th><th>Trade date</th><th class="tr">Montant UF</th><th>Date génération</th><th>Date paiement</th><th>Statut</th><th></th></tr>
             </table></div>
             <div id="ufInvEmpty" class="empty">Aucune facture UF enregistrée.</div>
           </div>
@@ -314,7 +314,7 @@
           <div class="card" style="padding:0;overflow:hidden;margin-bottom:16px;">
             <div style="padding:14px 16px 8px;font-size:13px;font-weight:600;">Rapprochement par fournisseur <span style="font-weight:400;font-size:11px;color:var(--text3);" id="recapPeriodLabel2"></span></div>
             <div class="tw"><table id="recapRUNT">
-              <tr><th>Fournisseur</th><th>Famille</th><th>Nb deals</th><th>Encours (EUR)</th><th>Running /an</th><th>Fact. théorique</th><th>Déclaré fourn.</th><th>Écart</th><th>Statut</th><th></th></tr>
+              <tr><th>Fournisseur</th><th>Famille</th><th class="tc">Nb deals</th><th class="tr">Encours (EUR)</th><th class="tr">Running /an</th><th class="tr">Fact. théorique</th><th class="tr">Déclaré fourn.</th><th class="tr">Écart</th><th>Statut</th><th></th></tr>
             </table></div>
             <div id="recapRUNEmpty" class="empty">Aucun deal Running sur cette période.</div>
           </div>
@@ -332,7 +332,7 @@
               </div>
             </div>
             <div class="tw" style="margin-top:12px;"><table id="runInvT">
-              <tr><th>Fournisseur</th><th>Trimestre</th><th>Montant théorique</th><th>Montant déclaré</th><th>Date génération</th><th>Statut</th><th></th></tr>
+              <tr><th>Fournisseur</th><th>Trimestre</th><th class="tr">Montant théorique</th><th class="tr">Montant déclaré</th><th>Date génération</th><th>Statut</th><th></th></tr>
             </table></div>
             <div id="runInvEmpty" class="empty">Aucune facture Running enregistrée.</div>
           </div>
@@ -349,7 +349,7 @@
           <div class="card" style="padding:0;overflow:hidden;margin-bottom:16px;">
             <div style="padding:14px 16px 8px;font-size:13px;font-weight:600;">Perf fees — Deals à facturer par fournisseur</div>
             <div class="tw" style="margin-top:4px;"><table id="pfRapprT">
-              <tr><th>Fournisseur</th><th>Famille</th><th>Nb deals</th><th>Montant PF théorique</th><th>Montant déclaré</th><th>Statut</th><th></th></tr>
+              <tr><th>Fournisseur</th><th>Famille</th><th class="tc">Nb deals</th><th class="tr">Montant PF théorique</th><th class="tr">Montant déclaré</th><th>Statut</th><th></th></tr>
             </table></div>
             <div id="pfRapprEmpty" class="empty">Aucun deal avec perf fees.</div>
           </div>
@@ -367,7 +367,7 @@
               </div>
             </div>
             <div class="tw" style="margin-top:12px;"><table id="pfInvT">
-              <tr><th>Fournisseur</th><th>Client</th><th>Produit</th><th>Montant PF</th><th>Date génération</th><th>Date paiement</th><th>Statut</th><th></th></tr>
+              <tr><th>Fournisseur</th><th>Client</th><th>Produit</th><th class="tr">Montant PF</th><th>Date génération</th><th>Date paiement</th><th>Statut</th><th></th></tr>
             </table></div>
             <div id="pfInvEmpty" class="empty">Aucune facture Perf fees enregistrée.</div>
           </div>
@@ -409,9 +409,12 @@
         </div>
         <!-- Tableau récap des produits -->
         <div class="card" style="padding:0;overflow:hidden;margin-bottom:18px;">
-          <div style="padding:12px 16px 6px;display:flex;justify-content:space-between;align-items:center;">
+          <div style="padding:12px 16px 6px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
             <div style="font-size:13px;font-weight:600;">Performance par produit</div>
-            <div style="font-size:11px;color:var(--text3);" id="perfTableCount"></div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <button class="btn btn-sm btn-primary" onclick="pushPerfFeesToFacturation()" title="Pousser les perf fees calculées sur les deals concernés — apparaîtront sur l'onglet Facturation > Perf fees" style="font-size:11px;">↗ Pousser vers Facturation</button>
+              <div style="font-size:11px;color:var(--text3);" id="perfTableCount"></div>
+            </div>
           </div>
           <div class="tw"><table id="perfTable">
             <tr>
@@ -503,13 +506,13 @@
             <tr>
               <th>Nom</th>
               <th>Type</th>
-              <th onclick="setClientSort('classif')" style="cursor:pointer;" title="Trier par classification">Classif.</th>
+              <th class="tc" onclick="setClientSort('classif')" style="cursor:pointer;" title="Trier par classification">Classif.</th>
               <th>Vendeur référent</th>
-              <th>Encours client</th>
-              <th>Nb deals</th>
-              <th>Nominaux deals</th>
-              <th>UF total</th>
-              <th>Running /an</th>
+              <th class="tr">Encours client</th>
+              <th class="tc">Nb deals</th>
+              <th class="tr">Nominaux deals</th>
+              <th class="tr">UF total</th>
+              <th class="tr">Running /an</th>
               <th>Dernier deal</th>
               <th></th>
             </tr>
@@ -548,7 +551,7 @@
             <div class="card" style="padding:0;overflow:hidden;">
               <table id="fournT">
                 <tr>
-                  <th>Nom</th><th>Famille</th><th>Nb deals</th><th>UF total</th><th>Running /an</th><th>Dernier deal</th>
+                  <th>Nom</th><th>Famille</th><th class="tc">Nb deals</th><th class="tr">UF total</th><th class="tr">Running /an</th><th>Dernier deal</th>
                 </tr>
               </table>
               <div id="fournEmpty" class="empty">Aucun fournisseur.</div>
@@ -559,7 +562,7 @@
             <div class="card" style="padding:0;overflow:hidden;">
               <table id="brokerT">
                 <tr>
-                  <th>Nom</th><th>Nb deals</th><th>UF total</th><th>Running /an</th><th>Dernier deal</th><th></th>
+                  <th>Nom</th><th class="tc">Nb deals</th><th class="tr">UF total</th><th class="tr">Running /an</th><th>Dernier deal</th><th></th>
                 </tr>
               </table>
               <div id="brokerEmpty" class="empty">Aucun broker.</div>
@@ -589,9 +592,9 @@
               <tr>
                 <th>Fournisseur</th>
                 <th>Famille</th>
-                <th>Nominal app (EUR)</th>
-                <th>Déclaré fournisseur</th>
-                <th>Écart</th>
+                <th class="tr">Nominal app (EUR)</th>
+                <th class="tr">Déclaré fournisseur</th>
+                <th class="tr">Écart</th>
                 <th>Statut</th>
                 <th></th>
               </tr>
@@ -611,9 +614,9 @@
             <table id="brokerT">
               <tr>
                 <th>Nom</th>
-                <th>Nb deals</th>
-                <th>UF total</th>
-                <th>Running /an</th>
+                <th class="tc">Nb deals</th>
+                <th class="tr">UF total</th>
+                <th class="tr">Running /an</th>
                 <th>Dernier deal</th>
                 <th></th>
               </tr>
@@ -884,13 +887,14 @@
 
 <!-- MODAL FOURNISSEUR -->
 <div class="ov" id="fournModal">
-  <div class="modal" style="max-width:520px;">
+  <div class="modal" style="max-width:620px;">
     <div class="modal-hd"><span class="modal-title" id="fournModalTitle">Nouveau fournisseur</span><button class="close-btn" onclick="closeFournModal()">×</button></div>
     <div class="modal-body">
       <div class="fg2">
         <div class="fl"><label>Nom du fournisseur</label><input type="text" id="fName" placeholder="ex: Amundi AM"/></div>
         <div class="fl"><label>Famille</label><select id="fFamille" onchange="onFournFamilleChange()"><option value="SDG">Société de gestion</option><option value="Banque">Banque</option><option value="Assureur">Assureur</option></select></div>
       </div>
+      <div class="fl" style="margin-top:8px;"><label>Template d'étapes <span style="color:var(--text3);font-weight:400;">(pack appliqué aux investissements via ce fournisseur — préliminaires conservés sur le contrat)</span></label><select id="fTemplate"><option value="">— Aucun (utilise le template du contrat) —</option></select></div>
       <div class="form-sep">Coordonnées (pour facturation)</div>
       <div class="fg2" style="margin-top:0;">
         <div class="fl"><label>Adresse ligne 1</label><input type="text" id="fAddr1" placeholder="ex: 24-26, avenue des Champs-Elysées"/></div>
@@ -901,7 +905,7 @@
         <div class="fl"><label>Email</label><input type="text" id="fEmail" placeholder="ex: contact@fournisseur.com"/></div>
       </div>
       <div id="fProductsSection" style="display:none;">
-        <div class="form-sep" style="display:flex;align-items:center;gap:8px;">Produits / Parts <span style="color:var(--text3);font-weight:400;font-size:11px;">(catalogue ISIN — utilisé en Nv deal)</span><div style="flex:1;"></div><button type="button" class="btn btn-sm" onclick="addFournProductLine()" style="font-size:11px;padding:3px 8px;">+ Produit</button></div>
+        <div class="form-sep" style="display:flex;align-items:center;gap:8px;">Catalogue produits <span style="color:var(--text3);font-weight:400;font-size:11px;">(fonds, parts, contrats — réutilisé sur les deals)</span><div style="flex:1;"></div><button type="button" class="btn-add" onclick="addFournProductLine()">+ Produit</button></div>
         <div id="fProducts"></div>
         <div id="fProductsEmpty" style="font-size:11px;color:var(--text3);font-style:italic;padding:6px 0;">Aucun produit. Ajoute les parts (ISIN + frais) pour les retrouver à la création d'un deal.</div>
       </div>
@@ -1012,12 +1016,12 @@
   </div>
 </div>
 <div class="ov" id="clientModal">
-  <div class="modal" style="max-width:1100px;width:95vw;">
+  <div class="modal" style="max-width:1320px;width:96vw;">
     <div class="modal-hd"><span class="modal-title" id="clientModalTitle">Fiche client</span><button class="close-btn" onclick="closeClientModal()">×</button></div>
     <div class="modal-body" style="padding:0;">
 
-      <!-- Layout 2 colonnes -->
-      <div style="display:grid;grid-template-columns:280px 1fr;min-height:500px;">
+      <!-- Layout 2 colonnes — left side untouched per Oscar's note, right side gets the breathing room -->
+      <div style="display:grid;grid-template-columns:280px 1fr;min-height:600px;">
 
         <!-- Colonne gauche : infos client + édition -->
         <div style="background:var(--surface2);border-right:1px solid var(--border);padding:20px;display:flex;flex-direction:column;gap:14px;">
@@ -1105,18 +1109,20 @@
             <div id="clientInvestLines"></div>
           </div>
 
-          <!-- Historique -->
+          <!-- Historique — collapsible. Collapsed by default on modal open (toggled in JS). -->
           <div id="clientHistSection" style="display:none;">
-            <div style="font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px;display:flex;align-items:center;gap:8px;">
+            <div id="clientHistHeader" style="font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px;display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;" onclick="toggleClientHistory()" title="Cliquer pour déplier / replier">
+              <span id="clientHistChevron" style="display:inline-block;transition:transform .15s ease;font-size:10px;">▶</span>
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 4v4l3 2"/></svg>
               Historique des opérations
+              <span id="clientHistCount" style="font-size:10px;font-weight:500;color:var(--text3);text-transform:none;letter-spacing:0;"></span>
               <div style="flex:1;"></div>
-              <label style="display:flex;align-items:center;gap:5px;font-size:10px;font-weight:500;color:var(--text2);text-transform:none;letter-spacing:0;cursor:pointer;">
+              <label id="clientHistHidePaidLbl" style="display:none;align-items:center;gap:5px;font-size:10px;font-weight:500;color:var(--text2);text-transform:none;letter-spacing:0;cursor:pointer;" onclick="event.stopPropagation();">
                 <input type="checkbox" id="cHidePaid" onchange="_onHidePaidToggle()" style="margin:0;cursor:pointer;"/>
                 Masquer les payés
               </label>
             </div>
-            <div id="clientHistLines"></div>
+            <div id="clientHistLines" style="display:none;"></div>
           </div>
 
           <!-- Placeholder si nouveau client -->
@@ -1196,7 +1202,7 @@
 
 <!-- MODAL ARBITRAGE -->
 <div class="ov" id="arbModal">
-  <div class="modal" style="max-width:900px;">
+  <div class="modal" style="max-width:1200px;width:95vw;">
     <div class="modal-hd"><span class="modal-title">Enregistrer un arbitrage</span><button class="close-btn" onclick="closeArbModal()">×</button></div>
     <div class="modal-body">
 
@@ -1220,11 +1226,12 @@
         </div>
       </div>
 
-      <!-- Lignes de destination -->
+      <!-- Lignes de destination — F.5 : ISIN ajouté entre Produit et Contrat -->
       <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px;">Vers — nouveaux investissements</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 120px 120px 80px 80px 80px auto;gap:6px;margin-bottom:6px;">
+      <div style="display:grid;grid-template-columns:1.2fr 1.3fr 120px 130px 130px 110px 100px 85px auto;gap:6px;margin-bottom:6px;">
         <span style="font-size:11px;color:var(--text3);">Fournisseur</span>
         <span style="font-size:11px;color:var(--text3);">Produit</span>
+        <span style="font-size:11px;color:var(--text3);">ISIN</span>
         <span style="font-size:11px;color:var(--text3);">Contrat</span>
         <span style="font-size:11px;color:var(--text3);">Dépositaire</span>
         <span style="font-size:11px;color:var(--text3);">Montant</span>

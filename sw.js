@@ -2,7 +2,10 @@
 // Stratégie : network-first pour l'app shell (toujours essayer la dernière version,
 // fallback cache si offline). Aucune interception des appels Supabase / CDN.
 
-const CACHE_NAME = 'dealflow-v22';
+// Bumped 2026-05-15 — Phase A-H (codif aggregate propagation + per-codif
+// commissions + commission column relabel + auto-refresh on mark paid +
+// table header alignment classes .tr/.tc across all 10+ tables).
+const CACHE_NAME = 'dealflow-v28';
 const APP_SHELL = [
   './',
   './index.html',

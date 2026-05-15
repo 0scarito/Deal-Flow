@@ -65,6 +65,12 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);fon
 table{width:100%;border-collapse:collapse;font-size:12px;}
 th{text-align:left;color:var(--text3);font-weight:500;padding:6px 8px;border-bottom:1px solid var(--border);font-size:11px;white-space:nowrap;}
 td{padding:7px 8px;border-bottom:1px solid var(--border);vertical-align:middle;}
+/* Phase H.6 — alignment utilities for table headers. Default <th> is left-aligned,
+   but numeric cells (<td style="text-align:right">) need their header to match
+   or the column reads visually misaligned. Use `th.tr` for right, `th.tc` for
+   center. Applied via the th class attribute in markup. */
+th.tr,td.tr{text-align:right;}
+th.tc,td.tc{text-align:center;}
 tr:last-child td{border-bottom:none;}
 tr.cl:hover td{background:var(--surface2);cursor:pointer;}
 .sort-btn{background:none;border:none;cursor:pointer;color:var(--text3);font-size:10px;padding:0 2px;font-family:inherit;}
@@ -79,12 +85,40 @@ tr.cl:hover td{background:var(--surface2);cursor:pointer;}
 .bp{background:var(--purple-bg);color:var(--purple-t);}
 
 /* FORM */
-.fl label{display:block;font-size:11px;font-weight:500;color:var(--text2);margin-bottom:4px;}
+/* Labels use weight, not color, for hierarchy (was 11px text2; bumped 2026-05-15). */
+.fl label{display:block;font-size:12px;font-weight:500;color:var(--text);margin-bottom:4px;}
 input[type=text],input[type=number],input[type=date],select,textarea{width:100%;padding:7px 10px;border:1px solid var(--border-md);border-radius:var(--rs);background:var(--surface);color:var(--text);font-size:12px;font-family:inherit;}
 input:focus,select:focus,textarea:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(29,95,212,.1);}
 .fg{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 14px;}
 .fg2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px 14px;}
 .form-sep{font-size:10px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.07em;margin:14px 0 8px;padding-top:12px;border-top:1px solid var(--border);}
+/* Reusable caption above grouped input rows (deal modal column headers, sub-block
+   captions like FRAIS / FACTURATION). Replaces 7+ inline style="..." duplications. */
+.field-caption{font-size:9px;color:var(--text3);font-weight:600;letter-spacing:.3px;text-transform:uppercase;}
+.field-caption-sm{font-size:10px;color:var(--text3);font-weight:600;letter-spacing:.3px;text-transform:uppercase;}
+/* Sub-block container used inside the deal-fourn-block for FACTURATION / FRAIS / PF.
+   Visually grouping these so they don't read as equal-weight siblings of row inputs. */
+.df-subblock{margin-top:6px;padding:6px 9px;background:var(--surface);border-radius:4px;border-top:1px dashed var(--border);}
+/* Grouped variant: the parent .df-group provides one boundary; siblings inside
+   only get a thin internal separator instead of competing dashed top-borders. */
+.df-group{margin-top:8px;padding:6px 10px 8px;background:var(--surface);border:1px solid var(--border);border-radius:5px;}
+.df-group-hd{font-size:10px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid var(--border);}
+.df-subblock-in-group{margin-top:5px;padding:4px 0;}
+.df-subblock-in-group + .df-subblock-in-group{border-top:1px dashed var(--border);padding-top:6px;}
+/* Unified small "+ add" button (used for "+ produit", "+ frais", "+ fournisseur cible",
+   etc.). Lightweight ghost style — no longer 3 visual variants. */
+.btn-add{background:none;border:1px dashed var(--border-md);color:var(--text2);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:var(--rs);font-family:inherit;line-height:1.4;}
+.btn-add:hover{background:var(--surface2);color:var(--text);border-color:var(--text2);border-style:solid;}
+.btn-add-xs{background:none;border:1px dashed var(--border-md);color:var(--text2);cursor:pointer;font-size:10px;padding:2px 8px;border-radius:3px;font-family:inherit;line-height:1.4;}
+.btn-add-xs:hover{background:var(--surface2);color:var(--text);}
+/* Micro typography utilities — replace the most-duplicated inline styles
+   across the deal modal and elsewhere. Was: 30+ inline copies of these. */
+.txt-xs{font-size:11px;}
+.txt-xxs{font-size:10px;}
+.txt-muted{color:var(--text2);}
+.txt-faint{color:var(--text3);}
+.txt-italic{font-style:italic;}
+.txt-mono{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;font-size:11px;}
 .ctype-row{display:flex;gap:6px;margin:6px 0 10px;}
 .ctype{flex:1;padding:6px;border:1px solid var(--border-md);border-radius:var(--rs);background:var(--surface);font-size:12px;cursor:pointer;color:var(--text2);text-align:center;font-family:inherit;}
 .ctype.on{border-color:var(--blue);background:var(--blue-bg);color:var(--blue-t);font-weight:500;}
@@ -95,11 +129,13 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--blue);bo
 /* MODAL */
 .ov{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:100;align-items:flex-start;justify-content:center;padding:40px 20px;overflow-y:auto;}
 .ov.on{display:flex;}
-.modal{background:var(--surface);border-radius:var(--r);width:100%;max-width:800px;box-shadow:0 20px 60px rgba(0,0,0,.18);}
-.modal-hd{display:flex;justify-content:space-between;align-items:center;padding:18px 20px 14px;border-bottom:1px solid var(--border);}
+.modal{background:var(--surface);border-radius:var(--r);width:100%;max-width:800px;box-shadow:0 20px 60px rgba(0,0,0,.18);display:flex;flex-direction:column;max-height:calc(100vh - 80px);}
+.modal-hd{display:flex;justify-content:space-between;align-items:center;padding:18px 24px 14px;border-bottom:1px solid var(--border);flex-shrink:0;}
 .modal-title{font-size:15px;font-weight:600;letter-spacing:-.2px;}
-.modal-body{padding:18px 20px;}
-.modal-ft{display:flex;gap:8px;justify-content:flex-end;padding:14px 20px;border-top:1px solid var(--border);}
+/* Bumped from 18/20px to 22/24px for breathing room — esp. when sub-blocks nest. */
+.modal-body{padding:22px 24px;overflow-y:auto;flex:1;min-height:0;}
+/* Sticky footer so Save is always reachable on tall modals (deal modal esp). */
+.modal-ft{display:flex;gap:8px;justify-content:flex-end;padding:14px 24px;border-top:1px solid var(--border);background:var(--surface);flex-shrink:0;}
 .close-btn{background:none;border:none;font-size:20px;cursor:pointer;color:var(--text3);padding:2px 6px;border-radius:4px;font-family:inherit;}
 .close-btn:hover{background:var(--surface2);}
 

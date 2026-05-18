@@ -2,20 +2,19 @@
 // Stratégie : network-first pour l'app shell (toujours essayer la dernière version,
 // fallback cache si offline). Aucune interception des appels Supabase / CDN.
 
-// Bumped 2026-05-18 — Phase L.4 — 1 deal = 1 client × 1 produit (Oscar 2026-05-18):
-// Architectural rework, applies to NEW deals only (edit mode untouched —
-// legacy multi-codif deals continue to render and edit as they are).
-//   · saveDeal NEW mode: splits the collected tree so every codif becomes
-//     its own deal row with its own dedicated contract. dealGroupId no
-//     longer generated (concept dropped).
-//   · autoLinkDealToContract: always creates a NEW contract per deal (was
-//     find-or-create on the client). 3 deals under one client = 3 contrats
-//     séparés. Cascade-delete relies on this 1-to-1 mapping.
-//   · Duplicate check runs on each split codif-deal independently.
-//   · 'Soumission groupée' badge in openDet kept (reads legacy dealGroupId
-//     when present — no migration needed).
-// (Previous: 2026-05-18 v40 — Phase L.3.1 cascade diagnostic + force re-render.)
-const CACHE_NAME = 'dealflow-v41';
+// Bumped 2026-05-18 — Phase L.5 — Save-to-catalogue prompt (Oscar 2026-05-18):
+//   · At deal submit, for each split codif-deal whose (produit, ISIN)
+//     doesn't match any entry in its fournisseur's catalogue, gather them
+//     into a single confirm() : 'N nouveau(x) produit(s) détecté(s) —
+//     pas encore au catalogue du fournisseur : ... Ajouter au catalogue ?'.
+//   · On confirm, appended to fourn.products[] for each concerned
+//     fournisseur (lookup keyed on .fourn only — assureur/banque ignored
+//     because the product is logged under the fournisseur SDG).
+//   · Fees snapshot, currency, type, pf config — all copied so the next
+//     deal with this product auto-fills correctly via the existing
+//     onDealIsinChange / _onDealProduitChange paths.
+// (Previous: 2026-05-18 v41 — Phase L.4 1 deal = 1 produit + cascade diag.)
+const CACHE_NAME = 'dealflow-v42';
 const APP_SHELL = [
   './',
   './index.html',

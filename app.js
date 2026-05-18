@@ -4714,6 +4714,70 @@ async function saveDeal(){
         return;
       }
     }
+    // Phase L.5 (Oscar 2026-05-18) — save-to-catalogue prompt. For each
+    // codif-deal in the (now split) tree, if its (produit, ISIN) doesn't
+    // match any entry in its fournisseur's catalogue, offer to add it on
+    // submit. Trigger = deal submit (not blur, per Oscar). Lookup keyed
+    // on `fourn` field only (assureur/banque ignored — the product is
+    // logged under the fournisseur SDG, where it actually lives).
+    var catalogueAdds=[];
+    for(var ci=0;ci<tree.length;ci++){
+      var cpair=tree[ci];
+      var cc=cpair.contractData;
+      var codif=(cc.codifications||[])[0];
+      if(!codif) continue;
+      var fournName=(codif.fourn||'').trim();
+      if(!fournName) continue;
+      var prodName=(codif.produit||'').trim();
+      var prodIsin=(codif.isin||'').trim();
+      // Skip if both produit name and ISIN are empty — probably an oversight,
+      // not a real new product worth catalogue-ing.
+      if(!prodName && !prodIsin) continue;
+      var existing=(typeof getFournProducts==='function')?getFournProducts(fournName):[];
+      var matchesExisting=existing.some(function(p){
+        var pIsin=(p.isin||'').trim().toUpperCase();
+        var pPart=(p.part||'').trim().toLowerCase();
+        if(prodIsin && pIsin===prodIsin.toUpperCase()) return true;
+        if(prodName && pPart===prodName.toLowerCase()) return true;
+        return false;
+      });
+      if(matchesExisting) continue;
+      catalogueAdds.push({
+        fourn:fournName,
+        product:{
+          isin:prodIsin,
+          part:prodName,
+          currency:codif.currency||cc.dev||'EUR',
+          type:codif.type||'',
+          fees:codif.feeSnapshot||[],
+          unit:'part',
+          pf:codif.pf||{mode:'none'}
+        }
+      });
+    }
+    if(catalogueAdds.length){
+      var summary=catalogueAdds.map(function(a){
+        return '· '+(a.product.part||'(sans nom)')+(a.product.isin?' — ISIN '+a.product.isin:'')+
+               (a.product.fees&&a.product.fees.length?' — '+a.product.fees.length+' tranche(s) de frais':'')+
+               ' → catalogue de '+a.fourn;
+      }).join('\n');
+      var ok=confirm(catalogueAdds.length+' nouveau(x) produit(s) détecté(s) — pas encore au catalogue du fournisseur :\n\n'+summary+'\n\nLes ajouter au catalogue (le produit sera reconnu pour les prochains deals) ?');
+      if(ok){
+        var addedCount=0;
+        for(var ai=0;ai<catalogueAdds.length;ai++){
+          var add=catalogueAdds[ai];
+          var f=fourn_db.find(function(x){return x.name===add.fourn;});
+          if(!f) continue;
+          f.products=f.products||[];
+          f.products.push(add.product);
+          try{
+            if(f._id) await sbUpdate('fournisseurs',f._id,f);
+            addedCount++;
+          }catch(e){console.error('[L.5] catalogue add failed for '+add.fourn,e);}
+        }
+        if(addedCount) toast(addedCount+' produit(s) ajouté(s) au catalogue.');
+      }
+    }
     for(var j=0;j<tree.length;j++){
       var rowPayload=_buildDealRowFromContract(tree[j],vendor,date,stat,notes,groupId,fxByDev);
       rowPayload.hist=[{ts:nowS(),a:'Deal créé',by:vendor}];

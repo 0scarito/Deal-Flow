@@ -1448,9 +1448,16 @@ function renderDeals(){
     var av='<span class="av av-'+avC(d.v)+'">'+avL(d.v)+'</span>';
     var k=dealKey(d);
     var checked=selectedDealIds.has(k)?' checked':'';
-    r.innerHTML='<td style="text-align:center;"><input type="checkbox" class="rowSel" data-key="'+escH(k)+'"'+checked+' onclick="event.stopPropagation();onDealRowSel(this)"/></td><td class="mono">'+escH(d.date)+'</td><td>'+av+'</td><td style="font-weight:500;white-space:nowrap;">'+escH(d.client)+'</td><td style="color:var(--text2);font-size:11px;">'+escH(d.contrat)+'</td><td>'+escH(d.produit)+'</td><td style="color:var(--text2);font-size:11px;">'+(d.produit_type?escH(d.produit_type):'—')+'</td><td>'+escH(d.fourn)+'</td><td style="color:var(--text2);">'+(d.broker?escH(d.broker):'—')+'</td><td style="text-align:right;" class="mono">'+f0(d.nom)+'</td><td>'+escH(d.dev)+'</td><td class="mono" style="font-size:10px;color:var(--text2);">'+(d.isin?escH(d.isin):'—')+'</td><td class="mono" style="font-size:11px;color:var(--text2);">'+(d.issue?escH(d.issue):'—')+'</td><td class="mono" style="font-size:11px;color:var(--text2);">'+(d.invS?escH(d.invS):'—')+'</td><td class="mono" style="font-size:11px;color:var(--text2);">'+(d.inv?escH(d.inv):'—')+'</td><td class="mono" style="font-size:11px;color:var(--text2);">'+(d.terme?escH(d.terme):'—')+'</td><td>'+tBadge(d.ct)+'</td><td style="text-align:right;color:var(--blue);font-weight:500;">'+(d.ufE>0?fE(d.ufE):'—')+'</td><td style="text-align:right;color:var(--green);font-weight:500;">'+(d.runE>0?fE(d.runE):'—')+'</td><td class="mono" style="font-size:11px;">'+(d.fRef?escH(d.fRef):'—')+'</td><td>'+fBadge(d.fSt)+'</td><td style="font-size:11px;color:var(--text2);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+(d.notes?escH(d.notes):'—')+'</td><td style="display:flex;gap:5px;"><button class="btn btn-sm" onclick="event.stopPropagation();openDealModal('+deals.indexOf(d)+')">Modifier</button><button class="btn btn-sm" style="color:var(--red);border-color:var(--red-bg);" onclick="event.stopPropagation();deleteDeal('+deals.indexOf(d)+')">Supprimer</button></td>';
+    r.innerHTML='<td style="text-align:center;"><input type="checkbox" class="rowSel" data-key="'+escH(k)+'"'+checked+' onclick="event.stopPropagation();onDealRowSel(this)"/></td><td class="mono">'+escH(d.date)+'</td><td>'+av+'</td><td style="font-weight:500;white-space:nowrap;">'+escH(d.client)+'</td><td style="color:var(--text2);font-size:11px;">'+escH(d.contrat)+'</td><td>'+escH(d.produit)+'</td><td style="color:var(--text2);font-size:11px;">'+(d.produit_type?escH(d.produit_type):'—')+'</td><td>'+escH(d.fourn)+'</td><td style="color:var(--text2);">'+(d.broker?escH(d.broker):'—')+'</td><td style="text-align:right;" class="mono">'+f0(d.nom)+'</td><td>'+escH(d.dev)+'</td><td class="mono" style="font-size:10px;color:var(--text2);">'+(d.isin?escH(d.isin):'—')+'</td><td class="mono" style="font-size:11px;color:var(--text2);">'+(d.issue?escH(d.issue):'—')+'</td><td class="mono" style="font-size:11px;color:var(--text2);">'+(d.invS?escH(d.invS):'—')+'</td><td class="mono" style="font-size:11px;color:var(--text2);">'+(d.inv?escH(d.inv):'—')+'</td><td class="mono" style="font-size:11px;color:var(--text2);">'+(d.terme?escH(d.terme):'—')+'</td><td>'+tBadge(d.ct)+'</td><td style="text-align:right;color:var(--blue);font-weight:500;">'+(d.ufE>0?fE(d.ufE):'—')+'</td><td style="text-align:right;color:var(--green);font-weight:500;">'+(d.runE>0?fE(d.runE):'—')+'</td><td class="mono" style="font-size:11px;">'+(d.fRef?escH(d.fRef):'—')+'</td><td>'+fBadge(d.fSt)+'</td><td style="font-size:11px;color:var(--text2);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+(d.notes?escH(d.notes):'—')+'</td><td><div style="display:flex;gap:5px;justify-content:flex-end;align-items:center;"><button class="btn btn-sm" onclick="event.stopPropagation();openDealModal('+deals.indexOf(d)+')">Modifier</button><button class="btn btn-sm" style="color:var(--red);border-color:var(--red-bg);" onclick="event.stopPropagation();deleteDeal('+deals.indexOf(d)+')">Supprimer</button></div></td>';
   });
   var fourns=[...new Set(filt().map(function(d){return d.fourn;}))].sort(),sel=document.getElementById('flFourn'),cv=sel.value;sel.innerHTML='<option value="">Tous fournisseurs</option>';fourns.forEach(function(f){if(f)sel.innerHTML+='<option value="'+escH(f)+'"'+(f===cv?' selected':'')+'>'+escH(f)+'</option>';});
+  // E (Oscar 2026-05-18) — total count + nominal sum in the filter bar.
+  var countEl=document.getElementById('dealsCount');
+  if(countEl){
+    var totalUniverse=deals.filter(function(x){return !x.archived;}).length;
+    var sumNomEur=data.reduce(function(s,x){return s+(_dealNomEur(x)||0);},0);
+    countEl.textContent='— '+data.length+' / '+totalUniverse+' deals · total '+fE(Math.round(sumNomEur));
+  }
   // Constrain date inputs to the actual range of deal dates (real bounds, not hardcoded)
   var allDates=deals.map(function(x){return x.date;}).filter(Boolean).sort();
   if(allDates.length){
@@ -4836,7 +4843,8 @@ function _collectContractBlock(ctb){
       feeSnapshot:feeSnapshot,
       feesMode:feesMode,
       assureur:fb.querySelector('.dfAssureur').value,
-      banque:fb.querySelector('.dfBanque').value,
+      // A1 — Banque UI removed 2026-05-18; keep '' for DB back-compat.
+      banque:'',
       nominal:nominal,
       currency:dev, // Per Oscar : currency lives at contract level only
       billingMode:billingMode, // Batch A.3 — fast | feed
@@ -4953,7 +4961,7 @@ function addDealContractBlock(clientBlock,data){
     '</div>'+
     // Row : type / total / devise / dépositaire
     '<div style="display:grid;grid-template-columns:1.3fr 130px 90px 1.5fr;gap:6px;margin-bottom:8px;align-items:center;">'+
-      '<select class="contractType">'+contratSelectHTML(data.contrat)+'</select>'+
+      '<select class="contractType" onchange="_onContractTypeChange(this)">'+contratSelectHTML(data.contrat)+'</select>'+
       '<input type="number" class="contractTotal" value="'+(data.nom||'')+'" placeholder="Total contrat" step="0.01" min="0" oninput="_updateContractSum(this)"/>'+
       '<select class="contractDev" onchange="_onContractDevChange(this)">'+currencySelectHTML(data.dev)+'</select>'+
       '<select class="contractDepo">'+depositaireSelectHTML(data.depositaire)+'</select>'+
@@ -5030,7 +5038,7 @@ function _appendDealFournBlock(contractBlock,data){
   // Caption rows use the shared .field-caption class (declared in style.css).
   // Was: 4+ identical inline style strings duplicated through this template.
   fournBlock.innerHTML=
-    // Row 1 labels
+    // Row 1 labels (Oscar 2026-05-18 — Maturité always visible, "on sait jamais")
     '<div class="field-caption" style="display:grid;grid-template-columns:1.3fr 1.3fr 130px 110px 1fr 130px 28px;gap:6px;margin-bottom:2px;">'+
       '<span>Fournisseur (SDG)</span><span>Produit / Support</span><span>Type</span><span>ISIN</span><span>Broker</span><span>Maturité</span><span></span>'+
     '</div>'+
@@ -5044,18 +5052,22 @@ function _appendDealFournBlock(contractBlock,data){
       '<select class="dfType" onchange="onDealTypeChange(this)">'+produitTypeOptHtml(data.type)+'</select>'+
       '<input list="'+listId+'" type="text" class="dfISIN" value="'+(data.isin||'')+'" placeholder="FR00…" style="font-family:monospace;font-size:11px;" onchange="onDealIsinChange(this)" oninput="onDealIsinChange(this)"/>'+
       '<select class="dfBroker">'+brokerOptHtml(data.broker)+'</select>'+
-      '<input type="date" class="dfMaturite" value="'+(data.maturite||'')+'" style="'+(typeHasMaturity(data.type)?'':'visibility:hidden;')+'"/>'+
+      // A3 (Oscar 2026-05-18) — Maturité always shown.
+      '<input type="date" class="dfMaturite" value="'+(data.maturite||'')+'"/>'+
       '<button type="button" onclick="removeDealFournBlock(this)" title="Retirer ce fournisseur" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:18px;padding:0;line-height:1;">×</button>'+
     '</div>'+
-    // Row 2 labels (no currency — handled at contract level)
-    '<div class="field-caption" style="display:grid;grid-template-columns:1.5fr 1.5fr 150px;gap:6px;margin-bottom:2px;">'+
-      '<span>Assureur</span><span>Banque</span><span>Nominal</span>'+
-    '</div>'+
-    // Row 2 inputs
-    '<div style="display:grid;grid-template-columns:1.5fr 1.5fr 150px;gap:6px;align-items:center;margin-bottom:4px;">'+
-      '<select class="dfAssureur">'+assureurSelectHTML(data.assureur)+'</select>'+
-      '<select class="dfBanque">'+banqueSelectHTML(data.banque)+'</select>'+
-      '<input type="number" class="dfNominal" value="'+(data.nominal||'')+'" placeholder="Nominal" step="0.01" min="0" oninput="_updateContractSum(this)"/>'+
+    // Row 2 — Assureur + Nominal (A1: Banque removed 2026-05-18). dfAssureurWrap
+    // toggles based on parent contract type — hidden for CTO (brokerage = no
+    // assureur), shown for everything else.
+    '<div class="dfRow2" style="display:flex;gap:6px;align-items:flex-end;margin-bottom:4px;">'+
+      '<div class="dfAssureurWrap" style="flex:1.5;">'+
+        '<div class="field-caption" style="margin-bottom:2px;"><span>Assureur</span></div>'+
+        '<select class="dfAssureur">'+assureurSelectHTML(data.assureur)+'</select>'+
+      '</div>'+
+      '<div style="width:150px;">'+
+        '<div class="field-caption" style="margin-bottom:2px;"><span>Nominal</span></div>'+
+        '<input type="number" class="dfNominal" value="'+(data.nominal||'')+'" placeholder="Nominal" step="0.01" min="0" oninput="_updateContractSum(this)"/>'+
+      '</div>'+
     '</div>'+
     '<datalist id="'+listId+'">'+_isinDatalistInnerHtml(data.fourn||'')+'</datalist>'+
     '<datalist id="'+prodListId+'">'+_prodDatalistInnerHtml(data.fourn||'')+'</datalist>'+
@@ -5122,6 +5134,8 @@ function _appendDealFournBlock(contractBlock,data){
     '</div>'+
     '</div>';  // /df-group
   fournsContainer.appendChild(fournBlock);
+  // A2 — apply Assureur visibility based on parent contract's current type.
+  _applyAssureurVisibilityToContract(contractBlock);
   // Custom fees mode — populate rows from feeSnapshot
   if(feesMode==='custom'){
     var customWrap=fournBlock.querySelector('.dfFeesCustomRows');
@@ -5288,15 +5302,29 @@ function onDealFournChange(sel){
   var isinInput=fournBlock.querySelector('.dfISIN');
   if(isinInput)onDealIsinChange(isinInput);
 }
-// Toggle the Maturité field's visibility based on the selected product type.
-// Maturité only makes sense for products that have one — Obligation, Produit Structuré.
-// For Action / UCITS / ETF / etc, the field is hidden (visibility:hidden keeps the
-// grid layout intact, so the row doesn't reshuffle).
-function onDealTypeChange(sel){
-  var fournBlock=sel.closest('.deal-fourn-block');
-  if(!fournBlock)return;
-  var matInput=fournBlock.querySelector('.dfMaturite');
-  if(matInput) matInput.style.visibility=typeHasMaturity(sel.value)?'':'hidden';
+// onDealTypeChange — no-op stub since 2026-05-18 (Oscar A3 rule: Maturité
+// always visible). Kept so the dfType onchange hook has a future-proof landing.
+function onDealTypeChange(sel){ /* no-op since 2026-05-18 */ }
+
+// A2 helper (Oscar 2026-05-18) — toggle the Assureur block of every fournisseur
+// child of a contract based on the contract type. CTO is the only type that
+// doesn't need an assureur (brokerage account); everything else does.
+function _applyAssureurVisibilityToContract(contractBlock){
+  if(!contractBlock)return;
+  var typeSel=contractBlock.querySelector('.contractType');
+  var contractType=typeSel?typeSel.value:'';
+  var hideAssureur=(contractType==='CTO');
+  contractBlock.querySelectorAll('.deal-fourn-block .dfAssureurWrap').forEach(function(wrap){
+    wrap.style.display=hideAssureur?'none':'';
+    if(hideAssureur){
+      var sel=wrap.querySelector('.dfAssureur');
+      if(sel) sel.value='';
+    }
+  });
+}
+function _onContractTypeChange(sel){
+  var contractBlock=sel.closest('.deal-contract-block');
+  if(contractBlock) _applyAssureurVisibilityToContract(contractBlock);
 }
 // Phase G.3 — bidirectional cascade : picking the produit/part input on a deal
 // fourn block also auto-fills the ISIN + everything downstream (type, fees,

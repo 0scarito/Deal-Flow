@@ -204,6 +204,8 @@
           <input type="date" id="flDateFrom" onchange="renderDeals()" title="Date de début (trade date)" style="width:auto;font-size:12px;"/>
           <input type="date" id="flDateTo" onchange="renderDeals()" title="Date de fin (trade date)" style="width:auto;font-size:12px;"/>
           <button class="btn btn-sm" onclick="resetDealFilters()" title="Réinitialiser tous les filtres" style="font-size:11px;">↺</button>
+          <!-- Total count of currently-filtered deals + nominal sum. Populated by renderDeals. -->
+          <span id="dealsCount" style="font-size:11px;color:var(--text3);font-style:italic;margin-left:auto;padding-right:4px;">—</span>
         </div>
         <!-- Bulk action bar (visible when selection > 0) -->
         <div id="dealsBulkBar" style="display:none;background:var(--blue-bg);border:1px solid rgba(29,95,212,.3);border-radius:var(--rs);padding:8px 14px;margin-bottom:10px;align-items:center;gap:10px;flex-wrap:wrap;">

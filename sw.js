@@ -2,19 +2,14 @@
 // Stratégie : network-first pour l'app shell (toujours essayer la dernière version,
 // fallback cache si offline). Aucune interception des appels Supabase / CDN.
 
-// Bumped 2026-05-18 — Phase L.1 — Cascade-delete (Oscar 2026-05-18 rule):
-//   · Deleting a deal now purges EVERY linked produit row across all contracts
-//     (was: only the first match, via a manual user choice).
-//   · A contract emptied by the cascade is itself deleted — pas d'investissement
-//     ⇒ pas de suivi de contrat. The legacy "delete deal only / keep
-//     investissement" choice is gone — cascade is mandatory.
-//   · New helpers: findAllLinkedInvestissements (plural), cascadeDeleteDealLinks
-//     (the worker), _cascadeSummaryToast (toast formatter).
-//   · Detail / single / bulk delete paths all routed through the new helper.
-//   · Confirm modal reworked: shows multi-link breakdown per contract, flags
-//     which contracts will be deleted entirely, single "Supprimer" CTA.
-// (Previous: 2026-05-18 v36 — Phases I-K wrap + 4 cleanup fixes.)
-const CACHE_NAME = 'dealflow-v37';
+// Bumped 2026-05-18 — Phase L.2 — Deal modal UI surgical (Oscar 2026-05-18):
+//   · A1 — 'Banque' field removed from fournisseur block.
+//   · A2 — 'Assureur' field auto-hides for CTO contract type.
+//   · A3 — 'Date de maturité' always visible regardless of product type.
+//   · D — Modifier/Supprimer alignment fixed on deals list.
+//   · E — Total count + nominal sum displayed in deals filter bar.
+// (Previous: 2026-05-18 v37 — Phase L.1 cascade-delete deal → contrat.)
+const CACHE_NAME = 'dealflow-v38';
 const APP_SHELL = [
   './',
   './index.html',

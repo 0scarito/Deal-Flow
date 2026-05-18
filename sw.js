@@ -2,10 +2,17 @@
 // Stratégie : network-first pour l'app shell (toujours essayer la dernière version,
 // fallback cache si offline). Aucune interception des appels Supabase / CDN.
 
-// Bumped 2026-05-15 — Phase A-H (codif aggregate propagation + per-codif
-// commissions + commission column relabel + auto-refresh on mark paid +
-// table header alignment classes .tr/.tc across all 10+ tables).
-const CACHE_NAME = 'dealflow-v28';
+// Bumped 2026-05-18 — Phases I-K finishing touches:
+//   · K.1 status filter — settled deals (Deal réalisé / Deal payé) no longer
+//     auto-create a contract (Oscar's feedback : they're already closed,
+//     polluted the contracts page).
+//   · Legacy currency guard — codifs carrying GBP/CHF/JPY (predating Phase J.2's
+//     EUR+USD shrink) keep their real currency in the editor dropdown.
+//   · FX API comment drift cleaned (jsdelivr, not Frankfurter).
+//   · _enrichCodifWithRates docblock + saveDeal note on the FX re-enrichment
+//     flow.
+// (Previous: 2026-05-15 v35 — Phase K.2 contract template auto-pick.)
+const CACHE_NAME = 'dealflow-v36';
 const APP_SHELL = [
   './',
   './index.html',
@@ -49,15 +56,4 @@ self.addEventListener('fetch', (event) => {
   // Ne touche pas aux POST/PUT/DELETE etc. — direct au réseau
   if (req.method !== 'GET') return;
 
-  // Network-first pour same-origin GET
-  event.respondWith(
-    fetch(req)
-      .then((res) => {
-        // Update cache with fresh copy (best-effort)
-        const resClone = res.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(req, resClone)).catch(() => {});
-        return res;
-      })
-      .catch(() => caches.match(req).then((cached) => cached || caches.match('./index.html')))
-  );
-});
+  

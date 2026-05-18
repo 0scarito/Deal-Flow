@@ -64,28 +64,146 @@ function _fxSaveToStorage(){
   try{localStorage.setItem(_FX_CACHE_KEY,JSON.stringify(_fxCache));}catch(e){}
 }
 _fxLoadFromStorage();
+// Phase J.4 — FX API switched 2026-05-15 from Frankfurter (api.frankfurter.app)
+// to fawazahmed0/currency-api via jsdelivr CDN.
+//
+// Why : Frankfurter started returning 301 redirects which Chrome blocks via CORS
+// when the response doesn't carry the Access-Control-Allow-Origin header on the
+// redirect itself. The new API is on jsdelivr's CDN (Cloudflare-fronted) so CORS
+// is always present. Also free, no API key, no rate limit, daily-updated rates.
+//
+// API shape :
+//   Latest : https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/{from}.json
+//     → {"date":"2025-...","{from}":{"eur":0.92,"gbp":0.78,...}}
+//   Historical : https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@{date}/v1/currencies/{from}.json
+//     → same shape, rates at that date
+//
+// Currency codes are LOWERCASE in this API (usd, eur — not USD, EUR). We
+// normalise inside the function so callers can keep passing uppercase.
+//
+// Fallback : if historical fails (future date / not yet tagged), try 'latest'.
 async function getFxRate(from,to,date){
   if(!from||!to||from===to)return 1;
   var dKey=date||'latest';
   var key=from+'-'+to+'-'+dKey;
   if(_fxCache[key]!=null)return _fxCache[key];
-  var url='https://api.frankfurter.app/'+dKey+'?from='+encodeURIComponent(from)+'&to='+encodeURIComponent(to);
+  var fromLo=from.toLowerCase(), toLo=to.toLowerCase();
+  // Primary attempt — at the requested date if specific, else 'latest'.
+  // The jsdelivr URL uses '@latest' for the rolling/latest tag, '@2025-12-31' etc for historical.
+  var dateTag = (dKey==='latest') ? '@latest' : '@'+dKey;
+  var url='https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api'+dateTag+'/v1/currencies/'+fromLo+'.json';
   try{
     var res=await fetch(url);
     if(!res.ok)throw new Error('HTTP '+res.status);
     var data=await res.json();
-    var rate=data&&data.rates&&data.rates[to];
-    if(rate==null)throw new Error('No rate '+to+' in response');
+    var rate=data && data[fromLo] && data[fromLo][toLo];
+    if(rate==null)throw new Error('No rate '+to+' in '+from+' response');
     _fxCache[key]=rate;
-    // Frankfurter falls back to the last available rate if `date` is a weekend/holiday;
-    // also cache under that resolved date so subsequent lookups are exact.
-    if(data.date&&data.date!==dKey)_fxCache[from+'-'+to+'-'+data.date]=rate;
+    if(data.date && data.date!==dKey) _fxCache[from+'-'+to+'-'+data.date]=rate;
     _fxSaveToStorage();
     return rate;
   }catch(err){
-    console.warn('[FX] fetch failed for '+key,err);
+    console.warn('[FX] primary fetch failed for '+key+' ('+url+')',err);
+    // Fallback to 'latest' if specific date failed (= future date or no tag yet).
+    if(dKey !== 'latest'){
+      try{
+        var urlL='https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/'+fromLo+'.json';
+        var resL = await fetch(urlL);
+        if(resL.ok){
+          var dataL = await resL.json();
+          var rateL = dataL && dataL[fromLo] && dataL[fromLo][toLo];
+          if(rateL != null){
+            _fxCache[key] = rateL;
+            _fxCache[from+'-'+to+'-latest'] = rateL;
+            if(dataL.date) _fxCache[from+'-'+to+'-'+dataL.date] = rateL;
+            _fxSaveToStorage();
+            console.warn('[FX] '+from+'→'+to+' for '+dKey+' fell back to latest ('+(dataL.date||'?')+') = '+rateL);
+            return rateL;
+          }
+        }
+      }catch(err2){
+        console.warn('[FX] latest fallback also failed for '+from+'-'+to, err2);
+      }
+    }
     return null; // caller treats null = "could not resolve"
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Phase I — FX HELPERS (Phase I.2)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Storage convention (legacy, kept for backward compat):
+//   d.fx = native_per_EUR (e.g. USD 1.087 means 1 EUR = 1.087 USD)
+//   d.nom is in deal's native currency (d.dev)
+//   Conversion to EUR: nomEur = d.nom / d.fx
+//
+// Display convention (sens humain — what Oscar wants everywhere):
+//   "1 USD = 0,92 EUR" — answers "how many EUR for my USD nominal?"
+//   Formula: rateHuman = 1 / d.fx
+//
+// API source: fawazahmed0/currency-api via jsdelivr CDN (swapped from
+// Frankfurter on 2026-05-15 — see Phase J.4 comment block above getFxRate
+// for the why). Returns sens humain directly:
+//   getFxRate('USD','EUR','2026-05-15') → 0.92 (EUR per USD)
+//   We INVERT once at storage time (line 4416 fxRate=1/resolved) to keep d.fx
+//   in the legacy convention. Then INVERT BACK at display time (1/d.fx).
+//
+// These helpers centralise the conversion so every renderer reads the same
+// canonical values without each one re-implementing the math.
+
+// Returns the human-sense FX rate for a deal — "1 native = X EUR".
+// Use for any UI that displays "1 USD = 0,92 EUR" type strings.
+function fxHumanRate(d){
+  if(!d || !d.dev || d.dev==='EUR' || !d.fx) return 1;
+  return 1 / d.fx;
+}
+
+// Convert a NATIVE amount to EUR using the deal's snapshotted FX.
+// Use for: nominal display, theoretical fee amounts at trade-date.
+function fxToEur(nativeAmount, d){
+  if(!d || !d.dev || d.dev==='EUR') return nativeAmount||0;
+  return (nativeAmount||0) / (d.fx||1);
+}
+
+// Convert a NATIVE amount to EUR using a fresh FX rate fetched for a specific date.
+// Use for: billing-date conversions, perf valuation conversions. Async because
+// it may need to fetch a fresh rate from Frankfurter.
+// Returns {eur:number, rate:number, rateDate:string, snapshot:boolean}
+//   snapshot = true means we fell back to the trade-date FX (API failed or no date)
+async function fxToEurAtDate(nativeAmount, d, date){
+  if(!d || !d.dev || d.dev==='EUR'){
+    return {eur:nativeAmount||0, rate:1, rateDate:date||'', snapshot:false};
+  }
+  var native = nativeAmount||0;
+  if(!date){
+    // No date → fall back to trade-date snapshot
+    return {eur: fxToEur(native, d), rate: fxHumanRate(d), rateDate: d.fxDate||d.date||'', snapshot:true};
+  }
+  var rate = await getFxRate(d.dev, 'EUR', date);
+  if(rate==null){
+    // API failed → fall back to snapshot, mark it
+    return {eur: fxToEur(native, d), rate: fxHumanRate(d), rateDate: d.fxDate||d.date||'', snapshot:true};
+  }
+  return {eur: Math.round(native * rate), rate: rate, rateDate: date, snapshot:false};
+}
+
+// Display helper — formats a "1 X = Y EUR" pill for any deal/currency context.
+function fxRatePill(d){
+  if(!d || !d.dev || d.dev==='EUR') return '';
+  var rate = fxHumanRate(d);
+  var dateStr = d.fxDate || d.date || '';
+  return '1 '+d.dev+' = '+rate.toFixed(4)+' EUR'+(dateStr?' (au '+dateStr+')':'');
+}
+// Display helper — formats a "USD 1 234 × 0,9200 = EUR 1 135" breakdown.
+// Use for: every invoice that involves a native-currency amount.
+function fxBreakdownLine(nativeAmount, dev, rateHuman, dateStr){
+  if(!dev || dev==='EUR') return '';
+  var eur = Math.round((nativeAmount||0) * rateHuman);
+  var nfmt = new Intl.NumberFormat('fr-FR');
+  var efmt = new Intl.NumberFormat('fr-FR');
+  return dev+' '+nfmt.format(Math.round(nativeAmount||0))+' × '+rateHuman.toFixed(4)+
+         (dateStr?' (taux '+dateStr+')':'')+' = EUR '+efmt.format(eur);
 }
 
 async function sbGet(table){
@@ -102,18 +220,21 @@ function _warnAboutMissingCol(col){
   console.warn('[Schema cache] deals.'+col+' missing. To enable it, run in Supabase SQL editor: alter table deals add column '+col+(col==='terme'?' date;':' text;'));
 }
 
+// Phase J.1 — loop retry on "missing column" errors so we handle MULTIPLE unknown
+// columns in sequence (was one-shot retry → second unknown col still failed).
+// Up to 5 retries (= 5 unknown columns to discover and strip per call). After
+// that we give up and surface the error.
 async function sbInsert(table,data){
   var row=table==='deals'?dealToRow(data):Object.assign({},data);
   delete row.id; delete row._id;
   var res=await sb.from(table).insert(row).select();
-  if(res.error&&table==='deals'){
+  for(var attempt=0; attempt<5 && res.error && table==='deals'; attempt++){
     var miss=_detectMissingDealCol(res.error);
-    if(miss){_warnAboutMissingCol(miss);
-      // Retry with stripped row
-      var row2=dealToRow(data);
-      delete row2.id; delete row2._id;
-      res=await sb.from(table).insert(row2).select();
-    }
+    if(!miss) break;
+    _warnAboutMissingCol(miss);
+    var row2=dealToRow(data);
+    delete row2.id; delete row2._id;
+    res=await sb.from(table).insert(row2).select();
   }
   if(res.error)throw res.error;
   return (res.data||[]).map(function(r){return{id:r.id,data:table==='deals'?rowToDeal(r):rowToRef(r)};});
@@ -122,13 +243,13 @@ async function sbUpdate(table,id,data){
   var row=table==='deals'?dealToRow(data):Object.assign({},data);
   delete row.id; delete row._id; delete row.created_at;
   var res=await sb.from(table).update(row).eq('id',id).select();
-  if(res.error&&table==='deals'){
+  for(var attempt=0; attempt<5 && res.error && table==='deals'; attempt++){
     var miss=_detectMissingDealCol(res.error);
-    if(miss){_warnAboutMissingCol(miss);
-      var row2=dealToRow(data);
-      delete row2.id; delete row2._id; delete row2.created_at;
-      res=await sb.from(table).update(row2).eq('id',id).select();
-    }
+    if(!miss) break;
+    _warnAboutMissingCol(miss);
+    var row2=dealToRow(data);
+    delete row2.id; delete row2._id; delete row2.created_at;
+    res=await sb.from(table).update(row2).eq('id',id).select();
   }
   if(res.error)throw res.error;
   return (res.data||[]).map(function(r){return{id:r.id,data:table==='deals'?rowToDeal(r):rowToRef(r)};});
@@ -521,18 +642,38 @@ async function _syncContractProduitsForDealEdit(deal){
 // Batch C.1 — On deal creation: find (or create) the client's contract and append
 // ONE produit PER codification (= per fournisseur in the new model). Legacy deals
 // without codifications[] fall back to a single produit using top-level fields.
+//
+// K.1 status filter (Oscar 2026-05-18) — a deal saved as 'Deal réalisé' or
+// 'Deal payé' is already settled. We don't track those in the contracts page
+// because there's nothing left to follow up on. Only in-flight statuses
+// ('Deal pipe' + any future intermediate) auto-create a contract.
 async function autoLinkDealToContract(deal){
   if(!deal||!deal.client)return;
+  if(deal.stat==='Deal réalisé'||deal.stat==='Deal payé')return;
   var clientName=deal.client;
   var contract=contracts_db.find(function(c){return c.client===clientName;});
   if(!contract){
-    var defaultTemplate=templates_db[0];
+    // Phase K.2 — derive the contract template from the deal's assureur or
+    // banque (= the fournisseur that "owns" the contract wrapper). Falls back
+    // through : (1) assureur's own template_name, (2) banque's template_name,
+    // (3) first fournisseur's template_name, (4) global default templates_db[0],
+    // (5) no template at all.
+    var primaryFournName='';
+    var firstCodif=(deal.codifications||[])[0]||{};
+    primaryFournName = firstCodif.assureur || firstCodif.banque || firstCodif.fourn || deal.fourn || '';
+    var primaryFourn = primaryFournName ? fourn_db.find(function(f){return f.name===primaryFournName;}) : null;
+    var pickedTemplateName = null;
+    if(primaryFourn && primaryFourn.template_name && templateByName(primaryFourn.template_name)){
+      pickedTemplateName = primaryFourn.template_name;
+    } else if(templates_db[0]){
+      pickedTemplateName = templates_db[0].name; // last-resort default
+    }
     var newC={
       _id:null,client:clientName,num:'',
       banque:deal.depositaire||'Indosuez Luxembourg',
       notes:'',
-      template_name:defaultTemplate?defaultTemplate.name:null,
-      prelim:defaultTemplate?templatePrelimCopy(defaultTemplate.name):[],
+      template_name:pickedTemplateName,
+      prelim:pickedTemplateName?templatePrelimCopy(pickedTemplateName):[],
       produits:[]
     };
     contract=await saveContract(newC);
@@ -1490,14 +1631,16 @@ function openDet(d){
       }).join('')+
     '</div>';
   }
-  // FX snapshot block (only when contract is non-EUR)
+  // FX snapshot block (only when contract is non-EUR) — Phase I.2 uses centralised
+  // helpers so the "1 USD = 0.92 EUR" sens humain is consistent everywhere.
   var fxBlock='';
   if(d.dev&&d.dev!=='EUR'&&d.fx&&d.fx!==1){
-    // d.fx = native_per_EUR (legacy) → display the human "1 X = (1/d.fx) EUR" form
-    var rateHuman=(1/d.fx);
     fxBlock='<div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--rs);padding:8px 12px;margin-top:10px;font-size:11px;color:var(--text2);">'+
-      '<b>FX snapshot</b> : 1 '+escH(d.dev)+' = '+rateHuman.toFixed(4)+' EUR'+(d.fxDate?' au '+escH(d.fxDate):'')+' · '+
-      'Nominal '+escH(d.dev)+' '+f0(d.nom)+' ≈ '+fE(Math.round(d.nom/d.fx))+
+      '<b>FX trade-date</b> : '+escH(fxRatePill(d))+' · '+
+      'Nominal '+escH(d.dev)+' '+f0(d.nom)+' ≈ '+fE(Math.round(fxToEur(d.nom,d)))+
+      '<div style="font-size:10px;color:var(--text3);margin-top:3px;">'+
+        'Frais sont calculés en '+escH(d.dev)+' puis convertis en EUR au taux à la date de facturation (UF=closing, Run=date facture trim, Perf=date valorisation). Le snapshot ci-dessus est figé au trade.'+
+      '</div>'+
     '</div>';
   }
   // Group indicator (this deal is part of a multi-row submission)
@@ -2549,10 +2692,30 @@ function openPFRapprModal(fournName){
   document.getElementById('pfRmDeclared').value=saved&&saved.declared!=null?saved.declared:'';
   document.getElementById('pfRmDeclared').removeAttribute('readonly');
   document.getElementById('pfRmComment').value=saved?saved.comment:'';
-  document.getElementById('pfRmDealsList').innerHTML=fDeals.map(d=>
-    '<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);">'+
-    '<div><strong>'+d.client+'</strong><span style="color:var(--text2);margin-left:6px;">'+d.produit+'</span></div>'+
-    '<span style="font-weight:600;color:var(--green);">'+fE(d.pf.amount)+'</span></div>').join('');
+  // Phase I.5 — show per-deal breakdown with native + FX conversion when non-EUR.
+  // For Perf fees the canonical FX date is the VALORISATION date (= when the
+  // perf is observed). We use today as the reasonable default since that's when
+  // the user is generating the invoice.
+  var billingDate=new Date().toISOString().split('T')[0];
+  document.getElementById('pfRmDealsList').innerHTML=fDeals.map(function(d){
+    var dev=d.dev||'EUR';
+    var pfAmtNative=d.pf.amount||0; // legacy: pf.amount stored in EUR. For non-EUR deals it's still EUR (legacy decision).
+    if(dev!=='EUR'){
+      // Show in EUR (snapshot) + FX line
+      var rateHuman=fxHumanRate(d);
+      return '<div style="padding:5px 0;border-bottom:1px solid var(--border);">'+
+        '<div style="display:flex;justify-content:space-between;">'+
+          '<div><strong>'+escH(d.client)+'</strong><span style="color:var(--text2);margin-left:6px;">'+escH(d.produit)+'</span></div>'+
+          '<span style="font-weight:600;color:var(--green);">'+fE(d.pf.amount)+' EUR</span>'+
+        '</div>'+
+        '<div style="font-size:10px;color:var(--text3);margin-top:2px;">FX trade : 1 '+escH(dev)+' = '+rateHuman.toFixed(4)+' EUR'+(d.fxDate?' (au '+escH(d.fxDate)+')':'')+
+        ' — note : Perf fees stockés en EUR. Si tu veux refacturer en '+escH(dev)+', re-set pf.amount manuellement.</div>'+
+      '</div>';
+    }
+    return '<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);">'+
+      '<div><strong>'+escH(d.client)+'</strong><span style="color:var(--text2);margin-left:6px;">'+escH(d.produit)+'</span></div>'+
+      '<span style="font-weight:600;color:var(--green);">'+fE(d.pf.amount)+'</span></div>';
+  }).join('');
   updatePFRapprEcart();
   document.getElementById('pfRapprModal').classList.add('on');
   setTimeout(()=>document.getElementById('pfRmDeclared').focus(),50);
@@ -2730,10 +2893,30 @@ function openUFRapprModal(fournName){
   var saved=loadUFRappr(fournName);
   document.getElementById('ufRmDeclared').value=saved?saved.declared:'';
   document.getElementById('ufRmComment').value=saved?saved.comment:'';
-  document.getElementById('ufRmDealsList').innerHTML=fDeals.map(d=>
-    '<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);">'+
-    '<div><strong>'+d.client+'</strong><span style="color:var(--text2);margin-left:6px;">'+d.produit+'</span></div>'+
-    '<span style="font-weight:600;color:var(--blue);">'+fE(d.ufE)+'</span></div>').join('');
+  // Phase I.4 — for non-EUR deals, show the breakdown : native amount + FX rate
+  // + EUR conversion. Lets the user see exactly what's being charged in source
+  // currency and the rate that converts it. Uses ufE_native if available
+  // (Phase I.3 enrichment), else falls back to ufE / fxHumanRate.
+  document.getElementById('ufRmDealsList').innerHTML=fDeals.map(function(d){
+    var dev = d.dev || 'EUR';
+    var isNative = dev !== 'EUR';
+    var nativeAmt = (d.codif && typeof d.codif.ufE_native==='number') ? d.codif.ufE_native : (d.ufE * (d.fx||1));
+    var fxLine = '';
+    if(isNative && d.deal){
+      var rateHuman = fxHumanRate(d.deal);
+      fxLine = '<div style="font-size:10px;color:var(--text3);margin-top:2px;">'+
+               dev+' '+f0(nativeAmt)+' × '+rateHuman.toFixed(4)+
+               (d.deal.fxDate?' (taux '+escH(d.deal.fxDate)+')':'')+
+               ' = EUR '+fE(d.ufE)+'</div>';
+    }
+    return '<div style="padding:5px 0;border-bottom:1px solid var(--border);">'+
+      '<div style="display:flex;justify-content:space-between;">'+
+        '<div><strong>'+d.client+'</strong><span style="color:var(--text2);margin-left:6px;">'+d.produit+'</span></div>'+
+        '<span style="font-weight:600;color:var(--blue);">'+(isNative?dev+' '+f0(nativeAmt):fE(d.ufE))+'</span>'+
+      '</div>'+
+      fxLine+
+    '</div>';
+  }).join('');
   updateUFRapprEcart();
   document.getElementById('ufRapprModal').classList.add('on');
   setTimeout(()=>document.getElementById('ufRmDeclared').focus(),50);
@@ -2948,6 +3131,13 @@ function openRecapFactModal(fournName,encours,theo){
   document.getElementById('rfmDeclared').removeAttribute('readonly');
   document.getElementById('rfmDeclared').removeAttribute('disabled');
   document.getElementById('rfmComment').value=saved?saved.comment:'';
+  // Phase I.5 — show per-deal breakdown for non-EUR codifs at this fournisseur.
+  // Async because we need to fetch the FX at the trim-end date (the canonical
+  // moment for a Running quarterly invoice). The user sees the snapshot value
+  // immediately + the live FX line populates a moment later.
+  _renderRecapFactFxBreakdown(fournName, trimDates).catch(function(e){
+    console.error('[FX breakdown] failed',e);
+  });
   document.getElementById('rfmGenBtn').textContent=saved&&saved.facture?'✓ Facture générée':'✓ Valider et générer facture';
   document.getElementById('rfmGenBtn').style.opacity=saved&&saved.facture?'0.5':'1';
   updateRecapEcart();
@@ -2955,6 +3145,64 @@ function openRecapFactModal(fournName,encours,theo){
   setTimeout(()=>document.getElementById('rfmDeclared').focus(),50);
 }
 function closeRecapFactModal(){document.getElementById('recapFactModal').classList.remove('on');recapCurrentFourn=null;}
+
+// Phase I.5 — async breakdown : for each non-EUR codif at this fournisseur (with
+// Running fees), compute native amount × FX at trim-end → EUR. Show alongside
+// the snapshot EUR (trade-date) so user sees what the BCE-rate-at-trim would
+// give. Lets the user enter an informed declared amount.
+async function _renderRecapFactFxBreakdown(fournName, trimDates){
+  var el = document.getElementById('rfmFxBreakdown');
+  if(!el) return;
+  // Get all Run codifs at this fournisseur
+  var entries = billingEntries(filt()).filter(function(e){
+    return (e.ct==='RUN'||e.ct==='BOTH') && e.fourn===fournName;
+  });
+  var nonEur = entries.filter(function(e){return e.dev && e.dev!=='EUR' && e.deal;});
+  if(!nonEur.length){ el.style.display='none'; return; }
+  el.style.display='block';
+  el.innerHTML='<div style="font-weight:600;color:var(--text2);margin-bottom:6px;">Conversion FX au taux de fin de trimestre ('+escH(trimDates.endStr)+')</div>'+
+    '<div style="font-size:10px;color:var(--text3);font-style:italic;">Calcul en cours…</div>';
+  // Fetch FX rates in parallel by distinct currency
+  var devs = Array.from(new Set(nonEur.map(function(e){return e.dev;})));
+  var rateMap = {};
+  await Promise.all(devs.map(async function(dev){
+    rateMap[dev] = await getFxRate(dev, 'EUR', trimDates.endStr);
+  }));
+  // Build the breakdown HTML
+  var lines = [];
+  var totalNativeByDev = {};
+  var totalEurAtTrim = 0;
+  var totalEurAtTrade = 0;
+  nonEur.forEach(function(e){
+    var d = e.deal;
+    // Annual native running × trim_days/365 = trim-prorata native running
+    var annualNative = (e.codif && typeof e.codif.runE_native==='number') ? e.codif.runE_native : (e.runE * (d.fx||1));
+    var trimNative = annualNative / 4; // Approximate quarter — could refine via days_in_trim/365
+    var rateAtTrim = rateMap[e.dev];
+    var eurAtTrim = rateAtTrim ? Math.round(trimNative * rateAtTrim) : null;
+    var eurAtTrade = Math.round(trimNative / (d.fx||1));
+    if(!totalNativeByDev[e.dev]) totalNativeByDev[e.dev]=0;
+    totalNativeByDev[e.dev] += trimNative;
+    if(eurAtTrim!=null) totalEurAtTrim += eurAtTrim;
+    totalEurAtTrade += eurAtTrade;
+    lines.push(
+      '<div style="display:grid;grid-template-columns:1fr auto;gap:8px;padding:4px 0;border-bottom:1px dotted var(--border);">'+
+        '<div><b>'+escH(e.client||'?')+'</b> <span style="color:var(--text2);">'+escH(e.produit||'?')+'</span></div>'+
+        '<div style="text-align:right;font-family:monospace;">'+
+          e.dev+' '+f0(trimNative)+
+          (rateAtTrim ? ' × <b>'+rateAtTrim.toFixed(4)+'</b> = EUR '+fE(eurAtTrim) : ' <span style="color:var(--red);">(FX non récupéré)</span>')+
+        '</div>'+
+        '<div style="font-size:9px;color:var(--text3);grid-column:1/-1;">Trade FX : '+(1/(d.fx||1)).toFixed(4)+' (≈ EUR '+fE(eurAtTrade)+(eurAtTrim!=null&&eurAtTrim!==eurAtTrade?' — écart FX '+(eurAtTrim>eurAtTrade?'+':'')+fE(eurAtTrim-eurAtTrade):'')+')</div>'+
+      '</div>'
+    );
+  });
+  var summary='<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-weight:600;">'+
+    'Total trim à facturer (taux trim-end) : '+(totalEurAtTrim>0?fE(totalEurAtTrim)+' EUR':'—')+
+    (totalEurAtTrade && totalEurAtTrim!==totalEurAtTrade?' &nbsp;<span style="color:var(--text3);font-weight:400;font-size:10px;">vs '+fE(totalEurAtTrade)+' au trade-date</span>':'')+
+    '</div>';
+  el.innerHTML='<div style="font-weight:600;color:var(--text2);margin-bottom:6px;">Conversion FX au taux de fin de trimestre ('+escH(trimDates.endStr)+')</div>'+
+    lines.join('')+summary;
+}
 function updateRecapEcart(){
   var declared=parseFloat(document.getElementById('rfmDeclared').value)||0;
   if(!declared){document.getElementById('rfmEcart').textContent='—';document.getElementById('rfmEcartNote').textContent='';return;}
@@ -3987,9 +4235,17 @@ function banqueSelectHTML(selected){
   var items=fourn_db.filter(function(f){return f.famille==='Banque';}).sort(function(a,b){return a.name.localeCompare(b.name);});
   return '<option value="">— Banque —</option>'+items.map(function(f){return '<option value="'+escH(f.name)+'"'+(f.name===selected?' selected':'')+'>'+escH(f.name)+'</option>';}).join('');
 }
-var CODIF_CURRENCIES=['EUR','USD','GBP','CHF','JPY'];
+// Phase J.2 — only EUR + USD supported for NEW codifs (per Oscar 2026-05-15).
+// To re-add others, append back to this list — currencySelectHTML reads from it.
+var CODIF_CURRENCIES=['EUR','USD'];
+// Legacy guard (Oscar 2026-05-18) — if a codif already carries a currency
+// outside CODIF_CURRENCIES (older deals predating Phase J.2: GBP/CHF/JPY/…),
+// prepend it to the option list so the editor preserves the real currency
+// instead of silently collapsing to EUR. New codifs only see EUR + USD.
 function currencySelectHTML(selected){
-  return CODIF_CURRENCIES.map(function(c){return '<option'+(c===(selected||'EUR')?' selected':'')+'>'+c+'</option>';}).join('');
+  var list=CODIF_CURRENCIES.slice();
+  if(selected && list.indexOf(selected)<0) list.unshift(selected);
+  return list.map(function(c){return '<option'+(c===(selected||'EUR')?' selected':'')+'>'+c+'</option>';}).join('');
 }
 function _curSymbol(c){return c==='EUR'?'€':c==='USD'?'$':c==='GBP'?'£':c==='JPY'?'¥':c==='CHF'?'Fr':c;}
 function _updateCodifSum(){
@@ -4300,7 +4556,23 @@ async function saveDeal(){
   }
   var fxFailures=Object.keys(fxByDev).filter(function(k){return fxByDev[k]==null;});
   if(fxFailures.length){
-    toast('⚠ FX non récupéré pour : '+fxFailures.join(', ')+' — sauvegardé avec fx=1 (à corriger manuellement)');
+    // Phase J.3 — bloquant maintenant (avant juste un toast facile à manquer).
+    // Sauver un deal non-EUR avec fx=1 → la conversion EUR est fausse partout
+    // (nominaux affichés en EUR = montant native, fees idem). Confirmer explicitement.
+    var msg='⚠ Taux de change NON récupéré pour : '+fxFailures.join(', ')+'\n\n'+
+            'Possibles causes :\n'+
+            '· Connexion internet coupée\n'+
+            '· API Frankfurter (BCE) momentanément indispo\n'+
+            '· Date trop dans le futur (l\'API a du data jusqu\'à aujourd\'hui réel)\n\n'+
+            'Si tu sauves maintenant, le deal sera enregistré avec fx=1 — les conversions EUR seront FAUSSES jusqu\'à ce que tu corriges le fx manuellement (via /sb-fix ou en re-éditant le deal).\n\n'+
+            'Annuler maintenant pour réessayer dans 1 min ?';
+    if(confirm(msg)){
+      // user clicked OK → cancel save, let them retry
+      toast('Save annulé — réessaie quand la connexion FX est rétablie.');
+      return;
+    }
+    // else : user clicked Cancel → proceed with fx=1 anyway (= they accept the risk)
+    toast('⚠ Sauvegardé avec fx=1 pour '+fxFailures.join(', ')+' — fx à corriger.');
   }
   if(editIdx>=0){
     // EDIT mode — update in-place. Modal is locked to the original group structure
@@ -4382,7 +4654,13 @@ async function saveDeal(){
       var res=await sbInsert('deals',rowPayload);
       if(res&&res[0])rowPayload._id=res[0].id;
       deals.push(rowPayload);
-      if(rowPayload.stat==='Deal pipe'){try{await autoLinkDealToContract(rowPayload);autoLinked++;}catch(e){console.error('autoLinkDealToContract failed',e);}}
+      // Phase K.1 (revised 2026-05-18) — auto-create the contract for new deals
+      // EXCEPT when the deal is already settled ('Deal réalisé' or 'Deal payé').
+      // Settled deals have nothing left to follow up on, so polluting the
+      // contracts page with them adds noise. The status guard lives inside
+      // autoLinkDealToContract — see the comment on that function.
+      try{await autoLinkDealToContract(rowPayload);autoLinked++;}
+      catch(e){console.error('autoLinkDealToContract failed',e);}
     }
     closeDM();renderAll();
     var msg=tree.length>1?tree.length+' deals enregistrés':'Nouveau deal enregistré';
@@ -4418,14 +4696,28 @@ function _buildDealRowFromContract(pair,vendor,date,stat,notes,groupId,fxByDev){
   }
   // EUR-equivalent of the contract total — derived but useful for KPIs that need a single base
   var nomEur=Math.round(nom/fxRate);
+  // Phase I.3 — re-enrich codifications NOW that we know the deal's FX, so the
+  // EUR-equivalent ufE/runE (legacy fields) reflect the trade-date FX conversion
+  // for non-EUR deals. ufE_native / runE_native stay in native currency.
+  var dealCtxForFx={dev:dev, fx:fxRate};
+  if(c.codifications && c.codifications.length){
+    enrichDealCodifications(c.codifications, dealCtxForFx);
+  }
   // Phase H.2 — Sum codif-level ufE/runE (already in EUR-equivalent from enrichment)
   // instead of recomputing nom × deal-level rate. This makes the deal row mirror
   // exactly what the catalogue says per codif.
-  var sumUfE=0, sumRunE=0;
-  (c.codifications||[]).forEach(function(cd){ sumUfE+=cd.ufE||0; sumRunE+=cd.runE||0; });
+  var sumUfE=0, sumRunE=0, sumUfNative=0, sumRunNative=0;
+  (c.codifications||[]).forEach(function(cd){
+    sumUfE+=cd.ufE||0;
+    sumRunE+=cd.runE||0;
+    sumUfNative  += cd.ufE_native  || 0;
+    sumRunNative += cd.runE_native || 0;
+  });
   // Fallback : if codif enrichment didn't run (legacy data), use nom × rate.
-  if(sumUfE===0 && ufP>0)  sumUfE  = Math.round(nomEur*ufP);
-  if(sumRunE===0 && runP>0)sumRunE = Math.round(nomEur*runP);
+  if(sumUfE===0 && ufP>0)   sumUfE   = Math.round(nomEur*ufP);
+  if(sumRunE===0 && runP>0) sumRunE  = Math.round(nomEur*runP);
+  if(sumUfNative===0 && ufP>0)  sumUfNative  = Math.round(nom*ufP*100)/100;
+  if(sumRunNative===0 && runP>0)sumRunNative = Math.round(nom*runP*100)/100;
   return{
     v:vendor,date:date,stat:stat,
     client:pair.client,contrat:c.contrat||'Assurance Vie Lux',
@@ -4438,6 +4730,13 @@ function _buildDealRowFromContract(pair,vendor,date,stat,notes,groupId,fxByDev){
     fxDate:fxDate,
     issue:'',invS:'',inv:'',
     ct:c.ct||'UF',ufR:parseFloat(c.ufR)||0,runR:parseFloat(c.runR)||0,tva:parseFloat(c.tva)||0,
+    // EUR-equivalents at trade-date FX (legacy fields, used by KPIs that don't yet
+    // do per-event FX). For non-EUR deals, billing pages should prefer ufE_native /
+    // runE_native at the CODIFICATION level (inside the codifications JSONB blob)
+    // + fxToEurAtDate() for the most accurate billing-time conversion.
+    // NOTE — we deliberately don't put ufE_native / runE_native on the top-level
+    // deal because (a) they're derivable from codifs, (b) they'd need DB columns,
+    // (c) the codif-level native fields are the source of truth for billing.
     ufE:sumUfE, runE:sumRunE,
     pf:legacyPf,
     fSt:'À émettre',fRef:'',
@@ -4520,6 +4819,12 @@ function _collectContractBlock(ctb){
   // derived from its feeSnapshot. Billing pages will iter on these per-codif
   // fields, so we persist them at save time. Deal-level ct/ufR/runR is kept
   // for backward compat + KPIs that still need a single contract aggregate.
+  // NOTE — no `deal` arg here because FX isn't resolved yet at this point in
+  // the flow (saveDeal fetches it AFTER tree collection). For non-EUR deals
+  // this pass writes ufE/runE as if EUR; _buildDealRowFromContract then re-runs
+  // enrichDealCodifications with the resolved {dev, fx} context so the persisted
+  // codifs carry the correct EUR-equivalent. The signature mismatch is therefore
+  // intentional — search 'Phase I.3' in this file for the re-enrichment path.
   enrichDealCodifications(codifications);
   // Phase H.2 — derive deal-level aggregates from the codif sums, OVERRIDING
   // whatever the user typed at contract level. The codifs are the source of
@@ -5105,8 +5410,14 @@ function _feesToCycleRates(fees){
 // correctly on the billing pages.
 //
 // Two paths:
-//   _enrichCodifWithRates(codif)        — MUTATES the codif at save time,
-//                                          adding ct/ufR/runR/ufE/runE fields.
+//   _enrichCodifWithRates(codif, deal)  — MUTATES the codif at save time,
+//                                          adding ct/ufR/runR fields plus the
+//                                          fee amounts: ufE_native / runE_native
+//                                          (source of truth, in the codif's own
+//                                          currency) and ufE / runE (legacy EUR
+//                                          equivalent at trade-date FX = deal.fx,
+//                                          computed only if `deal` is passed and
+//                                          carries dev + fx).
 //   codifEffective{Ct,UfR,RunR,UfE,RunE}(codif, deal)
 //                                       — READS effective values with legacy
 //                                          fallback: if the codif doesn't have
@@ -5118,7 +5429,7 @@ function _feesToCycleRates(fees){
 // fields. Reading via the getters keeps the UI consistent until that deal is
 // re-saved (which will re-run _enrichCodifWithRates and persist the fields).
 
-function _enrichCodifWithRates(codif){
+function _enrichCodifWithRates(codif, deal){
   if(!codif) return codif;
   var fees=Array.isArray(codif.feeSnapshot)?codif.feeSnapshot:[];
   var rates=_feesToCycleRates(fees);
@@ -5126,11 +5437,25 @@ function _enrichCodifWithRates(codif){
   codif.ct  = rates.ct;
   codif.ufR = rates.ufR;
   codif.runR= rates.runR;
-  // EUR-equivalent amounts. The currency is contract-level (per Oscar) so codif's
-  // currency matches the deal's dev; we don't apply FX here — same as deal-level
-  // ufE/runE, that's done at the deal row level.
-  codif.ufE  = Math.round(nom * (rates.ufR/100));
-  codif.runE = Math.round(nom * (rates.runR/100));
+  // Phase I.3 — fee amounts are stored in NATIVE currency (= the codif's currency,
+  // which equals the deal's dev). This is the source of truth — immutable across
+  // billing cycles. The EUR equivalent is computed on-the-fly at display time
+  // using fxToEurAtDate(native, deal, billing_date).
+  //
+  // Legacy compat: codif.ufE / codif.runE still expose the EUR-equivalent at
+  // trade-date FX (for KPIs / synthese / commissions that haven't been migrated
+  // to async per-event FX). New native fields: codif.ufE_native / codif.runE_native.
+  codif.ufE_native  = Math.round(nom * (rates.ufR/100) * 100) / 100; // 2 decimals
+  codif.runE_native = Math.round(nom * (rates.runR/100) * 100) / 100;
+  // EUR equivalents (at trade-date snapshot FX). For EUR deals, fx=1 so this
+  // equals the native amount. For USD/etc deals, fxToEur divides by d.fx.
+  if(deal && deal.dev && deal.dev!=='EUR' && deal.fx){
+    codif.ufE  = Math.round(codif.ufE_native  / deal.fx);
+    codif.runE = Math.round(codif.runE_native / deal.fx);
+  } else {
+    codif.ufE  = Math.round(codif.ufE_native);
+    codif.runE = Math.round(codif.runE_native);
+  }
   return codif;
 }
 
@@ -5206,11 +5531,13 @@ function dealCodifsEffective(deal){
     };
   });
 }
-// Phase D.1 — persist enriched rates on the codifications array of a deal.
-// Mutates `codifs` in place. Idempotent.
-function enrichDealCodifications(codifs){
+// Phase D.1 / I.3 — persist enriched rates on the codifications array of a deal.
+// Mutates `codifs` in place. Idempotent. `deal` is optional but recommended :
+// it carries the trade-date FX (deal.fx) needed to compute EUR equivalents for
+// non-EUR deals. Without it, ufE/runE are computed as if the deal were EUR.
+function enrichDealCodifications(codifs, deal){
   if(!Array.isArray(codifs)) return codifs;
-  codifs.forEach(function(c){_enrichCodifWithRates(c);});
+  codifs.forEach(function(c){_enrichCodifWithRates(c, deal);});
   return codifs;
 }
 
@@ -7151,7 +7478,9 @@ function addFournProductLine(prod){
   card.className='fourn-product-card';
   card.style.cssText='background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:6px;';
   // Header row : ISIN, Unit, Label, Type, Currency, × remove product
-  var curOpts=['EUR','USD','GBP','CHF','JPY'].map(function(c){return '<option'+(c===(prod.currency||'EUR')?' selected':'')+'>'+c+'</option>';}).join('');
+  // Phase J.2 — uses currencySelectHTML so legacy products carrying a non-
+  // canonical currency (GBP/CHF/JPY/…) still render with their actual value.
+  var curOpts=currencySelectHTML(prod.currency||'EUR');
   var unitVal=prod.unit||'part';
   var pf=prod.pf||{mode:'none'};
   var pfMode=pf.mode||'none';
@@ -8638,15 +8967,26 @@ function openContractModal(contractId,prefillClient){
 function closeContractModal(){document.getElementById('contractModal').classList.remove('on');}
 function ctmAddStep(){addEditorStep('ctmPrelim',{note:false});}
 function ctmTemplateChanged(){
+  // Phase K.2 — picking any template (incl. "Aucun") loads its prelim. Empty
+  // value = clear all prelim rows (= "Aucun template"). Confirm before destroying
+  // existing rows.
   var name=document.getElementById('ctmTemplate').value;
-  if(!name)return;
   var existingRows=document.querySelectorAll('#ctmPrelim .step-edit-row').length;
+  if(!name){
+    // Aucun — clear preliminaries (user opted out of template)
+    if(existingRows>0&&!confirm('Retirer toutes les étapes préliminaires ? (Aucun template sélectionné)'))return;
+    document.getElementById('ctmPrelim').innerHTML='';
+    return;
+  }
   if(existingRows>0&&!confirm('Remplacer les étapes actuelles par celles du template "'+name+'" ?'))return;
   var rows=templatePrelimCopy(name);
   document.getElementById('ctmPrelim').innerHTML=renderStepEditorRows(rows,{note:false});
 }
+// Phase K.2 — kept as legacy noop in case any old code path still references it.
+// The hardcoded "Charger défauts Wealins" button is gone — the template selector
+// above does the same job for ANY template.
 function ctmLoadDefaults(){
-  // Replace (not append) with the Wealins built-in defaults — idempotent
+  console.warn('ctmLoadDefaults() is deprecated — use the Template selector instead.');
   var existingRows=document.querySelectorAll('#ctmPrelim .step-edit-row').length;
   if(existingRows>0&&!confirm('Remplacer les étapes actuelles par les 4 étapes Wealins par défaut ?'))return;
   document.getElementById('ctmPrelim').innerHTML=renderStepEditorRows(seedPrelimDefaults(),{note:false});
@@ -8955,14 +9295,14 @@ async function initApp(){
     // Phase 1A backfill: ensure every fournisseur has a products[] (in-memory only;
     // DB-side default comes from the jsonb DEFAULT in migration 05).
     fourn_db.forEach(function(f){if(!Array.isArray(f.products))f.products=[];});
-    // Phase D.1 + H.2 backfill — enrich every deal's codifications with
-    // codif-level ct/ufR/runR/ufE/runE on read, AND propagate the aggregates
-    // back to deal-level fields so legacy renderers (commissions, référentiel
-    // fournisseur, alertes, CSV export) keep working without each one having
-    // to be refactored. In-memory only; persists on next save.
+    // Phase D.1 + H.2 + I.3 backfill — enrich codifs with their own ct/ufR/runR,
+    // compute ufE/runE in EUR using the deal's snapshot FX (for non-EUR deals),
+    // propagate aggregates to deal-level fields for legacy renderers, and stash
+    // the native amounts (ufE_native, runE_native) for per-event FX conversion
+    // at billing time. In-memory only; persists on next save.
     deals.forEach(function(d){
       if(Array.isArray(d.codifications)&&d.codifications.length){
-        enrichDealCodifications(d.codifications);
+        enrichDealCodifications(d.codifications, d);
         _recomputeDealAggregates(d);
       }
     });
@@ -9268,5 +9608,3 @@ function showReloadingToast(){
 function startCodeWatcher(){checkCodeUpdate();setInterval(checkCodeUpdate,30000);}
 
 checkAuth();
-
-

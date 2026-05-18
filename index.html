@@ -768,6 +768,8 @@
         </div>
         <div style="font-size:11px;color:var(--text3);margin-top:3px;" id="rfmEcartNote"></div>
       </div>
+      <!-- Phase I.5 — Detail per-deal breakdown (native + FX at trim end) for non-EUR deals -->
+      <div id="rfmFxBreakdown" style="margin-top:10px;display:none;background:var(--surface);border:1px dashed var(--border);border-radius:var(--rs);padding:10px 14px;font-size:11px;"></div>
       <div class="fl" style="margin-top:10px;"><label class="field-label">Commentaire</label><textarea id="rfmComment" rows="2" style="width:100%;resize:vertical;" placeholder="Ex: écart sur contrat X, à vérifier..."></textarea></div>
     </div>
     <div class="modal-ft">
@@ -934,13 +936,13 @@
         <div class="fl"><label>N° de contrat</label><input type="text" id="ctmNum" placeholder="ex: WL-2025-003"/></div>
       </div>
       <div class="fg2" style="margin-top:8px;">
-        <div class="fl"><label>Type de contrat <span style="color:var(--text3);font-weight:400;">(template de procédure)</span></label><select id="ctmTemplate" onchange="ctmTemplateChanged()"></select></div>
+        <div class="fl"><label>Template du contrat <span style="color:var(--text3);font-weight:400;">(préliminaires — pick any)</span></label><select id="ctmTemplate" onchange="ctmTemplateChanged()"></select></div>
         <div class="fl"><label>Banque dépositaire</label><input type="text" id="ctmBanque" value="Indosuez Luxembourg"/></div>
       </div>
       <div class="fl" style="margin-top:8px;"><label>Notes (optionnel)</label><textarea id="ctmNotes" rows="2" placeholder="Remarques internes, échéances, contacts…"></textarea></div>
       <div class="form-sep" style="display:flex;align-items:center;gap:8px;">Étapes préliminaires<div style="flex:1;"></div>
         <button type="button" class="btn btn-sm" onclick="ctmAddStep()" style="font-size:11px;">+ Ajouter une étape</button>
-        <button type="button" class="btn btn-sm" onclick="ctmLoadDefaults()" style="font-size:11px;color:var(--text2);" title="Remplacer par les 4 étapes Wealins standard">Charger défauts Wealins</button>
+        <!-- Phase K.2 — "Charger défauts Wealins" retiré ; le sélecteur Template ci-dessus charge n'importe quel template au choix. -->
       </div>
       <div id="ctmPrelim"></div>
       <div style="font-size:11px;color:var(--text3);margin-top:6px;">Sélectionnez un type de contrat ci-dessus pour pré-remplir les étapes depuis un template, ou ajoutez-les manuellement. Tout est modifiable après création.</div>

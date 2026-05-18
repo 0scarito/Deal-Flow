@@ -1,0 +1,16 @@
+# Normalize line endings on commit. Stops the recurring CRLF/LF churn that
+# was bloating Phase J-K diffs (style.css had +410 noise lines for 0 real
+# changes on 2026-05-15). Added 2026-05-18.
+
+* text=auto eol=lf
+
+# Explicit binary types — never normalize.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.woff binary
+*.woff2 binary

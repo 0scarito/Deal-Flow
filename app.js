@@ -651,34 +651,30 @@ async function autoLinkDealToContract(deal){
   if(!deal||!deal.client)return;
   if(deal.stat==='Deal réalisé'||deal.stat==='Deal payé')return;
   var clientName=deal.client;
-  var contract=contracts_db.find(function(c){return c.client===clientName;});
-  if(!contract){
-    // Phase K.2 — derive the contract template from the deal's assureur or
-    // banque (= the fournisseur that "owns" the contract wrapper). Falls back
-    // through : (1) assureur's own template_name, (2) banque's template_name,
-    // (3) first fournisseur's template_name, (4) global default templates_db[0],
-    // (5) no template at all.
-    var primaryFournName='';
-    var firstCodif=(deal.codifications||[])[0]||{};
-    primaryFournName = firstCodif.assureur || firstCodif.banque || firstCodif.fourn || deal.fourn || '';
-    var primaryFourn = primaryFournName ? fourn_db.find(function(f){return f.name===primaryFournName;}) : null;
-    var pickedTemplateName = null;
-    if(primaryFourn && primaryFourn.template_name && templateByName(primaryFourn.template_name)){
-      pickedTemplateName = primaryFourn.template_name;
-    } else if(templates_db[0]){
-      pickedTemplateName = templates_db[0].name; // last-resort default
-    }
-    var newC={
-      _id:null,client:clientName,num:'',
-      banque:deal.depositaire||'Indosuez Luxembourg',
-      notes:'',
-      template_name:pickedTemplateName,
-      prelim:pickedTemplateName?templatePrelimCopy(pickedTemplateName):[],
-      produits:[]
-    };
-    contract=await saveContract(newC);
-    if(!contract)return;
+  // Phase L.4 (Oscar 2026-05-18) — always create a NEW contract per deal.
+  // Used to find-or-create the client's contract and stack produits; now each
+  // deal gets its own dedicated contract (Oscar: "3 contrats séparés sous le
+  // même client" si 3 deals). Cascade-delete relies on this 1-to-1 mapping :
+  // suppression d'un deal → contrat correspondant vidé puis supprimé.
+  var firstCodif=(deal.codifications||[])[0]||{};
+  var primaryFournName = firstCodif.assureur || firstCodif.banque || firstCodif.fourn || deal.fourn || '';
+  var primaryFourn = primaryFournName ? fourn_db.find(function(f){return f.name===primaryFournName;}) : null;
+  var pickedTemplateName = null;
+  if(primaryFourn && primaryFourn.template_name && templateByName(primaryFourn.template_name)){
+    pickedTemplateName = primaryFourn.template_name;
+  } else if(templates_db[0]){
+    pickedTemplateName = templates_db[0].name;
   }
+  var newC={
+    _id:null,client:clientName,num:'',
+    banque:deal.depositaire||'Indosuez Luxembourg',
+    notes:'',
+    template_name:pickedTemplateName,
+    prelim:pickedTemplateName?templatePrelimCopy(pickedTemplateName):[],
+    produits:[]
+  };
+  var contract=await saveContract(newC);
+  if(!contract)return;
   contract.produits=contract.produits||[];
   // Build the list of items to add — one per codification (preferred) or one fallback legacy
   var sourceItems=[];
@@ -4650,8 +4646,36 @@ async function saveDeal(){
     }
     closeDM();renderAll();toast('Deal modifié.');
   } else {
-    // NEW mode — insert N rows (1 per client × contract) sharing a fresh dealGroupId
-    var groupId=tree.length>1?_genGroupId():null;
+    // Phase L.4 (Oscar 2026-05-18) — NEW mode rule: 1 deal = 1 client × 1 produit.
+    // SPLIT the collected tree so every codif (= 1 produit) becomes its own deal
+    // row + its own dedicated contract. dealGroupId concept dropped (Oscar OK
+    // with full rebuild). The duplicate check + insert loop below operate on the
+    // SPLIT tree so each codif-deal is independently checked + inserted.
+    // Edit mode (above) keeps the legacy multi-codif behaviour — only new
+    // creation flips to per-codif.
+    var splitTree=[];
+    for(var ti=0;ti<tree.length;ti++){
+      var origPair=tree[ti];
+      var origC=origPair.contractData;
+      var origCodifs=(origC.codifications||[]).slice();
+      if(origCodifs.length<=1){
+        // 0 or 1 codif — pass through unchanged.
+        splitTree.push(origPair);
+      } else {
+        // Multi-codif — explode into one (client × single-codif × dedicated contract) per codif.
+        origCodifs.forEach(function(codif){
+          var singleC=Object.assign({},origC,{
+            codifications:[codif],
+            // Override contract-level nominal with this codif's nominal — each
+            // split deal's contract total reflects only its own investissement.
+            nom:parseFloat(codif.nominal)||0
+          });
+          splitTree.push({client:origPair.client,contractData:singleC});
+        });
+      }
+    }
+    tree=splitTree;
+    var groupId=null; // dealGroupId dropped 2026-05-18
     var autoLinked=0;
     // Phase G.4 — anti-doublon : avant d'insérer, on cherche un deal déjà
     // existant qui aurait la même signature (client + contract + first codif's
@@ -6967,30 +6991,53 @@ function findAllLinkedInvestissements(deal){
 // Returns {produitsRemoved, contractsDeleted, contractsKept} for toast messaging.
 async function cascadeDeleteDealLinks(deal){
   var summary={produitsRemoved:0, contractsDeleted:0, contractsKept:0};
-  if(!deal||!deal._id)return summary;
-  // Collect affected contracts (distinct) — multiple produits on one contract count once.
+  if(!deal||!deal._id){
+    console.warn('[cascade] skipped — deal has no _id', deal);
+    return summary;
+  }
+  console.log('[cascade] start for deal._id=', deal._id, 'client=', deal.client);
   var affectedContracts=contracts_db.filter(function(c){
     return Array.isArray(c.produits) && c.produits.some(function(p){return p.deal_id===deal._id;});
   });
+  console.log('[cascade] affected contracts:', affectedContracts.length);
+  if(affectedContracts.length===0){
+    // Diagnostic: surface why nothing linked. Common cause = produit.deal_id never
+    // set (legacy data predating Phase K) OR contract was created manually so no
+    // produit has a deal_id. The cascade is a no-op in both cases — by design.
+    var anyProdAtAll=contracts_db.some(function(c){return (c.produits||[]).length>0;});
+    var anyWithDealId=contracts_db.some(function(c){return (c.produits||[]).some(function(p){return p.deal_id;});});
+    console.log('[cascade] DB has any produits:', anyProdAtAll, '· any with deal_id:', anyWithDealId);
+  }
   for(var i=0;i<affectedContracts.length;i++){
     var c=affectedContracts[i];
     var before=(c.produits||[]).length;
     c.produits=(c.produits||[]).filter(function(p){return p.deal_id!==deal._id;});
-    summary.produitsRemoved += (before - c.produits.length);
+    var removed=before - c.produits.length;
+    summary.produitsRemoved += removed;
+    console.log('[cascade] contract', c._id, '(', c.client, '): removed', removed, '/', before, '→ remaining', c.produits.length);
     if(c.produits.length===0){
-      // Empty contract → delete entirely.
       if(c._id){
-        try{await sbDelete('contracts',c._id);}
-        catch(e){console.error('Cascade contract delete failed for',c._id,e);}
+        try{
+          await sbDelete('contracts',c._id);
+          console.log('[cascade] sbDelete contracts OK for', c._id);
+        }catch(e){console.error('[cascade] sbDelete contracts FAILED for', c._id, e);}
       }
       var idx=contracts_db.indexOf(c);
       if(idx>=0)contracts_db.splice(idx,1);
       summary.contractsDeleted++;
     } else {
-      try{await saveContract(c);}
-      catch(e){console.error('Cascade contract save failed for',c._id,e);}
+      try{
+        await saveContract(c);
+        console.log('[cascade] saveContract OK for', c._id);
+      }catch(e){console.error('[cascade] saveContract FAILED for', c._id, e);}
       summary.contractsKept++;
     }
+  }
+  console.log('[cascade] done — summary:', JSON.stringify(summary));
+  // Force a contracts re-render so the Suivi Contrats page reflects the cascade
+  // even before the realtime echo arrives (paranoia: realtime can be slow).
+  if(typeof rerenderForTable==='function'){
+    try{ rerenderForTable('contracts'); }catch(e){}
   }
   return summary;
 }

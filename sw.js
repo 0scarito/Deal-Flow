@@ -2,15 +2,20 @@
 // Stratégie : network-first pour l'app shell (toujours essayer la dernière version,
 // fallback cache si offline). Aucune interception des appels Supabase / CDN.
 
-// Bumped 2026-05-18 — Phase L.3 — Duplicate detection (Oscar 2026-05-18):
-//   · _dealDuplicateSignature — single normalised signature used by both
-//     the inline saveDeal guard and the retro scanner.
-//   · _scanDuplicateDeals — retroactive groupby on the signature.
-//   · showDuplicatesReport — modal listing duplicate groups with per-deal
-//     Voir / Supprimer actions.
-//   · 'Doublons' button added to the deals filter bar.
-// (Previous: 2026-05-18 v38 — Phase L.2 deal modal UI surgical.)
-const CACHE_NAME = 'dealflow-v39';
+// Bumped 2026-05-18 — Phase L.4 — 1 deal = 1 client × 1 produit (Oscar 2026-05-18):
+// Architectural rework, applies to NEW deals only (edit mode untouched —
+// legacy multi-codif deals continue to render and edit as they are).
+//   · saveDeal NEW mode: splits the collected tree so every codif becomes
+//     its own deal row with its own dedicated contract. dealGroupId no
+//     longer generated (concept dropped).
+//   · autoLinkDealToContract: always creates a NEW contract per deal (was
+//     find-or-create on the client). 3 deals under one client = 3 contrats
+//     séparés. Cascade-delete relies on this 1-to-1 mapping.
+//   · Duplicate check runs on each split codif-deal independently.
+//   · 'Soumission groupée' badge in openDet kept (reads legacy dealGroupId
+//     when present — no migration needed).
+// (Previous: 2026-05-18 v40 — Phase L.3.1 cascade diagnostic + force re-render.)
+const CACHE_NAME = 'dealflow-v41';
 const APP_SHELL = [
   './',
   './index.html',

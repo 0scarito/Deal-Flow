@@ -2359,7 +2359,8 @@ var ufDealTab='all';
 
 function setFactType(t,btn){
   factType=t;
-  ['ftUFTab','ftRUNTab'].forEach(id=>{
+  // L.9 fix : reset INCLUDES ftPFTab (was forgotten — PF tab stayed blue after click)
+  ['ftUFTab','ftRUNTab','ftPFTab'].forEach(id=>{
     var b=document.getElementById(id);if(!b)return;
     b.style.color='var(--text2)';b.style.borderBottomColor='transparent';b.style.fontWeight='500';
   });
@@ -2846,30 +2847,43 @@ async function genPFRapprFacture(){
 }
 
 function renderPFInvTable(){
-  var all=deals.filter(d=>d.pf&&d.pf.mode!=='none'&&d.pf.amount>0);
-  if(all.some(_isPaidStandby))_kickFactStandbyTimer();
+  // L.9 fix : use codif-level pf via billingEntries (was deal-level d.pf which missed
+  // Phase D codif-level configs). Also include pct-mode entries with "À calculer"
+  // placeholder so Oscar can see they're tracked even before perf is measured.
+  var all=billingEntries(deals).filter(function(e){return e.pf && e.pf.mode && e.pf.mode!=='none';});
+  if(all.some(function(e){return _isPaidStandby(e.deal);}))_kickFactStandbyTimer();
   var filtered=_filterInvByTab(all,pfInvTabCurrent);
   if(pfInvTabCurrent==='archives'){
-    filtered.sort(function(a,b){return (b.paidAt||'').localeCompare(a.paidAt||'');});
+    filtered.sort(function(a,b){return ((b.deal&&b.deal.paidAt)||'').localeCompare((a.deal&&a.deal.paidAt)||'');});
   } else {
-    filtered.sort((a,b)=>a.fourn.localeCompare(b.fourn));
+    filtered.sort(function(a,b){return (a.fourn||'').localeCompare(b.fourn||'');});
   }
   var t=document.getElementById('pfInvT');if(!t)return;
   while(t.rows.length>1)t.deleteRow(1);
   document.getElementById('pfInvEmpty').style.display=filtered.length?'none':'block';
-  filtered.forEach(function(d){
+  filtered.forEach(function(e){
+    var d=e.deal;
     var idx=deals.indexOf(d);
     var statut=d.fSt==='Payé'?'<span class="badge bg">Payée</span>':d.fSt==='Facturé'?'<span class="badge bb">Facturée</span>':'<span class="badge ba">À émettre</span>';
     var btn;
     if(d.fSt==='Payé'){btn=_renderStandbyBtn(idx,d,'unMarkPFInvPaid');}
     else if(d.fSt==='Facturé'){btn='<button class="btn btn-sm" style="background:var(--green);color:white;border-color:var(--green);" onclick="markPFInvPaid('+idx+')">Marquer payé</button>';}
     else {btn='—';}
+    // PF amount display : fixed mode → known amount; pct mode → "À calculer (X% / hurdle Y%)"
+    var amountCell;
+    if(e.pf.mode==='fixed'){
+      amountCell='<td style="text-align:right;font-weight:500;color:var(--green);">'+fE(e.pf.amount||0)+'</td>';
+    } else if(e.pf.mode==='pct'){
+      amountCell='<td style="text-align:right;font-size:11px;color:var(--amber-t);"><span style="font-style:italic;">À calculer</span><br/><span style="color:var(--text3);">'+(e.pf.rate||0)+'% / hurdle '+(e.pf.hurdle||0)+'%</span></td>';
+    } else {
+      amountCell='<td style="text-align:right;color:var(--text3);">—</td>';
+    }
     var r=t.insertRow();
     r.innerHTML=
-      '<td style="font-weight:500;">'+escH(d.fourn||'')+'</td>'+
-      '<td>'+escH(d.client||'')+'</td>'+
-      '<td style="color:var(--text2);">'+escH(d.produit||'')+'</td>'+
-      '<td style="text-align:right;font-weight:500;color:var(--green);">'+fE(d.pf.amount)+'</td>'+
+      '<td style="font-weight:500;">'+escH(e.fourn||'')+'</td>'+
+      '<td>'+escH(e.client||'')+'</td>'+
+      '<td style="color:var(--text2);">'+escH(e.produit||'')+'</td>'+
+      amountCell+
       '<td class="mono" style="color:var(--text2);">'+escH(d.invS||'—')+'</td>'+
       '<td class="mono" style="color:var(--text2);">'+escH(d.inv||'—')+'</td>'+
       '<td>'+statut+'</td>'+
@@ -3478,19 +3492,70 @@ var ALERT_CATEGORIES={
   orphans:{label:'Données orphelines',color:'var(--text3)'}
 };
 
-// Batch B.1 — Dismissed alerts persisted in localStorage.
-// Reset never (Oscar can clear localStorage manually if needed).
+// L.9 — Dismissed alerts are now TIME-BOUND (30 days default) so they re-surface
+// when still relevant. The previous behavior persisted dismissals forever, which
+// broke the 'alerts reflect current state' invariant Oscar called out.
+//
+// Storage format : { alertId: expiryISO } — entry is considered dismissed only if
+// expiry > now(). Auto-cleanup at every load removes expired + stale (dead deal)
+// entries so localStorage doesn't bloat.
 var _ALERT_DISMISS_KEY='dealflow-alerts-dismissed-v1';
+var _ALERT_DISMISS_DAYS=30; // default dismissal window
 var _dismissedAlerts=null;
 function _loadDismissedAlerts(){
   if(_dismissedAlerts)return _dismissedAlerts;
   try{_dismissedAlerts=JSON.parse(localStorage.getItem(_ALERT_DISMISS_KEY)||'{}')||{};}catch(e){_dismissedAlerts={};}
+  _cleanupDismissedAlerts();
   return _dismissedAlerts;
 }
-function _isAlertDismissed(id){return !!_loadDismissedAlerts()[id];}
-function dismissAlert(id){
+function _cleanupDismissedAlerts(){
+  // L.9 — drop dismissals whose expiry has passed OR whose tied deal no longer exists.
+  // Deal-tied alert ids contain the deal._id substring (e.g. 'verif-j3-{deal_id}').
+  if(!_dismissedAlerts) return;
+  var now=new Date();
+  var existingDealIds={};
+  if(typeof deals!=='undefined'){
+    deals.forEach(function(d){if(d._id) existingDealIds[d._id]=true;});
+  }
+  var cleaned={};
+  var changed=false;
+  for(var k in _dismissedAlerts){
+    var raw=_dismissedAlerts[k];
+    if(!raw){ changed=true; continue; }
+    var entry;
+    if(typeof raw==='string' && raw.length===24 && raw.indexOf('T')>0){
+      entry=new Date(raw);
+      // Backward compat : legacy timestamps stored at dismiss-time (not expiry).
+      // Treat as if they had a 30-day window starting then.
+      entry=new Date(entry.getTime()+_ALERT_DISMISS_DAYS*86400000);
+    } else {
+      entry=new Date(raw);
+    }
+    if(isNaN(entry)){ changed=true; continue; }
+    if(entry<=now){ changed=true; continue; } // expired
+    // Drop dismissals whose deal_id is gone (deletion → alert auto-disappears
+    // already from buildAlerts, but cleanup the localStorage entry too).
+    var m=k.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/);
+    if(m && !existingDealIds[m[0]]){ changed=true; continue; }
+    cleaned[k]=entry.toISOString();
+  }
+  if(changed){
+    _dismissedAlerts=cleaned;
+    try{localStorage.setItem(_ALERT_DISMISS_KEY,JSON.stringify(cleaned));}catch(e){}
+  }
+}
+function _isAlertDismissed(id){
+  var raw=_loadDismissedAlerts()[id];
+  if(!raw) return false;
+  var until=new Date(raw);
+  if(isNaN(until)) return false;
+  return until>new Date();
+}
+function dismissAlert(id, daysOverride){
   var d=_loadDismissedAlerts();
-  d[id]=new Date().toISOString();
+  var until=new Date();
+  until.setDate(until.getDate()+(daysOverride||_ALERT_DISMISS_DAYS));
+  d[id]=until.toISOString();
   try{localStorage.setItem(_ALERT_DISMISS_KEY,JSON.stringify(d));}catch(e){}
   renderAlertesPage();
   renderAll&&typeof renderAll==='function'&&renderAll();
@@ -3913,14 +3978,79 @@ function renderCharts(){
   var year=String(new Date().getFullYear());
 
   // ── 2. Évolution mensuelle UF + Running (line area) ──────────────────────
-  // Aggregate by month for the current year (or whatever year filter is)
+  // L.9 fix — previous formula bucketed `d.runE/12` into the deal's TRADE month only
+  // (so Running mensuel only spiked in months with new deals, zero elsewhere). That
+  // gave Oscar a ~€234 monthly figure that bore no relation to actual cash flow.
+  //
+  // New formula:
+  //   · UF        : sum of d.ufE where deal is paid (fSt='Payé') and inv month = M
+  //   · Running   : (a) sum of rapprochement_db.declared (paid quarterly rappros)
+  //                     distributed evenly across the 3 months of the quarter
+  //                 (b) for deals active in month M but without a paid rappro yet,
+  //                     add the expected runE/12 (forward-looking estimate)
+  // Result : a more meaningful line that reflects actual + expected monthly run.
   var byM={};
+  // UF — paid invoices by inv month
   data.forEach(function(d){
     if(!d.date)return;
-    var m=d.date.substring(0,7);
-    if(!byM[m])byM[m]={uf:0,run:0};
-    if(d.fSt==='Payé'&&d.inv)byM[m].uf+=(d.ufE||0);
-    byM[m].run+=(d.runE||0)/12; // running annuel → mensuel
+    if(d.fSt==='Payé' && d.inv){
+      var im=d.inv.substring(0,7);
+      if(!byM[im])byM[im]={uf:0,run:0};
+      byM[im].uf+=(d.ufE||0);
+    }
+  });
+  // Running — start with paid rappros (most accurate cash-flow signal)
+  if(typeof rapprochement_db!=='undefined' && Array.isArray(rapprochement_db)){
+    rapprochement_db.forEach(function(r){
+      if(r.type!=='run' || !r.paid || !r.declared || !r.period) return;
+      // Period format : 'T<n>_<yyyy>'. Distribute declared / 3 across the 3 months.
+      var pm=String(r.period).match(/^T(\d)_(\d{4})$/);
+      if(!pm) return;
+      var q=parseInt(pm[1],10);
+      var yr=pm[2];
+      if(q<1||q>4) return;
+      var monthly=Math.round((r.declared||0)/3);
+      for(var k=0;k<3;k++){
+        var monthNum=(q-1)*3+k+1;
+        var mKey=yr+'-'+(monthNum<10?'0':'')+monthNum;
+        if(!byM[mKey])byM[mKey]={uf:0,run:0};
+        byM[mKey].run+=monthly;
+      }
+    });
+  }
+  // Running — for months WITHOUT paid rappro for that quarter, add forward-looking estimate
+  // from active deals (runE/12 each). Avoid double-counting : skip month-fourn combos that
+  // already have a paid rappro entry.
+  var paidQByFourn={};
+  if(typeof rapprochement_db!=='undefined' && Array.isArray(rapprochement_db)){
+    rapprochement_db.forEach(function(r){
+      if(r.type==='run' && r.paid && r.period && r.fourn){
+        paidQByFourn[r.period+'|'+r.fourn]=true;
+      }
+    });
+  }
+  var runEntriesForChart=billingEntries(data).filter(function(e){return (e.ct==='RUN'||e.ct==='BOTH')&&e.runE>0;});
+  // For each month in the window, compute forward-looking run for deals active that month
+  var months12=[];
+  var nowD=new Date();
+  for(var i=11;i>=0;i--){
+    var d2=new Date(nowD.getFullYear(),nowD.getMonth()-i,1);
+    months12.push(d2.toISOString().slice(0,7));
+  }
+  months12.forEach(function(mKey){
+    var pm=mKey.split('-');
+    var q=Math.ceil(parseInt(pm[1],10)/3);
+    var qKey='T'+q+'_'+pm[0];
+    runEntriesForChart.forEach(function(e){
+      // Skip if this fourn already has a paid rappro for this quarter (counted above)
+      if(paidQByFourn[qKey+'|'+e.fourn]) return;
+      // Skip if deal hasn't started yet (trade date > month end)
+      if(e.date && e.date.substring(0,7)>mKey) return;
+      // Skip if deal terminated before this month
+      if(e.deal && e.deal.arbClosed) return;
+      if(!byM[mKey])byM[mKey]={uf:0,run:0};
+      byM[mKey].run+=Math.round((e.runE||0)/12);
+    });
   });
   var months=Object.keys(byM).sort();
   // Last 12 months window for readability
@@ -3937,7 +4067,7 @@ function renderCharts(){
     ]},
     options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:false},tooltip:Object.assign({},CHART_DEFAULTS.tooltip,{callbacks:{label:function(c){return c.dataset.label+' : '+fE(c.raw);}}})},scales:{x:{grid:{display:false,drawBorder:false},ticks:{color:'#9aa0a6',font:CHART_DEFAULTS.font}},y:{grid:{color:CHART_DEFAULTS.gridSoft,drawBorder:false},ticks:{color:'#9aa0a6',font:CHART_DEFAULTS.font,callback:function(v){return v>=1000?Math.round(v/1000)+'k':v;}},beginAtZero:true}}}
   });
-  document.getElementById('pilTLLegend').innerHTML='<span style="margin-left:10px;">'+legendChip('#1d5fd4','UF payés')+' '+legendChip('#1a8a4a','Running mensuel')+'</span>';
+  document.getElementById('pilTLLegend').innerHTML='<span style="margin-left:10px;">'+legendChip('#1d5fd4','UF payés (inv. month)')+' '+legendChip('#1a8a4a','Running mensuel (paid + forward-est)')+'</span>';
 
   // ── 4. Top 10 clients (encours) ──────────────────────────────────────────
   var byClient={};

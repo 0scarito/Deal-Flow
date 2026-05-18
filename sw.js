@@ -2,6 +2,15 @@
 // Stratégie : network-first pour l'app shell (toujours essayer la dernière version,
 // fallback cache si offline). Aucune interception des appels Supabase / CDN.
 
+// Bumped 2026-05-19 — Phase L.9 — Pilotage + Facturation + Alertes fixes (Oscar 2026-05-19):
+//   · Running mensuel chart : new formula = paid rappros (distributed over 3 months)
+//     + forward-looking runE/12 for months without paid data. Was buggy (only deal
+//     trade month got runE/12, zero elsewhere — that's why Oscar saw ~234€).
+//   · PF table : codif-level pf via billingEntries (was deal-level d.pf which missed
+//     Phase D configs). Pct-mode entries now show "À calculer" + rate/hurdle.
+//   · setFactType : ftPFTab now in the reset list (was staying blue after click).
+//   · Alerts dismissals : TIME-BOUND (30 days) + auto-cleanup for dead deals.
+// (Previous: 2026-05-19 v45 — Phase L.8 commissions + fourn drill-down.)
 // Bumped 2026-05-19 — Phase L.8 — Synthèse + Facturation bug fixes (Oscar 2026-05-19):
 //   · _feesToCycleRates : ct default '' (not 'UF') when no fees defined — was the
 //     root cause of empty codifs polluting the UF Suivi table.
@@ -41,7 +50,7 @@
 //     deal with this product auto-fills correctly via the existing
 //     onDealIsinChange / _onDealProduitChange paths.
 // (Previous: 2026-05-18 v41 — Phase L.4 1 deal = 1 produit + cascade diag.)
-const CACHE_NAME = 'dealflow-v45';
+const CACHE_NAME = 'dealflow-v46';
 const APP_SHELL = [
   './',
   './index.html',

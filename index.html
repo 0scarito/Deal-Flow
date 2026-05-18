@@ -901,7 +901,11 @@
         <div class="fl"><label>Nom du fournisseur</label><input type="text" id="fName" placeholder="ex: Amundi AM"/></div>
         <div class="fl"><label>Famille</label><select id="fFamille" onchange="onFournFamilleChange()"><option value="SDG">Société de gestion</option><option value="Banque">Banque</option><option value="Assureur">Assureur</option></select></div>
       </div>
-      <div class="fl" style="margin-top:8px;"><label>Template d'étapes <span style="color:var(--text3);font-weight:400;">(pack appliqué aux investissements via ce fournisseur — préliminaires conservés sur le contrat)</span></label><select id="fTemplate"><option value="">— Aucun (utilise le template du contrat) —</option></select></div>
+      <!-- Phase L.7 — Prelim steps live directly on the fournisseur. -->
+      <div class="form-sep" style="display:flex;align-items:center;gap:8px;margin-top:8px;">Étapes préliminaires <span style="color:var(--text3);font-weight:400;font-size:11px;">(checklist appliquée au contrat à chaque nouveau deal de ce fournisseur)</span><div style="flex:1;"></div><button type="button" class="btn-add" onclick="fournAddPrelimStep()">+ Étape</button></div>
+      <div id="fPrelimSteps" style="margin-top:4px;"></div>
+      <div id="fPrelimEmpty" style="font-size:11px;color:var(--text3);font-style:italic;padding:6px 0;">Aucune étape préliminaire. Ajoute-les pour qu'elles soient pré-cochées sur chaque contrat créé via ce fournisseur.</div>
+      <div id="fLegacyTplNote" style="display:none;font-size:11px;color:var(--amber-t);background:rgba(245,158,11,.10);padding:6px 10px;border-radius:4px;margin-top:6px;">⚠ Étapes importées depuis l'ancien template <b id="fLegacyTplName">—</b>. Édite et sauvegarde pour finaliser la migration vers le nouveau modèle (prelim_steps direct sur le fournisseur).</div>
       <div class="form-sep">Coordonnées (pour facturation)</div>
       <div class="fg2" style="margin-top:0;">
         <div class="fl"><label>Adresse ligne 1</label><input type="text" id="fAddr1" placeholder="ex: 24-26, avenue des Champs-Elysées"/></div>

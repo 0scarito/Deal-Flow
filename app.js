@@ -659,18 +659,25 @@ async function autoLinkDealToContract(deal){
   var firstCodif=(deal.codifications||[])[0]||{};
   var primaryFournName = firstCodif.assureur || firstCodif.banque || firstCodif.fourn || deal.fourn || '';
   var primaryFourn = primaryFournName ? fourn_db.find(function(f){return f.name===primaryFournName;}) : null;
-  var pickedTemplateName = null;
-  if(primaryFourn && primaryFourn.template_name && templateByName(primaryFourn.template_name)){
-    pickedTemplateName = primaryFourn.template_name;
+  // Phase L.7 — prelim steps now live directly on the fournisseur.
+  // Legacy fallback : if fourn has no prelim_steps[] yet but has the old template_name pointer,
+  // use the named template's first step_pack as the prelim source.
+  var prelimSteps=[], pickedTemplateName=null;
+  if(primaryFourn && Array.isArray(primaryFourn.prelim_steps) && primaryFourn.prelim_steps.length){
+    prelimSteps=JSON.parse(JSON.stringify(primaryFourn.prelim_steps));
+  } else if(primaryFourn && primaryFourn.template_name && templateByName(primaryFourn.template_name)){
+    pickedTemplateName=primaryFourn.template_name;
+    prelimSteps=templatePrelimCopy(pickedTemplateName);
   } else if(templates_db[0]){
-    pickedTemplateName = templates_db[0].name;
+    pickedTemplateName=templates_db[0].name;
+    prelimSteps=templatePrelimCopy(pickedTemplateName);
   }
   var newC={
     _id:null,client:clientName,num:'',
     banque:deal.depositaire||'Indosuez Luxembourg',
     notes:'',
     template_name:pickedTemplateName,
-    prelim:pickedTemplateName?templatePrelimCopy(pickedTemplateName):[],
+    prelim:prelimSteps,
     produits:[]
   };
   var contract=await saveContract(newC);
@@ -727,11 +734,30 @@ async function autoLinkDealToContract(deal){
     if(item.broker)notesParts.push('Broker: '+item.broker);
     if(deal.contrat)notesParts.push('Contrat: '+deal.contrat);
     if(item.maturite)notesParts.push('Maturité: '+item.maturite);
-    // Phase B.2 — same routing as the codif-sync path above.
-    var pickedPack=null,steps=[],tplUsed=_pickPackTemplate(item.fourn,contract.template_name);
-    if(tplUsed){
-      pickedPack=templatePackForType(tplUsed,item.type);
-      if(pickedPack)steps=templatePackCopy(tplUsed,pickedPack.id);
+    // Phase L.7 — investment steps now live directly on the matched product
+    // within fourn.products[]. Match by ISIN exact first, fallback to product name.
+    // If no product-level steps configured, fall back to the legacy named template path.
+    var pickedPack=null, steps=[], tplUsed=null;
+    var itemFourn=item.fourn?fourn_db.find(function(ff){return ff.name===item.fourn;}):null;
+    var matchedProduct=null;
+    if(itemFourn && item.isin){
+      matchedProduct=(itemFourn.products||[]).find(function(pp){return pp.isin===item.isin;});
+    }
+    if(!matchedProduct && itemFourn && item.name){
+      var _nlc=String(item.name).toLowerCase().trim();
+      matchedProduct=(itemFourn.products||[]).find(function(pp){
+        return String(pp.part||'').toLowerCase().trim()===_nlc;
+      });
+    }
+    if(matchedProduct && Array.isArray(matchedProduct.investment_steps) && matchedProduct.investment_steps.length){
+      steps=JSON.parse(JSON.stringify(matchedProduct.investment_steps));
+    } else {
+      // Legacy path — named template via fourn.template_name → contract.template_name fallback
+      tplUsed=_pickPackTemplate(item.fourn,contract.template_name);
+      if(tplUsed){
+        pickedPack=templatePackForType(tplUsed,item.type);
+        if(pickedPack)steps=templatePackCopy(tplUsed,pickedPack.id);
+      }
     }
     var prod={
       id:newStepId(),
@@ -7807,12 +7833,11 @@ function rebuildFournSelect(){
 function openFournModal(name){
   document.getElementById('fournModalTitle').textContent=name?'Modifier le fournisseur':'Nouveau fournisseur';
   var existingProducts=[];
-  // Populate the template picker first (same options as the contract modal's).
-  var tplSel=document.getElementById('fTemplate');
-  if(tplSel){
-    tplSel.innerHTML='<option value="">— Aucun (utilise le template du contrat) —</option>'+
-      (templates_db||[]).map(function(t){return '<option value="'+escH(t.name)+'">'+escH(t.name)+'</option>';}).join('');
-  }
+  // Phase L.7 — prelim_steps now live directly on fourn (no more templates_db lookup).
+  // The legacy template_name field stays in the data for backward compat but the
+  // dropdown UI is gone — replaced by the inline editor below.
+  var prelimToHydrate=[];
+  var legacyTplName='';
   if(name){
     var f=loadFourn().find(x=>x.name===name)||{};
     document.getElementById('fName').value=name;
@@ -7821,9 +7846,24 @@ function openFournModal(name){
     document.getElementById('fAddr2').value=f.addr2||'';
     document.getElementById('fContact').value=f.contact||'';
     document.getElementById('fEmail').value=f.email||'';
-    if(tplSel)tplSel.value=f.template_name||'';
     document.getElementById('fName').dataset.original=name;
     existingProducts=Array.isArray(f.products)?f.products:[];
+    // Hydrate prelim_steps from the new field, OR fall back to legacy template if not yet migrated.
+    if(Array.isArray(f.prelim_steps) && f.prelim_steps.length){
+      prelimToHydrate=f.prelim_steps;
+    } else if(f.template_name){
+      var legacyTpl=(templates_db||[]).find(function(t){return t.name===f.template_name;});
+      if(legacyTpl){
+        // Take the first step_pack as the legacy prelim source (or fall back to root steps[]).
+        var pack=(legacyTpl.step_packs||[])[0];
+        var srcSteps=pack&&Array.isArray(pack.steps)?pack.steps:(Array.isArray(legacyTpl.steps)?legacyTpl.steps:[]);
+        prelimToHydrate=JSON.parse(JSON.stringify(srcSteps));
+        legacyTplName=f.template_name;
+      }
+    }
+    // Store the legacy template name on the form so saveFourn can preserve it on save
+    // (we don't strip it until full migration is validated).
+    document.getElementById('fName').dataset.legacyTpl=f.template_name||'';
   } else {
     document.getElementById('fName').value='';
     document.getElementById('fFamille').value='SDG';
@@ -7831,8 +7871,19 @@ function openFournModal(name){
     document.getElementById('fAddr2').value='';
     document.getElementById('fContact').value='';
     document.getElementById('fEmail').value='';
-    if(tplSel)tplSel.value='';
     document.getElementById('fName').dataset.original='';
+    document.getElementById('fName').dataset.legacyTpl='';
+  }
+  // Render the prelim editor with the hydrated steps (empty list = empty placeholder shown).
+  _renderFournPrelimSteps(prelimToHydrate);
+  // Show the legacy-template banner if we hydrated from an old template (signals migration pending).
+  var legacyNote=document.getElementById('fLegacyTplNote');
+  var legacyLbl=document.getElementById('fLegacyTplName');
+  if(legacyTplName && legacyNote && legacyLbl){
+    legacyLbl.textContent=legacyTplName;
+    legacyNote.style.display='';
+  } else if(legacyNote){
+    legacyNote.style.display='none';
   }
   // Hydrate the products list. Products now apply to ALL families (SDG / Banque
   // / Assureur) — every fournisseur referenced in a deal benefits from having
@@ -7898,11 +7949,13 @@ async function saveFourn(){
     alert('Type de frais manquant sur : '+summary+(badRows.length>3?' …':'')+'\n\nChaque ligne de frais doit avoir un type (UF / Run / UF+Run). Sinon le calcul ne fonctionne pas.');
     return;
   }
-  // Phase B.1 — per-fournisseur template (drives the investment-pack steps when this
-  // fournisseur supplies a product on a contract). Empty string = use the contract's
-  // template as fallback.
-  var tplElSave=document.getElementById('fTemplate');
-  var template_name=tplElSave?(tplElSave.value||null):null;
+  // Phase L.7 — prelim_steps come from the inline editor; template_name preserved as legacy
+  // pointer (we keep it around so unmigrated fourns still have the legacy fallback working).
+  var prelim_steps=_getFournPrelimStepsFromModal();
+  var template_name=document.getElementById('fName').dataset.legacyTpl||null;
+  // If the user has now defined prelim_steps for a fourn that had a legacy template_name,
+  // we treat the migration as complete and clear the legacy pointer.
+  if(prelim_steps.length && template_name){ template_name=null; }
   // ISIN sanity check — non-blocking. Toast each malformed ISIN so the user sees
   // them but doesn't get stopped from saving (some legacy / placeholder codes
   // may not match the 12-char format yet).
@@ -7910,7 +7963,7 @@ async function saveFourn(){
   if(malformed.length){
     toast('⚠ ISIN suspects (sauvegardé quand même) : '+malformed.slice(0,3).join(', ')+(malformed.length>3?'…':''));
   }
-  var payload={name,famille,addr1,addr2,contact,email,products,template_name};
+  var payload={name,famille,addr1,addr2,contact,email,products,template_name,prelim_steps};
   if(original&&original!==name){
     var f=fourn_db.find(x=>x.name===original);
     if(f){Object.assign(f,payload);await sbUpdateFournSafe(f._id,payload,f);}
@@ -7961,14 +8014,19 @@ function _warnNoTemplateNameCol(){
 // in-session even when a migration hasn't been applied yet.
 async function sbInsertFournSafe(payload){
   var res=await sb.from('fournisseurs').insert(payload).select();
+  if(res.error&&_isMissingColErr(res.error,'prelim_steps')){
+    _warnNoPrelimStepsCol();
+    var pPS=Object.assign({},payload);delete pPS.prelim_steps;
+    res=await sb.from('fournisseurs').insert(pPS).select();
+  }
   if(res.error&&_isMissingColErr(res.error,'template_name')){
     _warnNoTemplateNameCol();
-    var p2=Object.assign({},payload);delete p2.template_name;
+    var p2=Object.assign({},payload);delete p2.template_name;delete p2.prelim_steps;
     res=await sb.from('fournisseurs').insert(p2).select();
   }
   if(res.error&&_isMissingColErr(res.error,'products')){
     _warnNoProductsCol();
-    var stripped=Object.assign({},payload);delete stripped.products;delete stripped.template_name;
+    var stripped=Object.assign({},payload);delete stripped.products;delete stripped.template_name;delete stripped.prelim_steps;
     res=await sb.from('fournisseurs').insert(stripped).select();
   }
   if(res.error){console.error('Fournisseur insert failed',res.error);throw res.error;}
@@ -7977,17 +8035,20 @@ async function sbInsertFournSafe(payload){
 async function sbUpdateFournSafe(id,payload,memRow){
   var data=Object.assign({},payload);delete data.id;delete data._id;delete data.created_at;
   var res=await sb.from('fournisseurs').update(data).eq('id',id).select();
+  if(res.error&&_isMissingColErr(res.error,'prelim_steps')){
+    _warnNoPrelimStepsCol();
+    var dPS=Object.assign({},data);delete dPS.prelim_steps;
+    res=await sb.from('fournisseurs').update(dPS).eq('id',id).select();
+  }
   if(res.error&&_isMissingColErr(res.error,'template_name')){
     _warnNoTemplateNameCol();
-    var d2=Object.assign({},data);delete d2.template_name;
+    var d2=Object.assign({},data);delete d2.template_name;delete d2.prelim_steps;
     res=await sb.from('fournisseurs').update(d2).eq('id',id).select();
   }
   if(res.error&&_isMissingColErr(res.error,'products')){
     _warnNoProductsCol();
-    var stripped=Object.assign({},data);delete stripped.products;delete stripped.template_name;
+    var stripped=Object.assign({},data);delete stripped.products;delete stripped.template_name;delete stripped.prelim_steps;
     res=await sb.from('fournisseurs').update(stripped).eq('id',id).select();
-    // Reflect: in-memory row still has products[] (so UI works this session),
-    // but the DB row doesn't (until migration applied).
   }
   if(res.error){console.error('Fournisseur update failed',res.error);throw res.error;}
   return res.data||[];
@@ -8066,6 +8127,8 @@ function addFournProductLine(prod){
       '</select>'+
     '</div>';
   c.appendChild(card);
+  // Phase L.7 — render investment_steps editor inside the product card (collapsed by default)
+  _renderProductInvSteps(card, Array.isArray(prod.investment_steps)?prod.investment_steps:[]);
   var feesWrap=card.querySelector('.fp-fees-wrap');
   var feesArr=(prod.fees&&prod.fees.length)?prod.fees:[{kind:'',pct:''}];
   feesArr.forEach(function(fee){_appendFpFeeRow(feesWrap,fee);});
@@ -8195,10 +8258,146 @@ function getFournProductsFromModal(){
       }
     }
     var hasPf=(pf.mode!=='none');
-    if(isin||part||type||fees.length||hasPf)prods.push({isin:isin,part:part,type:type,unit:unit,currency:currency,fees:fees,pf:pf});
+    // Phase L.7 — investment_steps live on the product (auto-applied on deal create).
+    var investment_steps=[];
+    card.querySelectorAll('.fp-inv-step-row').forEach(function(srow){
+      var nm=(srow.querySelector('.fpisName').value||'').trim();
+      if(nm) investment_steps.push({id:srow.dataset.stepid||('s_'+Math.random().toString(36).slice(2,8)), name:nm});
+    });
+    if(isin||part||type||fees.length||hasPf||investment_steps.length){
+      prods.push({isin:isin,part:part,type:type,unit:unit,currency:currency,fees:fees,pf:pf,investment_steps:investment_steps});
+    }
   });
   return prods;
 }
+
+
+// ── PHASE L.7 — Prelim & Investment Steps inline editors (Oscar 2026-05-19) ──
+// Replace the old templates_db-driven flow with checklists living directly on
+// the entities that own them : fourn.prelim_steps + fourn.products[i].investment_steps.
+// templates_db remains in the DB for backward compat; the auto-link path falls back
+// to it when a fourn hasn't been migrated yet.
+
+function _warnNoPrelimStepsCol(){
+  if(window._psColWarned)return;
+  window._psColWarned=true;
+  console.warn('[L.7] fournisseurs table is missing the prelim_steps column. Run:\n  ALTER TABLE fournisseurs ADD COLUMN IF NOT EXISTS prelim_steps JSONB DEFAULT \'[]\';\nuntil applied, prelim_steps are kept in-memory only and lost on reload.');
+}
+
+// ─── Prelim steps (on the fournisseur) ─────────────────────────────────────
+function _renderFournPrelimSteps(steps){
+  var cont=document.getElementById('fPrelimSteps');
+  if(!cont)return;
+  cont.innerHTML='';
+  (steps||[]).forEach(function(s){_appendFournPrelimStepRow(s);});
+  _refreshFournPrelimEmptyState();
+}
+
+function _appendFournPrelimStepRow(step){
+  step=step||{name:'',id:''};
+  var cont=document.getElementById('fPrelimSteps');
+  if(!cont)return;
+  var row=document.createElement('div');
+  row.className='f-prelim-step';
+  row.dataset.stepid=step.id||('p_'+Math.random().toString(36).slice(2,8));
+  row.style.cssText='display:flex;gap:6px;margin-bottom:4px;align-items:center;background:var(--surface2);padding:6px 8px;border-radius:4px;border:1px solid var(--border);';
+  row.innerHTML=
+    '<span style="color:var(--text3);font-size:11px;cursor:grab;user-select:none;">☰</span>'+
+    '<input type="text" class="fpsName" value="'+escH(step.name||'')+'" placeholder="ex: Envoyer souscription" style="flex:1;font-size:12px;"/>'+
+    '<button type="button" onclick="fournRemovePrelimStep(this)" title="Supprimer cette étape" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:16px;padding:0 4px;line-height:1;">×</button>';
+  cont.appendChild(row);
+  _refreshFournPrelimEmptyState();
+}
+
+function _refreshFournPrelimEmptyState(){
+  var cont=document.getElementById('fPrelimSteps');
+  var empty=document.getElementById('fPrelimEmpty');
+  if(!cont||!empty)return;
+  empty.style.display=cont.querySelectorAll('.f-prelim-step').length?'none':'';
+}
+
+function fournAddPrelimStep(){ _appendFournPrelimStepRow({name:''}); }
+function fournRemovePrelimStep(btn){
+  var row=btn.closest('.f-prelim-step');
+  if(row)row.remove();
+  _refreshFournPrelimEmptyState();
+}
+
+function _getFournPrelimStepsFromModal(){
+  var steps=[];
+  document.querySelectorAll('#fPrelimSteps .f-prelim-step').forEach(function(row){
+    var nm=(row.querySelector('.fpsName').value||'').trim();
+    if(nm)steps.push({id:row.dataset.stepid||('p_'+Math.random().toString(36).slice(2,8)), name:nm});
+  });
+  return steps;
+}
+
+// ─── Investment steps (on each product) ────────────────────────────────────
+function _renderProductInvSteps(card, steps){
+  if(!card)return;
+  // Container at the end of the card
+  var block=document.createElement('div');
+  block.className='fp-inv-steps-block';
+  block.style.cssText='margin-top:6px;padding:6px 9px;background:var(--surface);border-radius:4px;border-top:1px dashed var(--border);';
+  block.innerHTML=
+    '<div style="display:flex;align-items:center;gap:8px;">'+
+      '<span class="field-caption-sm" style="white-space:nowrap;">ÉTAPES INVESTISSEMENT</span>'+
+      '<span style="font-size:10px;color:var(--text3);">(auto-appliquées sur chaque deal touchant ce produit)</span>'+
+      '<div style="flex:1;"></div>'+
+      '<button type="button" class="btn-add-xs fp-inv-add-btn" style="font-size:10px;">+ étape</button>'+
+    '</div>'+
+    '<div class="fp-inv-steps-rows" style="margin-top:6px;"></div>';
+  card.appendChild(block);
+  var rowsHost=block.querySelector('.fp-inv-steps-rows');
+  (steps||[]).forEach(function(s){ _appendInvStepRow(rowsHost, s); });
+  block.querySelector('.fp-inv-add-btn').onclick=function(){ _appendInvStepRow(rowsHost, {name:''}); };
+}
+
+function _appendInvStepRow(host, step){
+  step=step||{name:'',id:''};
+  if(!host)return;
+  var row=document.createElement('div');
+  row.className='fp-inv-step-row';
+  row.dataset.stepid=step.id||('s_'+Math.random().toString(36).slice(2,8));
+  row.style.cssText='display:flex;gap:4px;margin-bottom:3px;align-items:center;';
+  row.innerHTML=
+    '<span style="color:var(--text3);font-size:10px;cursor:grab;user-select:none;">☰</span>'+
+    '<input type="text" class="fpisName" value="'+escH(step.name||'')+'" placeholder="ex: Confirmation transaction" style="flex:1;font-size:11px;"/>'+
+    '<button type="button" onclick="removeFournProductInvStepRow(this)" title="Retirer cette étape" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:13px;padding:0 4px;line-height:1;">×</button>';
+  host.appendChild(row);
+}
+
+function removeFournProductInvStepRow(btn){
+  var row=btn.closest('.fp-inv-step-row');
+  if(row)row.remove();
+}
+
+// ─── Migration helper — exposed on window for one-shot execution ───────────
+// Walks every fourn that still has a legacy template_name but no prelim_steps,
+// imports the named template's first step_pack into fourn.prelim_steps, and
+// persists. Run via the browser console : await _migrateTemplatesToFournInline();
+window._migrateTemplatesToFournInline=async function(){
+  var migrated=0, skipped=0, errors=[];
+  for(var i=0;i<fourn_db.length;i++){
+    var f=fourn_db[i];
+    if(Array.isArray(f.prelim_steps) && f.prelim_steps.length){ skipped++; continue; }
+    if(!f.template_name){ skipped++; continue; }
+    var tpl=(templates_db||[]).find(function(t){return t.name===f.template_name;});
+    if(!tpl){ skipped++; continue; }
+    var pack=(tpl.step_packs||[])[0];
+    var srcSteps=pack&&Array.isArray(pack.steps)?pack.steps:(Array.isArray(tpl.steps)?tpl.steps:[]);
+    if(!srcSteps.length){ skipped++; continue; }
+    f.prelim_steps=JSON.parse(JSON.stringify(srcSteps)).map(function(s){
+      return {id:s.id||('p_'+Math.random().toString(36).slice(2,8)), name:s.name||s.label||''};
+    });
+    f.template_name=null; // mark migrated
+    try{ await sbUpdateFournSafe(f._id, f, f); migrated++; }
+    catch(e){ console.error('[L.7 migrate] failed for '+f.name, e); errors.push(f.name); }
+  }
+  console.log('[L.7 migration] migrated='+migrated+' skipped='+skipped+(errors.length?' errors='+errors.join(','):''));
+  if(typeof renderFourn==='function') renderFourn();
+  return {migrated:migrated, skipped:skipped, errors:errors};
+};
 
 // Helpers consumed by Phase 2 (codif line cascade + fee snapshot)
 function getFournProducts(name){
@@ -9832,6 +10031,11 @@ async function initApp(){
     // Phase 1A backfill: ensure every fournisseur has a products[] (in-memory only;
     // DB-side default comes from the jsonb DEFAULT in migration 05).
     fourn_db.forEach(function(f){if(!Array.isArray(f.products))f.products=[];});
+    // Phase L.7 backfill: ensure prelim_steps[] on every fourn AND investment_steps[] on every product.
+    fourn_db.forEach(function(f){
+      if(!Array.isArray(f.prelim_steps)) f.prelim_steps=[];
+      (f.products||[]).forEach(function(p){ if(!Array.isArray(p.investment_steps)) p.investment_steps=[]; });
+    });
     // Phase D.1 + H.2 + I.3 backfill — enrich codifs with their own ct/ufR/runR,
     // compute ufE/runE in EUR using the deal's snapshot FX (for non-EUR deals),
     // propagate aggregates to deal-level fields for legacy renderers, and stash

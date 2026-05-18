@@ -2,6 +2,14 @@
 // Stratégie : network-first pour l'app shell (toujours essayer la dernière version,
 // fallback cache si offline). Aucune interception des appels Supabase / CDN.
 
+// Bumped 2026-05-19 — Phase L.7 — Templates v2 inline on fourn (Oscar 2026-05-19):
+//   · Prelim steps now live directly on fourn.prelim_steps (no more templates_db lookup).
+//   · Investment steps now live directly on fourn.products[i].investment_steps,
+//     auto-applied on deal create via ISIN exact / product name match.
+//   · Legacy template_name pointer still works as fallback for unmigrated fourns.
+//   · One-shot migration via window._migrateTemplatesToFournInline() in console.
+//   · UI = inline editors inside the Fournisseur modal (no separate Templates page).
+// (Previous: 2026-05-19 v43 — Phase L.6 backfill deal_id button.)
 // Bumped 2026-05-19 — Phase L.6 — Backfill legacy deal_id (Oscar 2026-05-19):
 //   · New button "🔧 Backfill" next to "🔍 Doublons" on the deals page.
 //   · Scans every contract produit lacking a deal_id; heuristic match
@@ -22,7 +30,7 @@
 //     deal with this product auto-fills correctly via the existing
 //     onDealIsinChange / _onDealProduitChange paths.
 // (Previous: 2026-05-18 v41 — Phase L.4 1 deal = 1 produit + cascade diag.)
-const CACHE_NAME = 'dealflow-v43';
+const CACHE_NAME = 'dealflow-v44';
 const APP_SHELL = [
   './',
   './index.html',

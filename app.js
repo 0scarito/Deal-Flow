@@ -1512,32 +1512,60 @@ async function bulkApplyStatus(){
 async function bulkDelete(){
   var sel=getSelectedDealsList();
   if(!sel.length){alert('Aucun deal sélectionné.');return;}
-  // Count deals with linked Suivi Contrats investments
-  var withLinks=sel.map(findLinkedInvestissement).filter(Boolean).length;
-  if(!confirm('Supprimer définitivement '+sel.length+' deal(s) ? Cette action est irréversible.'+(withLinks?'\n\n⚠ '+withLinks+' deal(s) ont un investissement lié dans Suivi Contrats.':'')))return;
-  var alsoDeleteLinks=false;
-  if(withLinks>0){
-    alsoDeleteLinks=confirm('Supprimer aussi les '+withLinks+' investissement(s) liés dans Suivi Contrats ?\n\nOK = supprimer les deux, Annuler = supprimer uniquement les deals (les investissements restent dans Suivi Contrats).');
-  }
+  // Pre-count linked investissements + contracts that will become empty.
+  // The cascade is mandatory (Oscar 2026-05-18) — surface the scope upfront so
+  // the user knows exactly what's about to be purged.
+  var totalProdsLinked=0;
+  var contractsToBeEmptied=new Set();
+  var contractsTouched=new Set();
+  sel.forEach(function(d){
+    var links=findAllLinkedInvestissements(d);
+    totalProdsLinked+=links.length;
+    var byContract={};
+    links.forEach(function(l){
+      var cid=l.contract._id||l.contract.client;
+      byContract[cid]=byContract[cid]||{contract:l.contract,count:0};
+      byContract[cid].count++;
+      contractsTouched.add(cid);
+    });
+    // A contract is emptied when its TOTAL produits == sum of removed produits
+    // across this batch. Approximate (we don't know other batches), but accurate
+    // for the common case of one bulk pass.
+  });
+  // Re-pass: tally per-contract removal totals across all selected deals.
+  var perContractRemoval={};
+  sel.forEach(function(d){
+    findAllLinkedInvestissements(d).forEach(function(l){
+      var cid=l.contract._id||l.contract.client;
+      perContractRemoval[cid]=perContractRemoval[cid]||{contract:l.contract,n:0};
+      perContractRemoval[cid].n++;
+    });
+  });
+  Object.keys(perContractRemoval).forEach(function(cid){
+    var r=perContractRemoval[cid];
+    if(r.n>=(r.contract.produits||[]).length)contractsToBeEmptied.add(cid);
+  });
+  var msg='Supprimer définitivement '+sel.length+' deal(s) ?'+
+          (totalProdsLinked?'\n\n⚠ Cascade obligatoire — '+totalProdsLinked+' investissement(s) seront purgés des suivis de contrats':'')+
+          (contractsToBeEmptied.size?'\n⚠ '+contractsToBeEmptied.size+' contrat(s) deviendront vides et seront supprimés':'')+
+          '\n\nIrréversible.';
+  if(!confirm(msg))return;
   var failed=0;
-  var contractsToSave={};
+  var combinedCascade={produitsRemoved:0, contractsDeleted:0, contractsKept:0};
   for(var i=0;i<sel.length;i++){
     var d=sel[i];
-    var link=alsoDeleteLinks?findLinkedInvestissement(d):null;
+    try{
+      var cascade=await cascadeDeleteDealLinks(d);
+      combinedCascade.produitsRemoved+=cascade.produitsRemoved;
+      combinedCascade.contractsDeleted+=cascade.contractsDeleted;
+      combinedCascade.contractsKept+=cascade.contractsKept;
+    }catch(e){console.error('Bulk cascade failed for',d._id,e);}
     if(d._id){try{await sbDelete('deals',d._id);}catch(e){console.error('Bulk delete failed for',d._id,e);failed++;continue;}}
     var idx=deals.indexOf(d);if(idx>=0)deals.splice(idx,1);
-    if(link){
-      link.contract.produits=(link.contract.produits||[]).filter(function(p){return p.id!==link.prod.id;});
-      contractsToSave[link.contract._id]=link.contract;
-    }
-  }
-  // Save touched contracts
-  for(var cid in contractsToSave){
-    try{await saveContract(contractsToSave[cid]);}catch(e){console.error('Save contract after bulk delete failed',e);}
   }
   selectedDealIds.clear();
   renderAll();
-  toast(sel.length+' deal(s) supprimé(s)'+(alsoDeleteLinks&&withLinks?' avec leurs investissements liés':'')+(failed?' ('+failed+' erreur(s))':'.'));
+  toast(sel.length+' deal(s) supprimé(s)'+_cascadeSummaryToast(combinedCascade)+(failed?' ('+failed+' erreur(s))':'.'));
 }
 function bulkExportCSV(){
   var sel=getSelectedDealsList();
@@ -1670,11 +1698,12 @@ function openDet(d){
   document.getElementById('detHist').innerHTML=(d.hist||[]).slice().reverse().map(function(h){return '<div style="font-size:12px;padding:4px 0;border-bottom:1px solid var(--border);"><span style="color:var(--text3);">'+h.ts+'</span> — '+h.a+'</div>';}).join('');
   document.getElementById('detEdit').onclick=function(){closeDet();openDealModal(idx);};
   document.getElementById('detDelete').onclick=function(){
-    showDealDeleteConfirm(d,async function(action,link){
+    showDealDeleteConfirm(d,async function(action,links){
       if(action==='cancel')return;
       if(action==='view'){
         closeDet();
-        if(link)ctrExp[link.contract._id]=true;
+        var firstLink=links&&links[0];
+        if(firstLink)ctrExp[firstLink.contract._id]=true;
         goTo('contrats',document.querySelector('.nbtn[onclick*=contrats]'));
         return;
       }
@@ -1690,14 +1719,13 @@ function openDet(d){
         return;
       }
       try{
+        // Cascade is mandatory (Oscar 2026-05-18) — purge all linked produits and
+        // delete any contract that becomes empty as a result.
+        var cascade=await cascadeDeleteDealLinks(d);
         if(d._id)await sbDelete('deals',d._id);
         deals.splice(idx,1);
-        if(action==='delete-both'&&link){
-          link.contract.produits=(link.contract.produits||[]).filter(function(p){return p.id!==link.prod.id;});
-          await saveContract(link.contract);
-        }
         closeDet();renderAll();
-        toast(action==='delete-both'?'Deal et investissement supprimés définitivement.':link?'Deal supprimé. Investissement conservé.':'Deal supprimé définitivement.');
+        toast('Deal supprimé définitivement.'+_cascadeSummaryToast(cascade));
       }catch(e){console.error(e);alert('Erreur : '+(e.message||e));}
     });
   };
@@ -6864,6 +6892,7 @@ function _renderPerfChart(rows){
 }
 function deleteClientFromModal(){var o=document.getElementById('cName').dataset.original;if(!o)return;closeClientModal();deleteClient(o);}
 // Returns {contract, prod} if a Suivi-Contrats investissement is linked to this deal, else null.
+// (First match only — kept for legacy callsites that just need a "is anything linked?" check.)
 function findLinkedInvestissement(deal){
   if(!deal||!deal._id)return null;
   for(var i=0;i<contracts_db.length;i++){
@@ -6875,29 +6904,109 @@ function findLinkedInvestissement(deal){
   return null;
 }
 
-// Show the linked-deletion confirm modal. callback(action, link)
-// action ∈ {'cancel','view','archive','delete-deal-only','delete-both'}
+// Returns an array of {contract, prod} for EVERY produit row across contracts_db
+// that's linked to this deal. A multi-fourn deal creates one produit per codif,
+// so 1 deal → N produits on the same contract is common. 1 deal across multiple
+// contracts is rare but possible (batched multi-contract creation). Used by
+// the cascade-delete path so we purge every produit row in one go, not just
+// the first match.
+function findAllLinkedInvestissements(deal){
+  if(!deal||!deal._id)return [];
+  var out=[];
+  for(var i=0;i<contracts_db.length;i++){
+    var c=contracts_db[i];
+    if(!Array.isArray(c.produits))continue;
+    c.produits.forEach(function(p){
+      if(p.deal_id===deal._id)out.push({contract:c,prod:p});
+    });
+  }
+  return out;
+}
+
+// Cascade-delete helper (Oscar 2026-05-18 rule). When a deal is deleted, every
+// contract produit row linked to that deal (produit.deal_id === deal._id) gets
+// purged. If a contract is left with zero produits AFTER the purge, the contract
+// itself is deleted — préliminaires sont per-investissement, sans investissement
+// le suivi de contrat n'a plus de raison d'exister. Manually-created contracts
+// have no produit.deal_id and are therefore never touched by this path.
+// Returns {produitsRemoved, contractsDeleted, contractsKept} for toast messaging.
+async function cascadeDeleteDealLinks(deal){
+  var summary={produitsRemoved:0, contractsDeleted:0, contractsKept:0};
+  if(!deal||!deal._id)return summary;
+  // Collect affected contracts (distinct) — multiple produits on one contract count once.
+  var affectedContracts=contracts_db.filter(function(c){
+    return Array.isArray(c.produits) && c.produits.some(function(p){return p.deal_id===deal._id;});
+  });
+  for(var i=0;i<affectedContracts.length;i++){
+    var c=affectedContracts[i];
+    var before=(c.produits||[]).length;
+    c.produits=(c.produits||[]).filter(function(p){return p.deal_id!==deal._id;});
+    summary.produitsRemoved += (before - c.produits.length);
+    if(c.produits.length===0){
+      // Empty contract → delete entirely.
+      if(c._id){
+        try{await sbDelete('contracts',c._id);}
+        catch(e){console.error('Cascade contract delete failed for',c._id,e);}
+      }
+      var idx=contracts_db.indexOf(c);
+      if(idx>=0)contracts_db.splice(idx,1);
+      summary.contractsDeleted++;
+    } else {
+      try{await saveContract(c);}
+      catch(e){console.error('Cascade contract save failed for',c._id,e);}
+      summary.contractsKept++;
+    }
+  }
+  return summary;
+}
+
+// Format a toast suffix describing the cascade outcome. Empty string if nothing
+// was cascaded. Pluralisation in French because the toasts are French.
+function _cascadeSummaryToast(s){
+  if(!s||(s.produitsRemoved===0&&s.contractsDeleted===0))return '';
+  var parts=[];
+  if(s.produitsRemoved>0)parts.push(s.produitsRemoved+' investissement'+(s.produitsRemoved>1?'s':'')+' purgé'+(s.produitsRemoved>1?'s':''));
+  if(s.contractsDeleted>0)parts.push(s.contractsDeleted+' contrat'+(s.contractsDeleted>1?'s':'')+' vidé'+(s.contractsDeleted>1?'s':'')+' supprimé'+(s.contractsDeleted>1?'s':''));
+  return ' · '+parts.join(' + ');
+}
+
+// Show the linked-deletion confirm modal. callback(action, links)
+// action ∈ {'cancel','view','archive','delete'}
+// links = array of {contract, prod} (possibly empty). The cascade is mandatory
+// per Oscar 2026-05-18 — no more "delete deal only, keep investissement" path.
 var _ddcCallback=null;
 function showDealDeleteConfirm(deal,callback){
-  var link=findLinkedInvestissement(deal);
+  var links=findAllLinkedInvestissements(deal);
+  var firstLink=links[0]||null;
   // Always show the modal (even when no linked investissement) so the user
   // can choose between archive (keep facture trace) and hard delete.
-  document.getElementById('ddcClient').textContent=link?link.contract.client:(deal.client||'—');
+  document.getElementById('ddcClient').textContent=firstLink?firstLink.contract.client:(deal.client||'—');
   document.getElementById('ddcDealLabel').textContent=(deal.client||'')+' — '+(deal.produit||'');
-  if(link){
+  if(links.length){
+    // Group by contract for a readable summary when multiple produits exist.
+    var byContract={};
+    links.forEach(function(l){
+      var cid=l.contract._id||l.contract.client;
+      if(!byContract[cid])byContract[cid]={contract:l.contract, prods:[]};
+      byContract[cid].prods.push(l.prod);
+    });
+    var lines=Object.keys(byContract).map(function(cid){
+      var g=byContract[cid];
+      var contractEmptyAfter=(g.contract.produits||[]).length===g.prods.length;
+      var prodsHtml=g.prods.map(function(p){
+        return '<div style="padding-left:12px;">· '+escH(p.name||'(sans nom)')+(p.isin?' · ISIN '+escH(p.isin):'')+'</div>';
+      }).join('');
+      return '<div style="margin-top:6px;"><b>Contrat</b> : '+escH(g.contract.client)+(g.contract.num?' (#'+escH(g.contract.num)+')':'')+(contractEmptyAfter?' <span style="color:var(--red-t);">— sera supprimé (plus aucun investissement)</span>':' <span style="color:var(--text3);">— '+g.prods.length+'/'+(g.contract.produits||[]).length+' investissement(s) retiré(s)</span>')+'</div>'+prodsHtml;
+    }).join('');
     document.getElementById('ddcDetails').innerHTML=
-      '<div><b>Investissement lié</b> : '+escH(link.prod.name||'(sans nom)')+(link.prod.isin?' · ISIN '+escH(link.prod.isin):'')+(link.prod.montant?' · '+escH(link.prod.montant):'')+'</div>'+
-      '<div style="margin-top:4px;"><b>Contrat</b> : '+escH(link.contract.client)+(link.contract.num?' (#'+escH(link.contract.num)+')':'')+'</div>';
+      '<div><b>'+links.length+' investissement'+(links.length>1?'s':'')+' lié'+(links.length>1?'s':'')+'</b> '+(Object.keys(byContract).length>1?'(sur '+Object.keys(byContract).length+' contrats)':'')+'</div>'+lines;
   } else {
     var paidNote=(deal.fSt==='Payé'||deal.fSt==='Facturé')?'<div style="margin-top:6px;color:var(--amber-t);"><b>⚠ Facture '+escH(deal.fSt.toLowerCase())+'</b> — l\'archivage est recommandé pour garder la trace.</div>':'';
     document.getElementById('ddcDetails').innerHTML=
       '<div>Statut facture : <b>'+escH(deal.fSt||'—')+'</b></div>'+
       '<div>Aucun investissement Suivi Contrats lié à ce deal.</div>'+paidNote;
   }
-  // Show / hide the "Tout supprimer" option based on link presence
-  var deleteBothBtn=document.querySelector('#dealDeleteConfirmModal .modal-ft button[onclick*="delete-both"]');
-  if(deleteBothBtn)deleteBothBtn.style.display=link?'':'none';
-  _ddcCallback=function(action){callback(action,link);};
+  _ddcCallback=function(action){callback(action,links);};
   document.getElementById('dealDeleteConfirmModal').classList.add('on');
 }
 function closeDealDeleteConfirm(){
@@ -6919,10 +7028,11 @@ async function deleteDeal(idx){
   // (e.g. concurrent filter/sort), we delete the captured `d`, not a sibling.
   // The reverse-lookup `deals.indexOf(d)` further guarantees we splice the
   // exact object — not "deal at position X" which could now be someone else.
-  showDealDeleteConfirm(d,async function(action,link){
+  showDealDeleteConfirm(d,async function(action,links){
     if(action==='cancel')return;
     if(action==='view'){
-      if(link)ctrExp[link.contract._id]=true;
+      var firstLink=links&&links[0];
+      if(firstLink)ctrExp[firstLink.contract._id]=true;
       goTo('contrats',document.querySelector('.nbtn[onclick*=contrats]'));
       return;
     }
@@ -6938,14 +7048,13 @@ async function deleteDeal(idx){
       return;
     }
     try{
+      // Cascade is mandatory (Oscar 2026-05-18) — purge all linked produits and
+      // delete any contract that becomes empty as a result.
+      var cascade=await cascadeDeleteDealLinks(d);
       if(d._id)await sbDelete('deals',d._id);
       var i=deals.indexOf(d);if(i>=0)deals.splice(i,1);
-      if(action==='delete-both'&&link){
-        link.contract.produits=(link.contract.produits||[]).filter(function(p){return p.id!==link.prod.id;});
-        await saveContract(link.contract);
-      }
       renderAll();
-      toast(action==='delete-both'?'Deal et investissement supprimés définitivement.':link?'Deal supprimé. Investissement conservé.':'Deal supprimé définitivement.');
+      toast('Deal supprimé définitivement.'+_cascadeSummaryToast(cascade));
     }catch(e){console.error(e);alert('Erreur : '+(e.message||e));}
   });
 }

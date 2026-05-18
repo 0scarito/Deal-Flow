@@ -2,17 +2,19 @@
 // Stratégie : network-first pour l'app shell (toujours essayer la dernière version,
 // fallback cache si offline). Aucune interception des appels Supabase / CDN.
 
-// Bumped 2026-05-18 — Phases I-K finishing touches:
-//   · K.1 status filter — settled deals (Deal réalisé / Deal payé) no longer
-//     auto-create a contract (Oscar's feedback : they're already closed,
-//     polluted the contracts page).
-//   · Legacy currency guard — codifs carrying GBP/CHF/JPY (predating Phase J.2's
-//     EUR+USD shrink) keep their real currency in the editor dropdown.
-//   · FX API comment drift cleaned (jsdelivr, not Frankfurter).
-//   · _enrichCodifWithRates docblock + saveDeal note on the FX re-enrichment
-//     flow.
-// (Previous: 2026-05-15 v35 — Phase K.2 contract template auto-pick.)
-const CACHE_NAME = 'dealflow-v36';
+// Bumped 2026-05-18 — Phase L.1 — Cascade-delete (Oscar 2026-05-18 rule):
+//   · Deleting a deal now purges EVERY linked produit row across all contracts
+//     (was: only the first match, via a manual user choice).
+//   · A contract emptied by the cascade is itself deleted — pas d'investissement
+//     ⇒ pas de suivi de contrat. The legacy "delete deal only / keep
+//     investissement" choice is gone — cascade is mandatory.
+//   · New helpers: findAllLinkedInvestissements (plural), cascadeDeleteDealLinks
+//     (the worker), _cascadeSummaryToast (toast formatter).
+//   · Detail / single / bulk delete paths all routed through the new helper.
+//   · Confirm modal reworked: shows multi-link breakdown per contract, flags
+//     which contracts will be deleted entirely, single "Supprimer" CTA.
+// (Previous: 2026-05-18 v36 — Phases I-K wrap + 4 cleanup fixes.)
+const CACHE_NAME = 'dealflow-v37';
 const APP_SHELL = [
   './',
   './index.html',
@@ -56,4 +58,15 @@ self.addEventListener('fetch', (event) => {
   // Ne touche pas aux POST/PUT/DELETE etc. — direct au réseau
   if (req.method !== 'GET') return;
 
-  
+  // Network-first pour same-origin GET
+  event.respondWith(
+    fetch(req)
+      .then((res) => {
+        // Update cache with fresh copy (best-effort)
+        const resClone = res.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(req, resClone)).catch(() => {});
+        return res;
+      })
+      .catch(() => caches.match(req).then((cached) => cached || caches.match('./index.html')))
+  );
+});

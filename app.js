@@ -4658,19 +4658,26 @@ async function saveDeal(){
     // fourn + first codif's ISIN + same nominal total + same trade date). Si
     // match, on demande confirmation à l'utilisateur. Évite les doubles-clics
     // sur Save + les recréations par mégarde.
+    // Phase L.3 (Oscar 2026-05-18) — duplicate check uses _dealDuplicateSignature
+    // so the inline guard and the retro scanner agree on what 'same' means.
+    // Normalisation: trim + case-fold, cents on nominal, ISIN→upper, fallback
+    // to produit name when ISIN empty. Adds dev + vendor that were missing
+    // in the legacy check (likely root cause of the Ayal Cohen false-neg).
     var duplicates=[];
     for(var j=0;j<tree.length;j++){
       var pair=tree[j];
       var pc=pair.contractData;
       var firstCodif=(pc.codifications&&pc.codifications[0])||{};
+      var candidate={
+        client:pair.client, contrat:pc.contrat, date:date,
+        nom:pc.nom, dev:pc.dev, v:vendor,
+        fourn:firstCodif.fourn, isin:firstCodif.isin, produit:firstCodif.produit,
+        codifications:pc.codifications
+      };
+      var candSig=_dealDuplicateSignature(candidate);
       var dup=deals.find(function(x){
-        if(x.client!==pair.client)return false;
-        if((x.contrat||'')!==(pc.contrat||''))return false;
-        if((x.date||'')!==(date||''))return false;
-        if(Math.abs((x.nom||0)-(pc.nom||0))>0.5)return false;
-        if((x.fourn||'')!==(firstCodif.fourn||''))return false;
-        if((x.isin||'')!==(firstCodif.isin||''))return false;
-        return true;
+        if(x.archived) return false;
+        return _dealDuplicateSignature(x)===candSig;
       });
       if(dup)duplicates.push({pair:pair, existing:dup});
     }
@@ -6996,6 +7003,91 @@ function _cascadeSummaryToast(s){
   if(s.produitsRemoved>0)parts.push(s.produitsRemoved+' investissement'+(s.produitsRemoved>1?'s':'')+' purgé'+(s.produitsRemoved>1?'s':''));
   if(s.contractsDeleted>0)parts.push(s.contractsDeleted+' contrat'+(s.contractsDeleted>1?'s':'')+' vidé'+(s.contractsDeleted>1?'s':'')+' supprimé'+(s.contractsDeleted>1?'s':''));
   return ' · '+parts.join(' + ');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Phase L.3 — Duplicate detection (Oscar 2026-05-18)
+// ═══════════════════════════════════════════════════════════════════════════
+// 'Un doublon c'est littéralement 2 fois le même deal' — same dimensions in
+// every field that identifies a deal as unique business-wise. The signature
+// normalises whitespace + case so 'Ayal Cohen' / ' Ayal  Cohen ' /
+// 'ayal cohen' all collide. Used by both the inline saveDeal check AND the
+// retroactive scanner — single source of truth.
+function _dealDuplicateSignature(d){
+  if(!d) return '';
+  var firstCodif = (d.codifications && d.codifications[0]) || {};
+  var fourn = (d.fourn || firstCodif.fourn || '').trim().toLowerCase();
+  var isin  = (d.isin  || firstCodif.isin  || '').trim().toUpperCase();
+  var prod  = (d.produit || firstCodif.produit || '').trim().toLowerCase();
+  var prodKey = isin || prod;
+  return [
+    (d.client || '').trim().toLowerCase(),
+    (d.contrat || '').trim().toLowerCase(),
+    (d.date || '').trim(),
+    Math.round((d.nom || 0) * 100),
+    (d.dev || 'EUR').trim().toUpperCase(),
+    (d.v || '').trim().toLowerCase(),
+    fourn,
+    prodKey
+  ].join('|');
+}
+
+function _scanDuplicateDeals(){
+  var bySig = {};
+  deals.forEach(function(d){
+    if(d.archived) return;
+    var sig = _dealDuplicateSignature(d);
+    if(!sig) return;
+    (bySig[sig] = bySig[sig] || []).push(d);
+  });
+  return Object.keys(bySig)
+    .map(function(s){ return bySig[s]; })
+    .filter(function(g){ return g.length > 1; })
+    .sort(function(a, b){ return b.length - a.length; });
+}
+
+function showDuplicatesReport(){
+  var groups = _scanDuplicateDeals();
+  var existing = document.getElementById('duplicatesReportModal');
+  if(existing) existing.remove();
+  var ov = document.createElement('div');
+  ov.id = 'duplicatesReportModal';
+  ov.className = 'ov on';
+  var body;
+  if(!groups.length){
+    body = '<div class="empty" style="padding:24px;">Aucun doublon détecté dans la base. Tout est propre.</div>';
+  } else {
+    var totalDup = groups.reduce(function(s, g){ return s + (g.length - 1); }, 0);
+    body = '<div style="font-size:13px;line-height:1.5;color:var(--text);margin:0 0 14px;">'+
+           '<b>'+groups.length+' groupe'+(groups.length>1?'s':'')+'</b> de doublons '+
+           'détecté'+(groups.length>1?'s':'')+' — au total <b>'+totalDup+' deal'+(totalDup>1?'s':'')+
+           '</b> en trop. Garde une copie par groupe et supprime les autres (cascade auto sur les contrats liés).</div>';
+    body += groups.map(function(group){
+      var first = group[0];
+      var hdr = '<div style="font-weight:600;font-size:12px;color:var(--text);margin-bottom:6px;">'+
+                escH(first.client||'')+' — '+escH(first.contrat||'')+' — '+escH(first.date||'')+
+                ' — '+f0(first.nom||0)+' '+escH(first.dev||'EUR')+
+                ' <span style="color:var(--red);">('+group.length+' copies)</span></div>';
+      var rows = group.map(function(d){
+        var idx = deals.indexOf(d);
+        var info = escH(d.fourn||'')+' · '+escH(d.produit||'(sans produit)')+(d.isin?' · '+escH(d.isin):'');
+        return '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px dashed var(--border);font-size:11px;">'+
+          '<span style="color:var(--text2);flex:1;">'+info+' <span class="mono" style="color:var(--text3);">'+(d._id?String(d._id).slice(0,8):'no-id')+'</span></span>'+
+          '<button class="btn btn-sm" onclick="document.getElementById(\'duplicatesReportModal\').remove();openDet(deals['+idx+']);">Voir</button>'+
+          '<button class="btn btn-sm" style="color:var(--red);border-color:var(--red-bg);" onclick="document.getElementById(\'duplicatesReportModal\').remove();deleteDeal('+idx+');">Supprimer</button>'+
+          '</div>';
+      }).join('');
+      return '<div style="background:var(--surface2);padding:10px 12px;border-radius:var(--rs);margin-bottom:8px;">'+hdr+rows+'</div>';
+    }).join('');
+  }
+  ov.innerHTML =
+    '<div class="modal" style="max-width:720px;max-height:80vh;display:flex;flex-direction:column;">'+
+      '<div class="modal-hd"><span class="modal-title">Scan des doublons</span>'+
+      '<button class="close-btn" onclick="document.getElementById(\'duplicatesReportModal\').remove();">×</button></div>'+
+      '<div class="modal-body" style="overflow-y:auto;">'+body+'</div>'+
+      '<div class="modal-ft"><button class="btn" onclick="document.getElementById(\'duplicatesReportModal\').remove();">Fermer</button></div>'+
+    '</div>';
+  document.body.appendChild(ov);
 }
 
 // Show the linked-deletion confirm modal. callback(action, links)

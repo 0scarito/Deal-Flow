@@ -2,14 +2,15 @@
 // Stratégie : network-first pour l'app shell (toujours essayer la dernière version,
 // fallback cache si offline). Aucune interception des appels Supabase / CDN.
 
-// Bumped 2026-05-18 — Phase L.2 — Deal modal UI surgical (Oscar 2026-05-18):
-//   · A1 — 'Banque' field removed from fournisseur block.
-//   · A2 — 'Assureur' field auto-hides for CTO contract type.
-//   · A3 — 'Date de maturité' always visible regardless of product type.
-//   · D — Modifier/Supprimer alignment fixed on deals list.
-//   · E — Total count + nominal sum displayed in deals filter bar.
-// (Previous: 2026-05-18 v37 — Phase L.1 cascade-delete deal → contrat.)
-const CACHE_NAME = 'dealflow-v38';
+// Bumped 2026-05-18 — Phase L.3 — Duplicate detection (Oscar 2026-05-18):
+//   · _dealDuplicateSignature — single normalised signature used by both
+//     the inline saveDeal guard and the retro scanner.
+//   · _scanDuplicateDeals — retroactive groupby on the signature.
+//   · showDuplicatesReport — modal listing duplicate groups with per-deal
+//     Voir / Supprimer actions.
+//   · 'Doublons' button added to the deals filter bar.
+// (Previous: 2026-05-18 v38 — Phase L.2 deal modal UI surgical.)
+const CACHE_NAME = 'dealflow-v39';
 const APP_SHELL = [
   './',
   './index.html',

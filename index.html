@@ -204,6 +204,8 @@
           <input type="date" id="flDateFrom" onchange="renderDeals()" title="Date de début (trade date)" style="width:auto;font-size:12px;"/>
           <input type="date" id="flDateTo" onchange="renderDeals()" title="Date de fin (trade date)" style="width:auto;font-size:12px;"/>
           <button class="btn btn-sm" onclick="resetDealFilters()" title="Réinitialiser tous les filtres" style="font-size:11px;">↺</button>
+          <!-- Phase L.3 — retroactive duplicate scanner button -->
+          <button class="btn btn-sm" onclick="showDuplicatesReport()" title="Scanner la base pour trouver les deals en doublon" style="font-size:11px;">🔍 Doublons</button>
           <!-- Total count of currently-filtered deals + nominal sum. Populated by renderDeals. -->
           <span id="dealsCount" style="font-size:11px;color:var(--text3);font-style:italic;margin-left:auto;padding-right:4px;">—</span>
         </div>

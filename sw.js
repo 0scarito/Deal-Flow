@@ -2,6 +2,17 @@
 // Stratégie : network-first pour l'app shell (toujours essayer la dernière version,
 // fallback cache si offline). Aucune interception des appels Supabase / CDN.
 
+// Bumped 2026-05-19 — Phase L.8 — Synthèse + Facturation bug fixes (Oscar 2026-05-19):
+//   · _feesToCycleRates : ct default '' (not 'UF') when no fees defined — was the
+//     root cause of empty codifs polluting the UF Suivi table.
+//   · codifEffectiveCt + dealCodifsEffective virtual codif : same default fix.
+//   · renderFact : KPI filters require ufE/runE > 0 (not just ct).
+//   · PF kpi added to factKpi (was hidden behind the PF tab).
+//   · renderSynthPipe/Realise/Paye : show 'Commissions attendues' (UF+Run/an+PF)
+//     instead of face nominal, per Oscar's framing : nominaux = money to be made.
+//   · NEW : openFournDetailModal — click any fourn name → drill-down modal with
+//     all deals of that fourn, kpis, table sortable.
+// (Previous: 2026-05-19 v44 — Phase L.7 templates v2 inline on fourn.)
 // Bumped 2026-05-19 — Phase L.7 — Templates v2 inline on fourn (Oscar 2026-05-19):
 //   · Prelim steps now live directly on fourn.prelim_steps (no more templates_db lookup).
 //   · Investment steps now live directly on fourn.products[i].investment_steps,
@@ -30,7 +41,7 @@
 //     deal with this product auto-fills correctly via the existing
 //     onDealIsinChange / _onDealProduitChange paths.
 // (Previous: 2026-05-18 v41 — Phase L.4 1 deal = 1 produit + cascade diag.)
-const CACHE_NAME = 'dealflow-v44';
+const CACHE_NAME = 'dealflow-v45';
 const APP_SHELL = [
   './',
   './index.html',

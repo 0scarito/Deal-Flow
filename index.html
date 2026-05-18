@@ -925,6 +925,18 @@
   </div>
 </div>
 
+<!-- L.8 — MODAL FOURN DETAIL (drill-down from any fourn name click) -->
+<div class="ov" id="fournDetailModal">
+  <div class="modal" style="max-width:920px;max-height:85vh;display:flex;flex-direction:column;">
+    <div class="modal-hd"><span class="modal-title" id="fournDetailTitle">Détail fournisseur</span><button class="close-btn" onclick="closeFournDetailModal()">×</button></div>
+    <div class="modal-body" style="overflow-y:auto;">
+      <div id="fournDetailKpi" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:14px;"></div>
+      <div id="fournDetailTable" style="overflow-x:auto;"></div>
+    </div>
+    <div class="modal-ft" style="display:flex;gap:8px;justify-content:flex-end;"><button class="btn" onclick="closeFournDetailModal()">Fermer</button></div>
+  </div>
+</div>
+
 <!-- MODAL BROKER -->
 <div class="ov" id="brokerModal">
   <div class="modal" style="max-width:400px;">

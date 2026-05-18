@@ -1283,11 +1283,19 @@ function renderCAChart(){
 
 
 function renderSynthPaye(){
+  // L.8 — show commissions reçues (UF payée + Run YTD payé + PF reçue), not face nominal.
+  // Iterate codif-level entries so a deal with mixed UF+Run fournisseurs contributes correctly.
   var d=filt();
   var paye=d.filter(x=>x.stat==='Deal payé');
   var nbUF=paye.filter(x=>x.ct==='UF'||x.ct==='BOTH').length;
   var nbRun=paye.filter(x=>x.ct==='RUN'||x.ct==='BOTH').length;
-  var totalUF=paye.reduce((s,x)=>s+(x.ufE||0),0);
+  // Commissions reçues = UF payée (fSt==='Payé') + Run rapprochés payés + PF rapprochés payés
+  var payeEntries=billingEntries(paye);
+  var commissionsUF=payeEntries.filter(function(e){return (e.ct==='UF'||e.ct==='BOTH')&&e.fSt==='Payé';}).reduce(function(s,e){return s+(e.ufE||0);},0);
+  var commissionsRun=rapprochement_db.filter(function(r){return r.type==='run'&&r.paid&&r.declared;}).reduce(function(s,r){return s+r.declared;},0);
+  var commissionsPF=rapprochement_db.filter(function(r){return r.type==='pf'&&r.paid&&r.declared;}).reduce(function(s,r){return s+r.declared;},0);
+  var commissionsTotal=commissionsUF+commissionsRun+commissionsPF;
+  // Face nominal (kept as secondary metric)
   var totalNom=paye.reduce((s,x)=>s+(x.dev==='USD'?x.nom/(x.fx||1):x.nom),0);
   var html=
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:4px;">'+
@@ -1297,21 +1305,32 @@ function renderSynthPaye(){
         '<div style="font-size:11px;color:var(--text2);">'+nbUF+' UF · '+nbRun+' Running</div>'+
       '</div>'+
       '<div style="background:var(--surface2);border-radius:var(--rs);padding:12px 14px;">'+
-        '<div style="font-size:11px;color:var(--text3);margin-bottom:4px;">Nominaux</div>'+
-        '<div style="font-size:22px;font-weight:600;color:var(--blue);">'+fE(totalNom)+'</div>'+
-        '<div style="font-size:11px;color:var(--text2);">Encours total</div>'+
+        '<div style="font-size:11px;color:var(--text3);margin-bottom:4px;">Commissions reçues</div>'+
+        '<div style="font-size:22px;font-weight:600;color:var(--blue);">'+fE(commissionsTotal)+'</div>'+
+        '<div style="font-size:10px;color:var(--text2);">UF: '+fE(commissionsUF)+' · Run: '+fE(commissionsRun)+' · PF: '+fE(commissionsPF)+'</div>'+
+        '<div style="font-size:10px;color:var(--text3);margin-top:3px;">Nominal investi : '+fE(totalNom)+'</div>'+
       '</div>'+
     '</div>';
   document.getElementById('synthPaye').innerHTML=html;
 }
 
 function renderSynthPipe(){
+  // L.8 — show commissions attendues (UF + Run/an + PF eq), not face nominal.
   var d=filt();
   var pipe=d.filter(x=>x.stat==='Deal pipe');
   var recent=pipe.slice().sort(function(a,b){return (b.date||'').localeCompare(a.date||'');}).slice(0,5);
+  // Iterate codifs so a deal with mixed UF+Run fournisseurs contributes both totals
+  var pipeEntries=billingEntries(pipe);
+  var totalUF =pipeEntries.filter(function(e){return (e.ct==='UF' ||e.ct==='BOTH')&&e.ufE>0;}).reduce(function(s,e){return s+e.ufE;},0);
+  var totalRun=pipeEntries.filter(function(e){return (e.ct==='RUN'||e.ct==='BOTH')&&e.runE>0;}).reduce(function(s,e){return s+e.runE;},0);
+  // PF annual equivalent : sum of perf-fee "potential" — use codif.pf config + nominal as best-effort
+  var totalPFeq=pipeEntries.filter(function(e){return e.pf&&e.pf.mode&&e.pf.mode!=='none';}).reduce(function(s,e){
+    if(e.pf.mode==='fixed') return s+(e.pf.amount||0);
+    // For pct mode, perf fee is variable — approximate as 0 (only realises if over-performing).
+    return s;
+  },0);
+  var commissionsTotal=totalUF+totalRun+totalPFeq;
   var totalNom=pipe.reduce((s,x)=>s+(x.dev==='USD'?x.nom/(x.fx||1):x.nom),0);
-  var totalUF=pipe.filter(x=>x.ct==='UF'||x.ct==='BOTH').reduce((s,x)=>s+(x.ufE||0),0);
-  var totalRun=pipe.filter(x=>x.ct==='RUN'||x.ct==='BOTH').reduce((s,x)=>s+(x.runE||0),0);
   var html=
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;">'+
       '<div style="background:var(--surface2);border-radius:var(--rs);padding:12px 14px;">'+
@@ -1320,9 +1339,10 @@ function renderSynthPipe(){
         '<div style="font-size:11px;color:var(--text2);">'+pipe.filter(x=>x.fSt==='À émettre').length+' à émettre · '+pipe.filter(x=>x.fSt==='Facturé').length+' facturés</div>'+
       '</div>'+
       '<div style="background:var(--surface2);border-radius:var(--rs);padding:12px 14px;">'+
-        '<div style="font-size:11px;color:var(--text3);margin-bottom:4px;">Nominaux en pipe</div>'+
-        '<div style="font-size:22px;font-weight:600;color:var(--green);">'+fE(totalNom)+'</div>'+
-        '<div style="font-size:11px;color:var(--text2);">UF: '+fE(totalUF)+' · Run/an: '+fE(totalRun)+'</div>'+
+        '<div style="font-size:11px;color:var(--text3);margin-bottom:4px;">Commissions attendues</div>'+
+        '<div style="font-size:22px;font-weight:600;color:var(--green);">'+fE(commissionsTotal)+'</div>'+
+        '<div style="font-size:10px;color:var(--text2);">UF: '+fE(totalUF)+' · Run/an: '+fE(totalRun)+(totalPFeq>0?' · PF: '+fE(totalPFeq):'')+'</div>'+
+        '<div style="font-size:10px;color:var(--text3);margin-top:3px;">Nominal investi : '+fE(totalNom)+'</div>'+
       '</div>'+
     '</div>';
   if(recent.length){
@@ -1330,7 +1350,7 @@ function renderSynthPipe(){
     html+=recent.map(d=>'<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);cursor:pointer;" onclick="openDet(deals['+deals.indexOf(d)+'])">'+
       '<div>'+
         '<span style="font-size:13px;font-weight:500;color:var(--text);">'+d.client+'</span>'+
-        '<span style="font-size:11px;color:var(--text2);margin-left:6px;">'+d.fourn+'</span>'+
+        '<span style="font-size:11px;color:var(--text2);margin-left:6px;text-decoration:underline;text-decoration-style:dotted;cursor:pointer;" onclick="event.stopPropagation();openFournDetailModal(\''+escAttr(d.fourn)+'\')" title="Détail de tous les deals de ce fournisseur">'+escH(d.fourn)+'</span>'+
       '</div>'+
       '<div style="display:flex;gap:8px;align-items:center;">'+
         fBadge(d.fSt)+
@@ -1342,14 +1362,21 @@ function renderSynthPipe(){
   document.getElementById('synthPipe').innerHTML=html;
 }
 function renderSynthRealise(){
+  // L.8 — show commissions attendues (UF + Run/an + PF eq), not face nominal.
   var d=filt();
   var realise=d.filter(x=>x.stat==='Deal réalisé');
   var recent=realise.slice().sort(function(a,b){return (b.date||'').localeCompare(a.date||'');}).slice(0,5);
   var nbUF=realise.filter(x=>x.ct==='UF'||x.ct==='BOTH').length;
   var nbRun=realise.filter(x=>x.ct==='RUN'||x.ct==='BOTH').length;
+  var realEntries=billingEntries(realise);
+  var totalUF =realEntries.filter(function(e){return (e.ct==='UF' ||e.ct==='BOTH')&&e.ufE>0;}).reduce(function(s,e){return s+e.ufE;},0);
+  var totalRun=realEntries.filter(function(e){return (e.ct==='RUN'||e.ct==='BOTH')&&e.runE>0;}).reduce(function(s,e){return s+e.runE;},0);
+  var totalPFeq=realEntries.filter(function(e){return e.pf&&e.pf.mode&&e.pf.mode!=='none';}).reduce(function(s,e){
+    if(e.pf.mode==='fixed') return s+(e.pf.amount||0);
+    return s;
+  },0);
+  var commissionsTotal=totalUF+totalRun+totalPFeq;
   var totalNom=realise.reduce((s,x)=>s+(x.dev==='USD'?x.nom/(x.fx||1):x.nom),0);
-  var totalUF=realise.filter(x=>x.ct==='UF'||x.ct==='BOTH').reduce((s,x)=>s+(x.ufE||0),0);
-  var totalRun=realise.filter(x=>x.ct==='RUN'||x.ct==='BOTH').reduce((s,x)=>s+(x.runE||0),0);
   var html=
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;">'+
       '<div style="background:var(--surface2);border-radius:var(--rs);padding:12px 14px;">'+
@@ -1358,9 +1385,10 @@ function renderSynthRealise(){
         '<div style="font-size:11px;color:var(--text2);">'+nbUF+' UF · '+nbRun+' Running</div>'+
       '</div>'+
       '<div style="background:var(--surface2);border-radius:var(--rs);padding:12px 14px;">'+
-        '<div style="font-size:11px;color:var(--text3);margin-bottom:4px;">Nominaux réalisés</div>'+
-        '<div style="font-size:22px;font-weight:600;color:var(--purple,#7c3aed);">'+fE(totalNom)+'</div>'+
-        '<div style="font-size:11px;color:var(--text2);">UF: '+fE(totalUF)+' · Run/an: '+fE(totalRun)+'</div>'+
+        '<div style="font-size:11px;color:var(--text3);margin-bottom:4px;">Commissions attendues</div>'+
+        '<div style="font-size:22px;font-weight:600;color:var(--purple,#7c3aed);">'+fE(commissionsTotal)+'</div>'+
+        '<div style="font-size:10px;color:var(--text2);">UF: '+fE(totalUF)+' · Run/an: '+fE(totalRun)+(totalPFeq>0?' · PF: '+fE(totalPFeq):'')+'</div>'+
+        '<div style="font-size:10px;color:var(--text3);margin-top:3px;">Nominal investi : '+fE(totalNom)+'</div>'+
       '</div>'+
     '</div>';
   if(recent.length){
@@ -1368,7 +1396,7 @@ function renderSynthRealise(){
     html+=recent.map(d=>'<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);cursor:pointer;" onclick="openDet(deals['+deals.indexOf(d)+'])">'+
       '<div>'+
         '<span style="font-size:13px;font-weight:500;color:var(--text);">'+d.client+'</span>'+
-        '<span style="font-size:11px;color:var(--text2);margin-left:6px;">'+d.fourn+'</span>'+
+        '<span style="font-size:11px;color:var(--text2);margin-left:6px;text-decoration:underline;text-decoration-style:dotted;cursor:pointer;" onclick="event.stopPropagation();openFournDetailModal(\''+escAttr(d.fourn)+'\')" title="Détail de tous les deals de ce fournisseur">'+escH(d.fourn)+'</span>'+
       '</div>'+
       '<div style="display:flex;gap:8px;align-items:center;">'+
         fBadge(d.fSt)+
@@ -3308,25 +3336,32 @@ function renderFact(){
   // to Run KPIs, instead of double-counting based on the deal's top-level ct.
   var dataDeals=filtIncludingArchived();
   var entries=billingEntries(dataDeals);
-  var ufDeals=entries.filter(d=>d.ct==='UF'||d.ct==='BOTH');
+  // L.8 fix : require ufE>0 / runE>0 (not just ct) so empty codifs don't pollute billing
+  var ufDeals=entries.filter(d=>(d.ct==='UF'||d.ct==='BOTH')&&d.ufE>0);
   var aE=ufDeals.filter(d=>d.fSt==='À émettre');
   var fa=ufDeals.filter(d=>d.fSt==='Facturé');
   var pa=ufDeals.filter(d=>d.fSt==='Payé');
   var li=ufDeals.filter(d=>d.fSt==='Litige');
   var totalFact=[...fa,...pa].reduce((s,d)=>s+d.ufE,0);
   var totalPaye=pa.reduce((s,d)=>s+d.ufE,0);
-  var totalRun=entries.filter(d=>d.ct==='RUN'||d.ct==='BOTH').reduce((s,d)=>s+d.runE,0);
-  var runDeals=entries.filter(d=>d.ct==='RUN'||d.ct==='BOTH');
+  var runDeals=entries.filter(d=>(d.ct==='RUN'||d.ct==='BOTH')&&d.runE>0);
+  var totalRun=runDeals.reduce((s,d)=>s+d.runE,0);
   var runFact=runDeals.filter(d=>d.fSt==='Facturé');
   var runPaye=runDeals.filter(d=>d.fSt==='Payé');
   var totalRunFact=0;
   rapprochement_db.filter(function(r){return r.type==='run'&&r.declared&&(r.facture||r.paid);}).forEach(function(r){totalRunFact+=r.declared;});
   var runFactNb=runFact.length+runPaye.length;
+  // L.8 — Perf fees KPI : compute total annual perf-fee equivalent from codifs with pf configured
+  var pfEntries=entries.filter(function(d){return d.pf && d.pf.mode && d.pf.mode!=='none';});
+  var pfFactTotal=0;
+  // Sum from rapprochement_db (paid/invoiced PF entries) for facturé+payé totals
+  rapprochement_db.filter(function(r){return r.type==='pf'&&r.declared&&(r.facture||r.paid);}).forEach(function(r){pfFactTotal+=r.declared;});
+  var pfPotential=pfEntries.length; // count of codifs eligible to bill perf fees
   document.getElementById('factKpi').innerHTML=
     kH('UF facturé + payé','',fE(totalFact),fa.length+pa.length+' factures')+
     kH('Running facturé + payé','',fE(totalRunFact),runFactNb+' facture'+(runFactNb!==1?'s':''))+
-    kH('UF à émettre','warn',aE.length+' facture'+(aE.length!==1?'s':''),fE(aE.reduce((s,d)=>s+d.ufE,0))+' HT')+
-    kH('Running annuel total','',fE(totalRun),'encours annualisés');
+    kH('Perf facturé + payé','',fE(pfFactTotal),pfPotential+' deal(s) avec PF')+
+    kH('UF à émettre','warn',aE.length+' facture'+(aE.length!==1?'s':''),fE(aE.reduce((s,d)=>s+d.ufE,0))+' HT');
   var show=ftab==='all'?ufDeals:ftab==='aE'?aE:ftab==='fact'?fa:ftab==='pay'?pa:li;
   document.getElementById('factList').innerHTML=show.length?
     show.slice().sort((a,b)=>b.date.localeCompare(a.date)).map(d=>fCard(d)).join(''):
@@ -3387,7 +3422,7 @@ function fCard(d){
       '<div>'+
         '<div style="font-size:11px;color:var(--text3);">'+(d.fRef||'Sans référence')+' · '+d.date+'</div>'+
         '<div style="font-size:14px;font-weight:600;margin-top:1px;">'+d.client+'</div>'+
-        '<div style="font-size:11px;color:var(--text2);">'+d.fourn+(d.produit?' · '+d.produit:'')+'</div>'+
+        '<div style="font-size:11px;color:var(--text2);"><span style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted;" onclick="event.stopPropagation();openFournDetailModal(\''+escAttr(d.fourn)+'\')" title="Détail de tous les deals de ce fournisseur">'+escH(d.fourn)+'</span>'+(d.produit?' · '+escH(d.produit):'')+'</div>'+
         '<div style="margin-top:4px;"><span class="badge bb" style="font-size:9px;">UF</span>'+devChip+' <span style="font-size:11px;color:var(--text2);">Trade date : '+(d.issue||'—')+'</span></div>'+
       '</div>'+
       '<div style="display:flex;gap:6px;align-items:center;">'+fBadge(d.fSt)+statusButtons+
@@ -5573,7 +5608,9 @@ function _feesToCycleRates(fees){
   // Round to 4 decimals to avoid binary-float artifacts (1.5+0.0 = 1.5000000001 etc).
   ufR=Math.round(ufR*10000)/10000;
   runR=Math.round(runR*10000)/10000;
-  var ct=(ufR>0 && runR>0)?'BOTH':(runR>0?'RUN':(ufR>0?'UF':'UF'));
+  // L.8 fix : default ct to '' (empty) when NO fees defined, not 'UF'.
+  // Previously 'UF' was the silent default — caused empty codifs to pollute the UF Suivi table.
+  var ct=(ufR>0 && runR>0)?'BOTH':(runR>0?'RUN':(ufR>0?'UF':''));
   return {ufR:ufR, runR:runR, ct:ct};
 }
 
@@ -5641,7 +5678,8 @@ function _enrichCodifWithRates(codif, deal){
 // its own rate and we apportion the deal-level rate by codif/deal nominal ratio).
 function codifEffectiveCt(codif, deal){
   if(codif && codif.ct) return codif.ct;
-  return (deal && deal.ct) || 'UF';
+  // L.8 fix : no silent default to 'UF' — return '' so empty codifs don't pollute billing tables
+  return (deal && deal.ct) || '';
 }
 function codifEffectiveUfR(codif, deal){
   if(codif && typeof codif.ufR==='number') return codif.ufR;
@@ -5683,7 +5721,7 @@ function dealCodifsEffective(deal){
       fourn:deal.fourn||'',produit:deal.produit||'',type:deal.produit_type||'',
       isin:deal.isin||'',broker:deal.broker||'',
       nominal:deal.nom||0,currency:deal.dev||'EUR',
-      ct:deal.ct||'UF', ufR:deal.ufR||0, runR:deal.runR||0,
+      ct:deal.ct||'', ufR:deal.ufR||0, runR:deal.runR||0, // L.8 fix : no silent 'UF' default
       ufE:deal.ufE||0, runE:deal.runE||0,
       _virtual:true // marker so callers can branch if needed (rare)
     }];
@@ -7233,6 +7271,77 @@ function showDuplicatesReport(){
 // modal grouped by confidence — Oscar confirms each line before any DB write.
 // Idempotent : a produit already linked (deal_id set) is skipped on subsequent
 // runs, so the button can stay visible without re-applying.
+
+// ── PHASE L.8 — Fourn drill-down detail modal (Oscar 2026-05-19) ─────────────
+// Click any fourn name on Synthèse / Facturation / Fourn referential opens this
+// modal listing every codif (one row per (deal × codif)) for that fournisseur :
+// client, produit, ISIN, nominal, UF€, Run€/an, PF, statut, dates.
+function openFournDetailModal(fournName){
+  if(!fournName) return;
+  var titleEl=document.getElementById('fournDetailTitle');
+  if(titleEl) titleEl.textContent='Détail — '+fournName;
+  // Pull all codif-level entries for this fourn (across all deals, archived included)
+  var entries=billingEntries(filtIncludingArchived()).filter(function(e){return e.fourn===fournName;});
+  // KPIs
+  var sumNom=entries.reduce(function(s,e){return s+(e.nominal||0);},0);
+  var sumUF =entries.filter(function(e){return (e.ct==='UF' ||e.ct==='BOTH')&&e.ufE>0; }).reduce(function(s,e){return s+e.ufE; },0);
+  var sumRun=entries.filter(function(e){return (e.ct==='RUN'||e.ct==='BOTH')&&e.runE>0;}).reduce(function(s,e){return s+e.runE;},0);
+  var sumPFCount=entries.filter(function(e){return e.pf&&e.pf.mode&&e.pf.mode!=='none';}).length;
+  var nbDeals=new Set(entries.map(function(e){return e._id;})).size;
+  var statCounts={pipe:0, realise:0, paye:0};
+  entries.forEach(function(e){
+    if(e.stat==='Deal pipe')     statCounts.pipe++;
+    else if(e.stat==='Deal réalisé') statCounts.realise++;
+    else if(e.stat==='Deal payé')    statCounts.paye++;
+  });
+  var kpiHtml=
+    '<div style="background:var(--surface2);border-radius:6px;padding:10px 12px;"><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.3px;">Nb deals</div><div style="font-size:20px;font-weight:600;margin-top:2px;">'+nbDeals+'</div><div style="font-size:10px;color:var(--text2);">'+entries.length+' codif(s)</div></div>'+
+    '<div style="background:var(--surface2);border-radius:6px;padding:10px 12px;"><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.3px;">Nominal total</div><div style="font-size:18px;font-weight:600;margin-top:2px;">'+fE(sumNom)+'</div><div style="font-size:10px;color:var(--text2);">Encours invest.</div></div>'+
+    '<div style="background:var(--surface2);border-radius:6px;padding:10px 12px;"><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.3px;">UF cumulé</div><div style="font-size:18px;font-weight:600;color:var(--blue);margin-top:2px;">'+fE(sumUF)+'</div></div>'+
+    '<div style="background:var(--surface2);border-radius:6px;padding:10px 12px;"><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.3px;">Run / an</div><div style="font-size:18px;font-weight:600;color:var(--green);margin-top:2px;">'+fE(sumRun)+'</div></div>'+
+    '<div style="background:var(--surface2);border-radius:6px;padding:10px 12px;"><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.3px;">Statuts</div><div style="font-size:11px;margin-top:4px;line-height:1.5;"><span style="color:var(--green);">●</span> Pipe : '+statCounts.pipe+'<br/><span style="color:var(--purple,#7c3aed);">●</span> Réal. : '+statCounts.realise+'<br/><span style="color:var(--blue);">●</span> Payé : '+statCounts.paye+'</div></div>';
+  if(sumPFCount){
+    kpiHtml+='<div style="background:var(--surface2);border-radius:6px;padding:10px 12px;"><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.3px;">Perf fees</div><div style="font-size:18px;font-weight:600;color:var(--amber-t);margin-top:2px;">'+sumPFCount+'</div><div style="font-size:10px;color:var(--text2);">codif(s) avec PF</div></div>';
+  }
+  var kpiHost=document.getElementById('fournDetailKpi');
+  if(kpiHost) kpiHost.innerHTML=kpiHtml;
+  // Table — one row per codif, sorted by date desc
+  entries.sort(function(a,b){return (b.date||'').localeCompare(a.date||'');});
+  var rowsHtml=entries.map(function(e){
+    var dealIdx=deals.indexOf(e.deal);
+    var statBadge=fBadge(e.fSt);
+    var statDeal=e.stat==='Deal payé'?'<span class="badge bb" style="font-size:9px;">Payé</span>':e.stat==='Deal réalisé'?'<span class="badge bg" style="font-size:9px;">Réalisé</span>':'<span class="badge ba" style="font-size:9px;">Pipe</span>';
+    var pfLabel='—';
+    if(e.pf&&e.pf.mode==='pct') pfLabel=(e.pf.rate||0)+'% / '+(e.pf.hurdle||0)+'%';
+    else if(e.pf&&e.pf.mode==='fixed') pfLabel=fE(e.pf.amount||0);
+    return '<tr style="cursor:pointer;" onclick="closeFournDetailModal();openDet(deals['+dealIdx+'])">'+
+      '<td class="mono" style="font-size:11px;">'+escH(e.date||'')+'</td>'+
+      '<td style="font-weight:500;">'+escH(e.client||'')+'</td>'+
+      '<td>'+escH(e.produit||'')+(e.isin?' <span class="mono" style="color:var(--text3);font-size:10px;">'+escH(e.isin)+'</span>':'')+'</td>'+
+      '<td style="text-align:right;" class="mono">'+f0(e.nominal||0)+' '+escH(e.currency||'EUR')+'</td>'+
+      '<td style="text-align:right;color:var(--blue);font-weight:500;">'+(e.ufE>0?fE(e.ufE):'—')+'</td>'+
+      '<td style="text-align:right;color:var(--green);font-weight:500;">'+(e.runE>0?fE(e.runE):'—')+'</td>'+
+      '<td style="font-size:10px;color:var(--amber-t);">'+pfLabel+'</td>'+
+      '<td>'+statDeal+'</td>'+
+      '<td>'+statBadge+'</td>'+
+    '</tr>';
+  }).join('');
+  var tableHtml=entries.length?
+    '<table style="width:100%;border-collapse:collapse;font-size:12px;">'+
+    '<thead><tr style="text-align:left;border-bottom:1px solid var(--border);"><th style="padding:6px 8px;">Date</th><th style="padding:6px 8px;">Client</th><th style="padding:6px 8px;">Produit / ISIN</th><th style="padding:6px 8px;text-align:right;">Nominal</th><th style="padding:6px 8px;text-align:right;">UF €</th><th style="padding:6px 8px;text-align:right;">Run €/an</th><th style="padding:6px 8px;">PF</th><th style="padding:6px 8px;">Stat</th><th style="padding:6px 8px;">Fact</th></tr></thead>'+
+    '<tbody>'+rowsHtml+'</tbody>'+
+    '</table>':
+    '<div class="empty" style="padding:24px;">Aucun deal trouvé pour ce fournisseur.</div>';
+  var tHost=document.getElementById('fournDetailTable');
+  if(tHost) tHost.innerHTML=tableHtml;
+  document.getElementById('fournDetailModal').classList.add('on');
+}
+
+function closeFournDetailModal(){
+  var m=document.getElementById('fournDetailModal');
+  if(m) m.classList.remove('on');
+}
+
 function _scoreProduitDealCandidate(produit, deal, codif){
   var score=0, why=[];
   var prodNom=parseInt(String(produit.montant||'').replace(/\D/g,''))||0;

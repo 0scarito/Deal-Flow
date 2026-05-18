@@ -206,6 +206,8 @@
           <button class="btn btn-sm" onclick="resetDealFilters()" title="Réinitialiser tous les filtres" style="font-size:11px;">↺</button>
           <!-- Phase L.3 — retroactive duplicate scanner button -->
           <button class="btn btn-sm" onclick="showDuplicatesReport()" title="Scanner la base pour trouver les deals en doublon" style="font-size:11px;">🔍 Doublons</button>
+          <!-- Phase L.6 — backfill legacy produit.deal_id (idempotent, self-hides via empty modal once done) -->
+          <button class="btn btn-sm" onclick="showBackfillReport()" title="Rétro-lier les produits legacy à leur deal pour réparer la cascade-delete" style="font-size:11px;">🔧 Backfill</button>
           <!-- Total count of currently-filtered deals + nominal sum. Populated by renderDeals. -->
           <span id="dealsCount" style="font-size:11px;color:var(--text3);font-style:italic;margin-left:auto;padding-right:4px;">—</span>
         </div>

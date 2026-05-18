@@ -7200,6 +7200,203 @@ function showDuplicatesReport(){
     '</div>';
   document.body.appendChild(ov);
 }
+// ── PHASE L.6 — BACKFILL legacy produit.deal_id (Oscar 2026-05-19) ──────────
+// One-shot maintenance tool. Scans every contract produit lacking a deal_id
+// and tries to match it heuristically to an existing deal (same client filter,
+// then scored by ISIN exact / name / nominal / fourn / type). Produces a review
+// modal grouped by confidence — Oscar confirms each line before any DB write.
+// Idempotent : a produit already linked (deal_id set) is skipped on subsequent
+// runs, so the button can stay visible without re-applying.
+function _scoreProduitDealCandidate(produit, deal, codif){
+  var score=0, why=[];
+  var prodNom=parseInt(String(produit.montant||'').replace(/\D/g,''))||0;
+  var candNom=Number(codif.nominal||0);
+  // ISIN exact = strongest signal (ISIN is unique per product instance)
+  if(produit.isin && codif.isin && produit.isin===codif.isin){ score+=10; why.push('ISIN exact'); }
+  // Name match
+  if(produit.name && codif.produit){
+    var pn=String(produit.name).toLowerCase().trim();
+    var cn=String(codif.produit).toLowerCase().trim();
+    if(pn===cn){ score+=5; why.push('nom exact'); }
+    else if(pn.indexOf(cn)>=0 || cn.indexOf(pn)>=0){ score+=2; why.push('nom partiel'); }
+  }
+  // Nominal proximity (parse "1 000 000 EUR" → 1000000)
+  if(prodNom && candNom){
+    var delta=Math.abs(prodNom-candNom)/candNom;
+    if(delta<0.001){ score+=5; why.push('nominal exact'); }
+    else if(delta<0.05){ score+=3; why.push('nominal ±5%'); }
+  }
+  // Fourn match
+  if(produit.fourn && codif.fourn && produit.fourn===codif.fourn){ score+=3; why.push('fourn match'); }
+  // Type match (fuzzy)
+  if(produit.type && codif.type){
+    var pt=String(produit.type).toLowerCase();
+    var ct=String(codif.type).toLowerCase();
+    if(pt===ct || pt.indexOf(ct)>=0 || ct.indexOf(pt)>=0){ score+=2; why.push('type match'); }
+  }
+  return { score:score, why:why };
+}
+
+function _backfillLegacyDealIds(){
+  var report=[];
+  contracts_db.forEach(function(c){
+    (c.produits||[]).forEach(function(p){
+      if(p.deal_id) return; // already linked
+      var clientDeals=deals.filter(function(d){ return d.client===c.client; });
+      var candidates=[];
+      clientDeals.forEach(function(d){
+        var codifs;
+        if(Array.isArray(d.codifications) && d.codifications.length){
+          codifs=d.codifications.map(function(co,i){
+            return { produit:co.produit, isin:co.isin, type:co.type,
+                     nominal:co.nominal, currency:co.currency, fourn:co.fourn,
+                     _idx:i, _src:'codif' };
+          });
+        } else {
+          codifs=[{ produit:d.produit, isin:d.isin, type:d.produit_type,
+                    nominal:d.nom, currency:d.dev, fourn:d.fourn,
+                    _idx:0, _src:'legacy' }];
+        }
+        codifs.forEach(function(co){
+          var sc=_scoreProduitDealCandidate(p, d, co);
+          if(sc.score>0){
+            candidates.push({
+              deal:d, codif_idx:co._idx, score:sc.score, why:sc.why,
+              label:(d.date||'?')+' · '+(co.produit||d.produit||'(sans nom)')+
+                    (co.isin?' · '+co.isin:'')+
+                    ' · '+(co.nominal?new Intl.NumberFormat('fr-FR').format(co.nominal):'0')+
+                    ' '+(co.currency||d.dev||'EUR')+
+                    (co.fourn?' · '+co.fourn:'')
+            });
+          }
+        });
+      });
+      candidates.sort(function(a,b){ return b.score-a.score; });
+      var status, top=candidates[0];
+      if(!top) status='no_match';
+      else if(top.score>=10){
+        var tied=candidates.filter(function(x){ return x.score===top.score; });
+        status=tied.length===1?'confirmed':'ambiguous';
+      }
+      else if(top.score>=5) status='likely';
+      else status='weak';
+      report.push({ contract:c, produit:p, candidates:candidates.slice(0,5), status:status });
+    });
+  });
+  return report;
+}
+
+var _bfReport=null;
+function showBackfillReport(){
+  _bfReport=_backfillLegacyDealIds();
+  var existing=document.getElementById('backfillReportModal');
+  if(existing) existing.remove();
+  var ov=document.createElement('div');
+  ov.id='backfillReportModal';
+  ov.className='ov on';
+
+  if(_bfReport.length===0){
+    ov.innerHTML=
+      '<div class="modal" style="max-width:520px;">'+
+        '<div class="modal-hd"><span class="modal-title">🔧 Backfill deal_id legacy</span>'+
+        '<button class="close-btn" onclick="document.getElementById(\'backfillReportModal\').remove();">×</button></div>'+
+        '<div class="modal-body"><div class="empty" style="padding:24px;">Aucun produit orphelin (sans <code>deal_id</code>) trouvé. Tout est déjà câblé — cascade-delete couvre toute la base.</div></div>'+
+        '<div class="modal-ft"><button class="btn" onclick="document.getElementById(\'backfillReportModal\').remove();">Fermer</button></div>'+
+      '</div>';
+    document.body.appendChild(ov);
+    return;
+  }
+
+  var bySt={ confirmed:[], ambiguous:[], likely:[], weak:[], no_match:[] };
+  _bfReport.forEach(function(r,i){ r._i=i; bySt[r.status].push(r); });
+
+  function rowHtml(r, defaultChecked){
+    var cands=r.candidates.slice(0,3).map(function(ca,k){
+      return '<div style="font-size:11px;color:var(--text2);padding:2px 0;'+(k===0?'':'opacity:.6;')+'">'+
+             (k===0?'<b>→</b> ':'   ')+escH(ca.label)+
+             ' <span class="mono" style="color:var(--text3);">[score '+ca.score+': '+ca.why.join(', ')+']</span>'+
+             '</div>';
+    }).join('');
+    var prodInfo=escH(r.produit.name||'(sans nom)')+
+                 (r.produit.isin?' · ISIN '+escH(r.produit.isin):'')+
+                 (r.produit.montant?' · '+escH(r.produit.montant):'')+
+                 (r.produit.fourn?' · '+escH(r.produit.fourn):'');
+    var cbId='bf_cb_'+r._i;
+    var chk=r.candidates.length?
+      '<input type="checkbox" id="'+cbId+'" '+(defaultChecked?'checked':'')+' style="margin-right:8px;flex-shrink:0;margin-top:3px;"/>'
+      : '<span style="width:24px;display:inline-block;flex-shrink:0;"></span>';
+    return '<div style="display:flex;align-items:flex-start;gap:8px;padding:8px 12px;border-bottom:1px dashed var(--border);">'+
+      chk+
+      '<div style="flex:1;min-width:0;">'+
+        '<div style="font-size:12px;font-weight:600;">'+escH(r.contract.client)+' — '+prodInfo+'</div>'+
+        (cands || '<div style="font-size:11px;color:var(--text3);font-style:italic;">aucun candidat</div>')+
+      '</div></div>';
+  }
+
+  function section(title, items, defaultChecked, color){
+    if(!items.length) return '';
+    return '<div style="background:var(--surface2);border-radius:var(--rs);margin-bottom:10px;overflow:hidden;border:1px solid var(--border);">'+
+      '<div style="background:'+(color||'var(--surface)')+';padding:6px 12px;font-weight:600;font-size:12px;border-bottom:1px solid var(--border);">'+
+      escH(title)+' ('+items.length+')</div>'+
+      items.map(function(r){ return rowHtml(r, defaultChecked); }).join('')+
+    '</div>';
+  }
+
+  var body=
+    '<div style="font-size:12px;line-height:1.5;margin:0 0 12px;color:var(--text);">'+
+    '<b>'+_bfReport.length+' produit'+(_bfReport.length>1?'s':'')+'</b> sans <code>deal_id</code>. Les ✅ confirmés ont un match unique fort (ISIN exact). Les 🟡 nécessitent ton OK. Les ❌ n\'ont pas de candidat exploitable.'+
+    '</div>'+
+    section('✅ Confirmés (ISIN exact, candidat unique)', bySt.confirmed, true, 'rgba(46,160,67,.15)')+
+    section('🟡 Ambigus (ISIN exact, plusieurs à égalité)', bySt.ambiguous, false, 'rgba(245,158,11,.18)')+
+    section('🟡 Vraisemblables (sans ISIN — nom+nominal+fourn forts)', bySt.likely, false, 'rgba(245,158,11,.12)')+
+    section('⚪ Faibles (score <5 — à valider manuellement)', bySt.weak, false, 'rgba(120,120,120,.12)')+
+    section('❌ Aucun candidat', bySt.no_match, false, 'rgba(220,80,80,.10)');
+
+  ov.innerHTML=
+    '<div class="modal" style="max-width:820px;max-height:85vh;display:flex;flex-direction:column;">'+
+      '<div class="modal-hd"><span class="modal-title">🔧 Backfill deal_id legacy</span>'+
+      '<button class="close-btn" onclick="document.getElementById(\'backfillReportModal\').remove();">×</button></div>'+
+      '<div class="modal-body" style="overflow-y:auto;">'+body+'</div>'+
+      '<div class="modal-ft" style="display:flex;gap:8px;justify-content:flex-end;">'+
+        '<button class="btn" onclick="document.getElementById(\'backfillReportModal\').remove();">Annuler</button>'+
+        '<button class="btn btn-prim" onclick="applyBackfillSelected()">Appliquer les cochés</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(ov);
+}
+
+async function applyBackfillSelected(){
+  if(!_bfReport){ toast('Aucun rapport en mémoire.'); return; }
+  var selected=_bfReport.filter(function(r){
+    var cb=document.getElementById('bf_cb_'+r._i);
+    return cb && cb.checked && r.candidates.length;
+  });
+  if(!selected.length){ toast('Aucune ligne cochée.'); return; }
+  if(!confirm('Appliquer '+selected.length+' match(s) ? Chaque produit ciblé recevra son deal_id + codif_idx.')) return;
+  // Group by contract to minimise saveContract calls
+  var byContract={};
+  selected.forEach(function(r){
+    var cid=r.contract._id||r.contract.client;
+    if(!byContract[cid]) byContract[cid]={ contract:r.contract, applied:0 };
+    var top=r.candidates[0];
+    if(!top) return;
+    r.produit.deal_id=top.deal._id;
+    r.produit.codif_idx=top.codif_idx;
+    byContract[cid].applied++;
+  });
+  var written=0, errors=0;
+  var keys=Object.keys(byContract);
+  for(var i=0;i<keys.length;i++){
+    var g=byContract[keys[i]];
+    try{ await saveContract(g.contract); written++; }
+    catch(e){ console.error('[backfill] saveContract failed for', keys[i], e); errors++; }
+  }
+  toast('Backfill : '+selected.length+' produit(s) liés sur '+written+' contrat(s)'+(errors?' · '+errors+' erreur(s)':'')+'.');
+  var modal=document.getElementById('backfillReportModal');
+  if(modal) modal.remove();
+  if(typeof rerenderForTable==='function'){ try{ rerenderForTable('contracts'); }catch(e){} }
+}
+
 
 // Show the linked-deletion confirm modal. callback(action, links)
 // action ∈ {'cancel','view','archive','delete'}

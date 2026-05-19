@@ -2,6 +2,35 @@
 // Stratégie : network-first pour l'app shell (toujours essayer la dernière version,
 // fallback cache si offline). Aucune interception des appels Supabase / CDN.
 
+// 2026-05-19 v62 — Intelligent alerts refactor (4 changes) :
+//   1. buildAlerts() is now PURE — pulls only from current in-memory state
+//      (deals/contracts_db/fourn_db/brokers_db/clients_db/rapprochement_db),
+//      generates stable data-derived ids (e.g. 'fourn-orph-<fourn._id>',
+//      'verif-j3-<deal_id>'), and applies NO dismissal filtering itself.
+//      Dismissal lives at the single render chokepoint (_filterDismissedAlerts
+//      called from renderAlertesPage + updateAlertBadge). Auto-resolve falls
+//      out for free : if a predicate stops matching, the id is never
+//      generated → the alert disappears regardless of dismissal status.
+//   2. "Données orphelines" false-positive fix : the v61 predicate only
+//      checked d.fourn / d.broker at the top-level of each deal, missing
+//      multi-product deals where the real fournisseur lives inside
+//      codifications[].{fourn,assureur,banque}. Rewritten to walk both
+//      top-level AND codifs[] for every non-archived deal, also catching
+//      unknown-ref alerts that live only inside codifs (new ids
+//      'unknown-cfourn-<key>-<name>', 'unknown-cbroker-<key>-<name>').
+//      Archived deals excluded from the active reference pool.
+//   3. 2-tier dismissal model added. Soft dismiss (existing) = 30-day mute,
+//      reappears if predicate still matches after window expires (button
+//      relabelled "× Plus tard"). NEW hard dismiss = permanent kill via
+//      localStorage.dealflow_alert_hard_dismissed (JSON array of alert ids,
+//      filtered at render). Confirm() guards accidental hard-dismiss.
+//      Helpers : _alertHardDismiss(id), _alertHardUndismissAll() (console
+//      reset), _isAlertHardDismissed(id), _filterDismissedAlerts(list).
+//   4. All previously-dismissable-undefined alert categories
+//      (produits / deals / contrats / rapprochement / isindup / orphans)
+//      now carry dismissable:true so the 2-tier model applies uniformly.
+//      Only pf-untracked stays dismissable:false (auto-resolves on Suivi
+//      Perf import — by design ephemeral).
 // 2026-05-19 v55 — Universal product import + L.5 modal refactor (3 changes) :
 //   1. importCSV renamed to importDealsFile, now accepts .csv/.xlsx/.xlsm.
 //      Excel parsed via SheetJS (sheet_to_json with header:1, header-name
@@ -202,7 +231,7 @@
 //     deal with this product auto-fills correctly via the existing
 //     onDealIsinChange / _onDealProduitChange paths.
 // (Previous: 2026-05-18 v41 — Phase L.4 1 deal = 1 produit + cascade diag.)
-const CACHE_NAME = 'dealflow-v61';
+const CACHE_NAME = 'dealflow-v62';
 const APP_SHELL = [
   './',
   './index.html',

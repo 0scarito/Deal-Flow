@@ -3792,6 +3792,48 @@ function dismissAlert(id, daysOverride){
   renderAlertesPage();
   renderAll&&typeof renderAll==='function'&&renderAll();
 }
+
+// v62 — HARD DISMISSAL REGISTRY ────────────────────────────────────────────
+// Soft dismiss (`dismissAlert` above) = 30-day mute; alert comes back if the
+// underlying condition is still true after the window expires.
+// Hard dismiss (`_alertHardDismiss` below) = permanent kill; the alert id is
+// stored in a separate registry, filtered out in renderAlertesPage forever.
+// Both layers respect auto-resolve : if the underlying condition disappears
+// (predicate no longer matches in buildAlerts), the alert id is never
+// generated → it doesn't appear in the list regardless of dismissal status.
+var _ALERT_HARD_DISMISS_KEY='dealflow_alert_hard_dismissed';
+var _hardDismissedAlerts=null;
+function _loadHardDismissedAlerts(){
+  if(_hardDismissedAlerts)return _hardDismissedAlerts;
+  try{
+    var raw=JSON.parse(localStorage.getItem(_ALERT_HARD_DISMISS_KEY)||'[]');
+    _hardDismissedAlerts=Array.isArray(raw)?raw:[];
+  }catch(e){_hardDismissedAlerts=[];}
+  return _hardDismissedAlerts;
+}
+function _isAlertHardDismissed(id){
+  return _loadHardDismissedAlerts().indexOf(id)!==-1;
+}
+function _alertHardDismiss(id){
+  if(!id)return;
+  if(typeof confirm==='function' && !confirm('Supprimer DÉFINITIVEMENT cette alerte ?\n\nElle ne ré-apparaîtra plus, même si le problème sous-jacent persiste. Pour la restaurer plus tard : _alertHardUndismissAll() dans la console.'))return;
+  var list=_loadHardDismissedAlerts();
+  if(list.indexOf(id)===-1){
+    list.push(id);
+    try{localStorage.setItem(_ALERT_HARD_DISMISS_KEY,JSON.stringify(list));}catch(e){}
+  }
+  if(typeof toast==='function')toast('Alerte supprimée définitivement.');
+  renderAlertesPage&&renderAlertesPage();
+  updateAlertBadge&&updateAlertBadge();
+}
+function _alertHardUndismissAll(){
+  _hardDismissedAlerts=[];
+  try{localStorage.removeItem(_ALERT_HARD_DISMISS_KEY);}catch(e){}
+  if(typeof toast==='function')toast('Toutes les alertes définitivement supprimées ont été restaurées.');
+  renderAlertesPage&&renderAlertesPage();
+  updateAlertBadge&&updateAlertBadge();
+  return 'OK — registry cleared';
+}
 function _firstOfNextMonth(date){
   return new Date(date.getFullYear(),date.getMonth()+1,1);
 }
@@ -3831,51 +3873,42 @@ function buildAlerts(){
     var key=d._id||'idx-'+deals.indexOf(d);
     var detail=(d.client||'?')+' · '+(d.fourn||'')+(d.produit?' / '+d.produit:'');
     var act={type:'deal',payload:d._id||null};
-    // J+3
+    // PREDICATE — J+3 vérif post-deal · current-state · stable id verif-j3-<deal_id>
     var j3=new Date(ref.getTime()+3*dayMs);
     if(now>=j3){
       var id3='verif-j3-'+key;
-      if(!_isAlertDismissed(id3)){
-        var ds3=Math.floor((now-j3)/dayMs);
-        alerts.push({id:id3,severity:ds3>14?'urgent':ds3>7?'warning':'info',category:'verifs',title:'Vérif J+3 — '+(d.produit||'deal'),detail:detail+' · trade '+fmtDateFR(refRaw)+(ds3>0?' · '+ds3+' j depuis la deadline':''),action:act,dismissable:true});
-      }
+      var ds3=Math.floor((now-j3)/dayMs);
+      alerts.push({id:id3,severity:ds3>14?'urgent':ds3>7?'warning':'info',category:'verifs',title:'Vérif J+3 — '+(d.produit||'deal'),detail:detail+' · trade '+fmtDateFR(refRaw)+(ds3>0?' · '+ds3+' j depuis la deadline':''),action:act,dismissable:true});
     }
-    // J+10
+    // PREDICATE — J+10 vérif post-deal · current-state · stable id verif-j10-<deal_id>
     var j10=new Date(ref.getTime()+10*dayMs);
     if(now>=j10){
       var id10='verif-j10-'+key;
-      if(!_isAlertDismissed(id10)){
-        var ds10=Math.floor((now-j10)/dayMs);
-        alerts.push({id:id10,severity:ds10>21?'urgent':ds10>10?'warning':'info',category:'verifs',title:'Vérif J+10 — '+(d.produit||'deal'),detail:detail+' · trade '+fmtDateFR(refRaw)+(ds10>0?' · '+ds10+' j depuis la deadline':''),action:act,dismissable:true});
-      }
+      var ds10=Math.floor((now-j10)/dayMs);
+      alerts.push({id:id10,severity:ds10>21?'urgent':ds10>10?'warning':'info',category:'verifs',title:'Vérif J+10 — '+(d.produit||'deal'),detail:detail+' · trade '+fmtDateFR(refRaw)+(ds10>0?' · '+ds10+' j depuis la deadline':''),action:act,dismissable:true});
     }
-    // 1er du mois suivant
+    // PREDICATE — Vérif mensuelle · current-state · stable id verif-month-<deal_id>-<YYYY-MM>
     var nextMonth=_firstOfNextMonth(ref);
     if(now>=nextMonth){
       var idM='verif-month-'+key+'-'+nextMonth.toISOString().slice(0,7);
-      if(!_isAlertDismissed(idM)){
-        alerts.push({id:idM,severity:'info',category:'verifs',title:'Vérif mensuelle — '+(d.produit||'deal'),detail:detail+' · checkpoint depuis '+fmtDateFR(nextMonth.toISOString().slice(0,10)),action:act,dismissable:true});
-      }
+      alerts.push({id:idM,severity:'info',category:'verifs',title:'Vérif mensuelle — '+(d.produit||'deal'),detail:detail+' · checkpoint depuis '+fmtDateFR(nextMonth.toISOString().slice(0,10)),action:act,dismissable:true});
     }
-    // 1er du trimestre suivant
+    // PREDICATE — Vérif trimestrielle · current-state · stable id verif-quarter-<deal_id>-<YYYY-MM>
     var nextQ=_firstOfNextQuarter(ref);
     if(now>=nextQ){
       var idQ='verif-quarter-'+key+'-'+nextQ.toISOString().slice(0,7);
-      if(!_isAlertDismissed(idQ)){
-        alerts.push({id:idQ,severity:'info',category:'verifs',title:'Vérif trimestrielle — '+(d.produit||'deal'),detail:detail+' · début de trimestre '+fmtDateFR(nextQ.toISOString().slice(0,10)),action:act,dismissable:true});
-      }
+      alerts.push({id:idQ,severity:'info',category:'verifs',title:'Vérif trimestrielle — '+(d.produit||'deal'),detail:detail+' · début de trimestre '+fmtDateFR(nextQ.toISOString().slice(0,10)),action:act,dismissable:true});
     }
   });
 
-  // FRAIS BANQUE TRIMESTRIEL (Batch B.2) — visible les 30 derniers jours du trimestre courant
+  // PREDICATE — Frais banque dépositaire · current-state (computed from today) ·
+  // stable id bank-fees-check-<YYYY-Q#> · visible les 30 derniers jours du trimestre.
   var qEnd=_quarterEndDate(now);
   var qTag=_currentQuarterTag(now);
   var daysToQEnd=Math.round((qEnd-now)/dayMs);
   if(daysToQEnd>=0&&daysToQEnd<=30){
     var bankAlertId='bank-fees-check-'+qTag;
-    if(!_isAlertDismissed(bankAlertId)){
-      alerts.push({id:bankAlertId,severity:daysToQEnd<=10?'urgent':daysToQEnd<=20?'warning':'info',category:'verifs',title:'Frais transaction banque — '+qTag+' à check',detail:'Fin de trimestre dans '+daysToQEnd+' j · vérifier les frais de transaction côté banque dépositaire',action:null,dismissable:true});
-    }
+    alerts.push({id:bankAlertId,severity:daysToQEnd<=10?'urgent':daysToQEnd<=20?'warning':'info',category:'verifs',title:'Frais transaction banque — '+qTag+' à check',detail:'Fin de trimestre dans '+daysToQEnd+' j · vérifier les frais de transaction côté banque dépositaire',action:null,dismissable:true});
   }
 
   // PRODUITS / ÉCHÉANCES
@@ -3886,7 +3919,7 @@ function buildAlerts(){
       var days=Math.round((t-now)/dayMs);
       if(days<-30||days>180)return;
       var sev=days<=30?'urgent':days<=90?'warning':'info';
-      alerts.push({id:'mat-'+(d._id||deals.indexOf(d))+'-'+df.f,severity:sev,category:'produits',title:(d.produit||'Produit')+' — '+df.lbl+' '+fmtDateFR(v),detail:(d.client||'?')+' · '+(d.produit_type?d.produit_type+' · ':'')+(d.fourn||'')+' · '+fmtDelay(days),action:{type:'deal',payload:d._id||null}});
+      alerts.push({id:'mat-'+(d._id||deals.indexOf(d))+'-'+df.f,severity:sev,category:'produits',title:(d.produit||'Produit')+' — '+df.lbl+' '+fmtDateFR(v),detail:(d.client||'?')+' · '+(d.produit_type?d.produit_type+' · ':'')+(d.fourn||'')+' · '+fmtDelay(days),action:{type:'deal',payload:d._id||null},dismissable:true});
     });
     if(Array.isArray(d.codifications)){
       d.codifications.forEach(function(c,i){
@@ -3895,7 +3928,7 @@ function buildAlerts(){
         var days=Math.round((t-now)/dayMs);
         if(days<-30||days>180)return;
         var sev=days<=30?'urgent':days<=90?'warning':'info';
-        alerts.push({id:'codifmat-'+(d._id||deals.indexOf(d))+'-'+i,severity:sev,category:'produits',title:(c.produit||'Produit')+' — Maturité '+fmtDateFR(c.maturite),detail:(d.client||'?')+' · '+(c.fourn||'')+' · '+fmtDelay(days),action:{type:'deal',payload:d._id||null}});
+        alerts.push({id:'codifmat-'+(d._id||deals.indexOf(d))+'-'+i,severity:sev,category:'produits',title:(c.produit||'Produit')+' — Maturité '+fmtDateFR(c.maturite),detail:(d.client||'?')+' · '+(c.fourn||'')+' · '+fmtDelay(days),action:{type:'deal',payload:d._id||null},dismissable:true});
       });
     }
   });
@@ -3905,30 +3938,30 @@ function buildAlerts(){
     var idx=deals.indexOf(d),key=d._id||idx;
     var ref=(d.client||'?')+' · '+(d.produit||'')+(d.fourn?' / '+d.fourn:'');
     var act={type:'deal',payload:d._id||null};
-    if(!d.client)alerts.push({id:'noclient-'+key,severity:'urgent',category:'deals',title:'Deal sans client',detail:(d.produit||'')+' · '+(d.date||''),action:act});
-    if(!d.fourn)alerts.push({id:'nofourn-'+key,severity:'urgent',category:'deals',title:'Deal sans fournisseur',detail:ref,action:act});
-    if(!d.produit)alerts.push({id:'noprod-'+key,severity:'warning',category:'deals',title:'Deal sans produit nommé',detail:ref,action:act});
-    if(!d.nom||d.nom<=0)alerts.push({id:'nonom-'+key,severity:'urgent',category:'deals',title:'Nominal nul ou manquant',detail:ref,action:act});
-    if(d.fSt==='Payé'&&!d.inv)alerts.push({id:'paid-noinv-'+key,severity:'warning',category:'deals',title:'Deal "Payé" sans n° de facture',detail:ref,action:act});
-    if(d.fSt==='Facturé'&&!d.invS)alerts.push({id:'fact-noinvs-'+key,severity:'warning',category:'deals',title:'Deal "Facturé" sans date d\'envoi',detail:ref,action:act});
-    if(d.fSt==='Litige')alerts.push({id:'litige-'+key,severity:'urgent',category:'deals',title:'Deal en litige',detail:ref,action:act});
-    if((d.ct==='UF'||d.ct==='BOTH')&&d.nom>0&&d.ufR>0&&(!d.ufE||d.ufE===0))alerts.push({id:'ufmismatch-'+key,severity:'warning',category:'deals',title:'Taux UF défini mais montant à 0',detail:ref+' · '+d.ufR+'%',action:act});
-    if((d.ct==='RUN'||d.ct==='BOTH')&&d.nom>0&&d.runR>0&&(!d.runE||d.runE===0))alerts.push({id:'runmismatch-'+key,severity:'warning',category:'deals',title:'Taux Running défini mais montant à 0',detail:ref+' · '+d.runR+'%/an',action:act});
-    if((d.ct==='RUN'||d.ct==='BOTH')&&d.runE>0&&!d.runStart&&!d.issue)alerts.push({id:'runnostart-'+key,severity:'info',category:'deals',title:'Running sans date de départ',detail:ref,action:act});
-    if(d.ct==='UF'&&(!d.ufR||d.ufR===0))alerts.push({id:'ufnone-'+key,severity:'info',category:'deals',title:'Type UF mais taux à 0',detail:ref,action:act});
+    if(!d.client)alerts.push({id:'noclient-'+key,severity:'urgent',category:'deals',title:'Deal sans client',detail:(d.produit||'')+' · '+(d.date||''),action:act,dismissable:true});
+    if(!d.fourn)alerts.push({id:'nofourn-'+key,severity:'urgent',category:'deals',title:'Deal sans fournisseur',detail:ref,action:act,dismissable:true});
+    if(!d.produit)alerts.push({id:'noprod-'+key,severity:'warning',category:'deals',title:'Deal sans produit nommé',detail:ref,action:act,dismissable:true});
+    if(!d.nom||d.nom<=0)alerts.push({id:'nonom-'+key,severity:'urgent',category:'deals',title:'Nominal nul ou manquant',detail:ref,action:act,dismissable:true});
+    if(d.fSt==='Payé'&&!d.inv)alerts.push({id:'paid-noinv-'+key,severity:'warning',category:'deals',title:'Deal "Payé" sans n° de facture',detail:ref,action:act,dismissable:true});
+    if(d.fSt==='Facturé'&&!d.invS)alerts.push({id:'fact-noinvs-'+key,severity:'warning',category:'deals',title:'Deal "Facturé" sans date d\'envoi',detail:ref,action:act,dismissable:true});
+    if(d.fSt==='Litige')alerts.push({id:'litige-'+key,severity:'urgent',category:'deals',title:'Deal en litige',detail:ref,action:act,dismissable:true});
+    if((d.ct==='UF'||d.ct==='BOTH')&&d.nom>0&&d.ufR>0&&(!d.ufE||d.ufE===0))alerts.push({id:'ufmismatch-'+key,severity:'warning',category:'deals',title:'Taux UF défini mais montant à 0',detail:ref+' · '+d.ufR+'%',action:act,dismissable:true});
+    if((d.ct==='RUN'||d.ct==='BOTH')&&d.nom>0&&d.runR>0&&(!d.runE||d.runE===0))alerts.push({id:'runmismatch-'+key,severity:'warning',category:'deals',title:'Taux Running défini mais montant à 0',detail:ref+' · '+d.runR+'%/an',action:act,dismissable:true});
+    if((d.ct==='RUN'||d.ct==='BOTH')&&d.runE>0&&!d.runStart&&!d.issue)alerts.push({id:'runnostart-'+key,severity:'info',category:'deals',title:'Running sans date de départ',detail:ref,action:act,dismissable:true});
+    if(d.ct==='UF'&&(!d.ufR||d.ufR===0))alerts.push({id:'ufnone-'+key,severity:'info',category:'deals',title:'Type UF mais taux à 0',detail:ref,action:act,dismissable:true});
     if(d.stat==='Deal pipe'&&d.date){
       var pd=new Date(d.date);
       if(!isNaN(pd)){
         var pdDays=Math.round((now-pd)/dayMs);
-        if(pdDays>180)alerts.push({id:'pipestale-'+key,severity:'warning',category:'deals',title:'Deal en pipe depuis > 6 mois',detail:ref+' · '+pdDays+' j',action:act});
-        else if(pdDays>90)alerts.push({id:'pipeolder-'+key,severity:'info',category:'deals',title:'Deal en pipe depuis > 3 mois',detail:ref+' · '+pdDays+' j',action:act});
+        if(pdDays>180)alerts.push({id:'pipestale-'+key,severity:'warning',category:'deals',title:'Deal en pipe depuis > 6 mois',detail:ref+' · '+pdDays+' j',action:act,dismissable:true});
+        else if(pdDays>90)alerts.push({id:'pipeolder-'+key,severity:'info',category:'deals',title:'Deal en pipe depuis > 3 mois',detail:ref+' · '+pdDays+' j',action:act,dismissable:true});
       }
     }
-    if(d.stat==='Deal réalisé'&&(!d.ufE||d.ufE===0)&&(!d.runE||d.runE===0))alerts.push({id:'realnoq-'+key,severity:'info',category:'deals',title:'Deal réalisé sans commission',detail:ref,action:act});
+    if(d.stat==='Deal réalisé'&&(!d.ufE||d.ufE===0)&&(!d.runE||d.runE===0))alerts.push({id:'realnoq-'+key,severity:'info',category:'deals',title:'Deal réalisé sans commission',detail:ref,action:act,dismissable:true});
     // Arbitrage pro-rata not yet billed
     var hasArbProrata=Array.isArray(d.hist)&&d.hist.some(function(h){return h.a&&h.a.indexOf('Pro-rata Running à facturer')!==-1;});
     if(hasArbProrata&&d.fSt!=='Payé'){
-      alerts.push({id:'arbprorata-'+key,severity:'warning',category:'deals',title:'Pro-rata d\'arbitrage à facturer',detail:ref+' · '+(d.arbClosed?'clôturé':'partiellement arbitré'),action:act});
+      alerts.push({id:'arbprorata-'+key,severity:'warning',category:'deals',title:'Pro-rata d\'arbitrage à facturer',detail:ref+' · '+(d.arbClosed?'clôturé':'partiellement arbitré'),action:act,dismissable:true});
     }
   });
   // ISIN duplicates with different product names
@@ -3938,7 +3971,7 @@ function buildAlerts(){
     var ds=isinMap[isin];if(ds.length<2)return;
     var names={};ds.forEach(function(d){if(d.produit)names[d.produit.trim()]=true;});
     var distinct=Object.keys(names);
-    if(distinct.length>1)alerts.push({id:'isindup-'+isin,severity:'warning',category:'deals',title:'ISIN '+isin+' avec produits différents',detail:distinct.slice(0,3).join(' / ')+(distinct.length>3?' …':''),action:null});
+    if(distinct.length>1)alerts.push({id:'isindup-'+isin,severity:'warning',category:'deals',title:'ISIN '+isin+' avec produits différents',detail:distinct.slice(0,3).join(' / ')+(distinct.length>3?' …':''),action:null,dismissable:true});
   });
 
   // SUIVI CONTRATS
@@ -3946,13 +3979,13 @@ function buildAlerts(){
     var act={type:'contract',payload:c._id};
     var pp=prelimProgress(c);
     var produits=c.produits||[];
-    if(pp.total>0&&pp.done<pp.total&&produits.length>0)alerts.push({id:'prelim-incomplete-'+c._id,severity:'warning',category:'contrats',title:'Étapes préliminaires incomplètes',detail:c.client+' · '+pp.done+'/'+pp.total+' · '+produits.length+' invest.',action:act});
-    if(produits.length===0&&pp.total>0)alerts.push({id:'noinvest-'+c._id,severity:'info',category:'contrats',title:'Contrat sans investissement',detail:c.client,action:act});
+    if(pp.total>0&&pp.done<pp.total&&produits.length>0)alerts.push({id:'prelim-incomplete-'+c._id,severity:'warning',category:'contrats',title:'Étapes préliminaires incomplètes',detail:c.client+' · '+pp.done+'/'+pp.total+' · '+produits.length+' invest.',action:act,dismissable:true});
+    if(produits.length===0&&pp.total>0)alerts.push({id:'noinvest-'+c._id,severity:'info',category:'contrats',title:'Contrat sans investissement',detail:c.client,action:act,dismissable:true});
     produits.forEach(function(p){
       var pr=prodProgress(p);
       if(pr.total>0&&pr.done<pr.total){
         var sev=pr.done===0?'warning':'info';
-        alerts.push({id:'prod-incomplete-'+c._id+'-'+p.id,severity:sev,category:'contrats',title:'Checklist incomplète — '+(p.name||'sans nom'),detail:c.client+' · '+pr.done+'/'+pr.total+' étapes',action:act});
+        alerts.push({id:'prod-incomplete-'+c._id+'-'+p.id,severity:sev,category:'contrats',title:'Checklist incomplète — '+(p.name||'sans nom'),detail:c.client+' · '+pr.done+'/'+pr.total+' étapes',action:act,dismissable:true});
       }
     });
   });
@@ -3960,20 +3993,20 @@ function buildAlerts(){
   deals.forEach(function(d){
     if(d.stat!=='Deal pipe')return;
     var hasLink=contracts_db.some(function(c){if(c.client!==d.client)return false;return (c.produits||[]).some(function(p){return p.deal_id===d._id;});});
-    if(!hasLink)alerts.push({id:'pipenocontract-'+(d._id||deals.indexOf(d)),severity:'warning',category:'contrats',title:'Deal pipe sans suivi de contrat',detail:(d.client||'')+' · '+(d.produit||''),action:{type:'deal',payload:d._id||null}});
+    if(!hasLink)alerts.push({id:'pipenocontract-'+(d._id||deals.indexOf(d)),severity:'warning',category:'contrats',title:'Deal pipe sans suivi de contrat',detail:(d.client||'')+' · '+(d.produit||''),action:{type:'deal',payload:d._id||null},dismissable:true});
   });
 
   // RAPPROCHEMENTS
   rapprochement_db.forEach(function(r){
-    if(r.declared&&!r.facture)alerts.push({id:'rappr-nofact-'+r.id,severity:'info',category:'rapprochement',title:'Rapprochement déclaré non facturé',detail:r.fourn+' · '+(r.period||'(sans période)')+' · '+f0(r.declared)+' €',action:null});
+    if(r.declared&&!r.facture)alerts.push({id:'rappr-nofact-'+r.id,severity:'info',category:'rapprochement',title:'Rapprochement déclaré non facturé',detail:r.fourn+' · '+(r.period||'(sans période)')+' · '+f0(r.declared)+' €',action:null,dismissable:true});
     if(r.facture&&!r.paid&&r.factureDate){
       var fd=new Date(r.factureDate);
       if(!isNaN(fd)){
         var fdays=Math.round((now-fd)/dayMs);
-        if(fdays>60)alerts.push({id:'rappr-unpaid-'+r.id,severity:fdays>120?'urgent':'warning',category:'rapprochement',title:'Facture impayée depuis '+fdays+' j',detail:r.fourn+' · facturée le '+fmtDateFR(r.factureDate)+' · '+f0(r.declared)+' €',action:null});
+        if(fdays>60)alerts.push({id:'rappr-unpaid-'+r.id,severity:fdays>120?'urgent':'warning',category:'rapprochement',title:'Facture impayée depuis '+fdays+' j',detail:r.fourn+' · facturée le '+fmtDateFR(r.factureDate)+' · '+f0(r.declared)+' €',action:null,dismissable:true});
       }
     }
-    if(r.declared<0)alerts.push({id:'rappr-neg-'+r.id,severity:'warning',category:'rapprochement',title:'Rapprochement avec montant négatif',detail:r.fourn+' · '+(r.period||''),action:null});
+    if(r.declared<0)alerts.push({id:'rappr-neg-'+r.id,severity:'warning',category:'rapprochement',title:'Rapprochement avec montant négatif',detail:r.fourn+' · '+(r.period||''),action:null,dismissable:true});
   });
 
   // v58 — PF on untracked product (current-state, auto-resolves when product is
@@ -4002,18 +4035,88 @@ function buildAlerts(){
     });
   });
 
-  // DONNÉES ORPHELINES
-  fourn_db.forEach(function(f){if(!deals.some(function(d){return d.fourn===f.name;}))alerts.push({id:'fourn-orph-'+f._id,severity:'info',category:'orphans',title:'Fournisseur sans deal',detail:f.name,action:null});});
-  brokers_db.forEach(function(b){if(!deals.some(function(d){return d.broker===b.name;}))alerts.push({id:'broker-orph-'+b._id,severity:'info',category:'orphans',title:'Broker sans deal',detail:b.name,action:null});});
-  clients_db.forEach(function(cl){if(!deals.some(function(d){return d.client===cl.name;})&&!contracts_db.some(function(c){return c.client===cl.name;}))alerts.push({id:'client-orph-'+cl._id,severity:'info',category:'orphans',title:'Client sans aucun deal ni contrat',detail:cl.name,action:null});});
-  var fournNames={};fourn_db.forEach(function(f){fournNames[f.name]=true;});
-  var brokerNames={};brokers_db.forEach(function(b){brokerNames[b.name]=true;});
-  var clientNames={};clients_db.forEach(function(c){clientNames[c.name]=true;});
+  // ── DONNÉES ORPHELINES (v62 — refactored for codification-awareness) ─────
+  // PREDICATE — a fournisseur is orphan if NO non-archived deal references it
+  // at top-level OR inside codifications[] (.fourn/.assureur/.banque). Same
+  // codif-aware logic for brokers. Archived deals are excluded from the
+  // 'in use' pool because the deal is soft-deleted from the operator's view.
+  // Root cause of v61 false positives : the old predicate only checked
+  // d.fourn at the top-level, missing multi-product deals where the real
+  // fournisseur lives inside codifications[] (see saveContract @660 which
+  // resolves the primary fourn from firstCodif.assureur || firstCodif.banque
+  // || firstCodif.fourn || deal.fourn). With Phase 2 codifications widely
+  // adopted, top-level d.fourn is increasingly empty → every fournisseur
+  // showed as orphan. The fix walks every non-archived deal and collects
+  // ALL referenced fourn/broker names from BOTH top-level AND codifs[].
+  var usedFournNames={}, usedBrokerNames={}, usedClientNames={};
   deals.forEach(function(d){
+    if(d.archived)return;
+    if(d.fourn)usedFournNames[d.fourn]=true;
+    if(d.broker)usedBrokerNames[d.broker]=true;
+    if(d.client)usedClientNames[d.client]=true;
+    if(Array.isArray(d.codifications)){
+      d.codifications.forEach(function(c){
+        if(!c)return;
+        if(c.fourn)usedFournNames[c.fourn]=true;
+        if(c.assureur)usedFournNames[c.assureur]=true; // assureur IS a fourn (famille=Assureur)
+        if(c.banque)usedFournNames[c.banque]=true;     // banque dépositaire IS a fourn (famille=Banque)
+        if(c.broker)usedBrokerNames[c.broker]=true;
+      });
+    }
+  });
+  // Contracts also keep clients alive (a client with only contracts, no deal yet, is NOT orphan).
+  contracts_db.forEach(function(c){if(c&&c.client)usedClientNames[c.client]=true;});
+
+  // ALERT — fournisseur referenced by zero active deals/codifs
+  fourn_db.forEach(function(f){
+    if(!f||!f.name)return;
+    if(usedFournNames[f.name])return;
+    alerts.push({id:'fourn-orph-'+f._id,severity:'info',category:'orphans',title:'Fournisseur sans deal',detail:f.name,action:null,dismissable:true});
+  });
+  // ALERT — broker referenced by zero active deals/codifs (Direct/Autre placeholders excluded)
+  brokers_db.forEach(function(b){
+    if(!b||!b.name)return;
+    if(b.name==='Direct'||b.name==='Autre')return;
+    if(usedBrokerNames[b.name])return;
+    alerts.push({id:'broker-orph-'+b._id,severity:'info',category:'orphans',title:'Broker sans deal',detail:b.name,action:null,dismissable:true});
+  });
+  // ALERT — client with no active deal and no contract
+  clients_db.forEach(function(cl){
+    if(!cl||!cl.name)return;
+    if(usedClientNames[cl.name])return;
+    alerts.push({id:'client-orph-'+cl._id,severity:'info',category:'orphans',title:'Client sans aucun deal ni contrat',detail:cl.name,action:null,dismissable:true});
+  });
+
+  // PREDICATE — a deal/codif references a fourn/broker/client name that does
+  // NOT exist in the catalogue. Walks BOTH top-level and codifs[] so multi-
+  // product deals with mismatched-only-in-codif names are caught.
+  var fournNames={};fourn_db.forEach(function(f){if(f&&f.name)fournNames[f.name]=true;});
+  var brokerNames={};brokers_db.forEach(function(b){if(b&&b.name)brokerNames[b.name]=true;});
+  var clientNames={};clients_db.forEach(function(c){if(c&&c.name)clientNames[c.name]=true;});
+  deals.forEach(function(d){
+    if(d.archived)return; // archived deals don't surface unknown-ref alerts
     var key=d._id||deals.indexOf(d);
-    if(d.fourn&&!fournNames[d.fourn])alerts.push({id:'unknown-fourn-'+key,severity:'warning',category:'orphans',title:'Deal référence un fournisseur inconnu',detail:(d.client||'?')+' · "'+d.fourn+'"',action:{type:'deal',payload:d._id||null}});
-    if(d.broker&&!brokerNames[d.broker]&&d.broker!=='Direct'&&d.broker!=='Autre')alerts.push({id:'unknown-broker-'+key,severity:'info',category:'orphans',title:'Deal référence un broker inconnu',detail:(d.client||'?')+' · "'+d.broker+'"',action:{type:'deal',payload:d._id||null}});
-    if(d.client&&!clientNames[d.client])alerts.push({id:'unknown-client-'+key,severity:'warning',category:'orphans',title:'Deal référence un client absent du fichier',detail:'"'+d.client+'" · '+(d.produit||''),action:{type:'deal',payload:d._id||null}});
+    // top-level
+    if(d.fourn&&!fournNames[d.fourn])alerts.push({id:'unknown-fourn-'+key,severity:'warning',category:'orphans',title:'Deal référence un fournisseur inconnu',detail:(d.client||'?')+' · "'+d.fourn+'"',action:{type:'deal',payload:d._id||null},dismissable:true});
+    if(d.broker&&!brokerNames[d.broker]&&d.broker!=='Direct'&&d.broker!=='Autre')alerts.push({id:'unknown-broker-'+key,severity:'info',category:'orphans',title:'Deal référence un broker inconnu',detail:(d.client||'?')+' · "'+d.broker+'"',action:{type:'deal',payload:d._id||null},dismissable:true});
+    if(d.client&&!clientNames[d.client])alerts.push({id:'unknown-client-'+key,severity:'warning',category:'orphans',title:'Deal référence un client absent du fichier',detail:'"'+d.client+'" · '+(d.produit||''),action:{type:'deal',payload:d._id||null},dismissable:true});
+    // codifications[] — deduped per deal so multi-codif w/ same bad name = single alert
+    if(Array.isArray(d.codifications)){
+      var seenCodifBad={};
+      d.codifications.forEach(function(c,ci){
+        if(!c)return;
+        ['fourn','assureur','banque'].forEach(function(field){
+          var v=c[field];if(!v||fournNames[v])return;
+          var k='cfourn|'+v;if(seenCodifBad[k])return;seenCodifBad[k]=true;
+          alerts.push({id:'unknown-cfourn-'+key+'-'+v,severity:'warning',category:'orphans',title:'Codification référence un fournisseur inconnu',detail:(d.client||'?')+' · "'+v+'" ('+field+')',action:{type:'deal',payload:d._id||null},dismissable:true});
+        });
+        if(c.broker&&!brokerNames[c.broker]&&c.broker!=='Direct'&&c.broker!=='Autre'){
+          var bk='cbroker|'+c.broker;if(!seenCodifBad[bk]){seenCodifBad[bk]=true;
+            alerts.push({id:'unknown-cbroker-'+key+'-'+c.broker,severity:'info',category:'orphans',title:'Codification référence un broker inconnu',detail:(d.client||'?')+' · "'+c.broker+'"',action:{type:'deal',payload:d._id||null},dismissable:true});
+          }
+        }
+      });
+    }
   });
 
   var order={urgent:0,warning:1,info:2};
@@ -4033,7 +4136,8 @@ function alertActionHandler(a){
 }
 
 function updateAlertBadge(){
-  var alerts=buildAlerts();
+  // v62 — apply BOTH dismissal layers so the badge count matches what's actually shown.
+  var alerts=_filterDismissedAlerts(buildAlerts());
   var urgent=alerts.filter(function(a){return a.severity==='urgent';}).length;
   var badge=document.getElementById('alertesBadge');
   if(badge){
@@ -4063,10 +4167,26 @@ function _toggleAlertCat(cat){var s=_loadAlertCollapse();s.cat[cat]=!s.cat[cat];
 function _toggleAlertDealGroup(cat,dealId){var s=_loadAlertCollapse();var k=cat+'|'+dealId;s.deal[k]=!s.deal[k];_saveAlertCollapse();renderAlertesPage();}
 function _expandAllAlerts(){var s=_loadAlertCollapse();s.cat={};s.deal={};_saveAlertCollapse();renderAlertesPage();}
 function _collapseAllAlerts(){var s=_loadAlertCollapse();Object.keys(ALERT_CATEGORIES).forEach(function(k){s.cat[k]=true;});_saveAlertCollapse();renderAlertesPage();}
+// v62 — apply BOTH dismissal layers : soft (time-bound, comes back if predicate
+// still true after window) + hard (permanent kill via _alertHardDismiss).
+// Auto-resolve : because buildAlerts is recomputed every render from current
+// state, if the underlying predicate no longer matches, the id isn't generated
+// and the alert disappears regardless of dismissal status.
+function _filterDismissedAlerts(alerts){
+  if(!Array.isArray(alerts))return [];
+  return alerts.filter(function(a){
+    if(!a||!a.id)return true;
+    if(!a.dismissable)return true; // non-dismissable alerts (e.g. pf-untracked) always show
+    if(_isAlertHardDismissed(a.id))return false; // hard kill
+    if(_isAlertDismissed(a.id))return false; // soft mute (30-day window)
+    return true;
+  });
+}
 function _renderAlertItemRow(a){
   var sv=ALERT_SEVERITY[a.severity];
   var clickable=alertActionHandler(a)?'cursor:pointer;':'';
-  var dismissBtn=a.dismissable?'<button type="button" class="alert-dismiss-btn" data-dismiss="'+escH(a.id)+'" title="Marquer comme vérifié" style="background:none;border:1px solid var(--border);color:var(--text2);cursor:pointer;font-size:10px;padding:3px 8px;border-radius:3px;margin-left:8px;">✓ Vérifié</button>':'';
+  var softBtn=a.dismissable?'<button type="button" class="alert-dismiss-btn" data-dismiss="'+escH(a.id)+'" title="Masquer 30 jours — revient si le problème persiste" style="background:none;border:1px solid var(--border);color:var(--text2);cursor:pointer;font-size:10px;padding:3px 8px;border-radius:3px;margin-left:8px;">× Plus tard</button>':'';
+  var hardBtn=a.dismissable?'<button type="button" class="alert-harddismiss-btn" data-harddismiss="'+escH(a.id)+'" title="Supprimer définitivement — ne reviendra plus jamais" style="background:none;border:1px solid var(--border);color:var(--red,#c23b3b);cursor:pointer;font-size:10px;padding:3px 8px;border-radius:3px;margin-left:4px;">🚫 Définitif</button>':'';
   return '<div class="alert-item" style="'+clickable+'" data-alertid="'+escH(a.id)+'">'+
     '<span class="adot" style="background:'+sv.color+';"></span>'+
     '<div style="flex:1;min-width:0;">'+
@@ -4074,12 +4194,14 @@ function _renderAlertItemRow(a){
       '<div style="font-size:11px;color:var(--text2);margin-top:1px;">'+escH(a.detail||'')+'</div>'+
     '</div>'+
     '<span class="badge '+sv.cls+'">'+sv.lbl+'</span>'+
-    dismissBtn+
+    softBtn+hardBtn+
   '</div>';
 }
 function renderAlertesPage(){
   if(!document.getElementById('p-alertes'))return;
-  var alerts=buildAlerts();
+  // v62 — Fix 4 wiring : pull soft+hard dismissed sets and filter at the
+  // single render chokepoint. buildAlerts is now pure (no dismissal logic).
+  var alerts=_filterDismissedAlerts(buildAlerts());
   var sevFilter=(document.getElementById('alertSeverity')||{}).value||'';
   var catFilter=(document.getElementById('alertCategory')||{}).value||'';
   if(sevFilter)alerts=alerts.filter(function(a){return a.severity===sevFilter;});
@@ -4179,6 +4301,13 @@ function renderAlertesPage(){
     btn.addEventListener('click',function(ev){
       ev.stopPropagation();
       dismissAlert(btn.dataset.dismiss);
+    });
+  });
+  // v62 — hard-dismiss button wiring (Définitif)
+  listEl.querySelectorAll('.alert-harddismiss-btn').forEach(function(btn){
+    btn.addEventListener('click',function(ev){
+      ev.stopPropagation();
+      _alertHardDismiss(btn.dataset.harddismiss);
     });
   });
 }

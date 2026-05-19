@@ -4871,32 +4871,9 @@ function openDealModal(idx){
   }
   cancelAddClient();
   rebuildFournSelect();rebuildBrokerSelect();
-  setupActivityToggle();
   document.getElementById('dealModal').classList.add('on');
 }
-// v54 — CIF/COA activity toggle (iOS-style pill). Now lives PER CONTRACT inside
-// the modal (class .dfActivityToggle) — there can be N of them in a single
-// modal. We use event delegation on the modal body so the listener is wired
-// exactly once and works for every current AND future toggle the user
-// adds (e.g. add-contract / add-client during a session).
-function setupActivityToggle(){
-  var modal=document.getElementById('dealModal');
-  if(!modal)return;
-  if(modal._activityToggleDelegated)return; // idempotent
-  modal.addEventListener('click',function(e){
-    var t=e.target&&e.target.closest&&e.target.closest('.toggle-cif-coa');
-    if(!t||!modal.contains(t))return;
-    t.dataset.value=t.dataset.value==='CIF'?'COA':'CIF';
-    _syncActivityToggleVisual(t);
-  });
-  modal._activityToggleDelegated=true;
-}
-function _syncActivityToggleVisual(el){
-  // Reflect the dataset.value into a class hook so CSS can drive thumb position
-  // + active-label color without per-event style rewriting.
-  if(el.dataset.value==='COA'){el.classList.add('is-coa');el.classList.remove('is-cif');}
-  else{el.classList.add('is-cif');el.classList.remove('is-coa');}
-}
+// v56 — Replaced iOS-style toggle with native <select class="dfActivity"> in contract block. setupActivityToggle + _syncActivityToggleVisual deleted.
 // Convert a saved deal row into the contract-shaped data the tree expects
 function _dealRowToContractData(row){
   // Map row-level perf-fees down into the first codification if codifications don't carry per-fourn pf yet
@@ -5359,9 +5336,9 @@ function _collectContractBlock(ctb){
   var nom=parseFloat(ctb.querySelector('.contractTotal').value)||0;
   var dev=ctb.querySelector('.contractDev').value;
   var depo=ctb.querySelector('.contractDepo').value;
-  // v54 — per-contract activity from the .dfActivityToggle inside this block
-  var actTog=ctb.querySelector('.dfActivityToggle');
-  var activity=(actTog&&actTog.dataset.value)||'CIF';
+  // v56 — per-contract activity from the .dfActivity select inside this block
+  var actTog=ctb.querySelector('.dfActivity');
+  var activity=(actTog&&actTog.value)||'CIF';
   if(activity!=='CIF'&&activity!=='COA')activity='CIF';
   // Commission structure may be hidden (collapsed) — query may return null; default sensibly.
   var ctEl=ctb.querySelector('.contractCT');
@@ -5523,30 +5500,19 @@ function addDealContractBlock(clientBlock,data){
       '<button type="button" class="btn-toggle-commission" onclick="toggleContractCommission(this)" style="background:none;border:1px dashed var(--border);color:var(--text2);cursor:pointer;font-size:10px;padding:3px 8px;border-radius:3px;'+(hasCommData?'display:none;':'')+'">+ Frais de structure</button>'+
       '<button type="button" class="btn btn-sm btn-remove-contract" onclick="removeDealContractBlock(this)" style="color:var(--red);border-color:var(--red-bg);font-size:10px;padding:3px 8px;">× contrat</button>'+
     '</div>'+
-    // v54 — Labels row 1 : type / activité / total / devise. Dépositaire moved to row 2.
-    '<div style="display:grid;grid-template-columns:1.3fr 150px 130px 90px;gap:6px;margin-bottom:2px;font-size:9px;color:var(--text3);font-weight:600;letter-spacing:.3px;text-transform:uppercase;">'+
-      '<span>Type de contrat</span><span>Activité</span><span>Total contrat</span><span>Devise</span>'+
+    // v56 — Single row : type / activité (select) / total / devise / dépositaire. Activité select compact (90px) frees space for Dépositaire on same row.
+    '<div style="display:grid;grid-template-columns:1.3fr 90px 130px 90px 1.5fr;gap:6px;margin-bottom:2px;font-size:9px;color:var(--text3);font-weight:600;letter-spacing:.3px;text-transform:uppercase;">'+
+      '<span>Type de contrat</span><span>Activité</span><span>Total contrat</span><span>Devise</span><span>Dépositaire</span>'+
     '</div>'+
-    // Row : type / activité / total / devise
-    '<div style="display:grid;grid-template-columns:1.3fr 150px 130px 90px;gap:6px;margin-bottom:8px;align-items:center;">'+
+    '<div style="display:grid;grid-template-columns:1.3fr 90px 130px 90px 1.5fr;gap:6px;margin-bottom:8px;align-items:center;">'+
       '<select class="contractType" onchange="_onContractTypeChange(this)">'+contratSelectHTML(data.contrat)+'</select>'+
-      '<div class="toggle-cif-coa dfActivityToggle '+((data.activity||'CIF')==='COA'?'is-coa':'is-cif')+'" data-value="'+((data.activity||'CIF')==='COA'?'COA':'CIF')+'" role="switch" aria-label="Activité CIF ou COA">'+
-        '<span class="toggle-track">'+
-          '<span class="toggle-label toggle-label-cif">CIF</span>'+
-          '<span class="toggle-label toggle-label-coa">COA</span>'+
-          '<span class="toggle-thumb"></span>'+
-        '</span>'+
-      '</div>'+
+      '<select class="dfActivity">'+
+        '<option value="CIF"'+((data.activity||'CIF')==='CIF'?' selected':'')+'>CIF</option>'+
+        '<option value="COA"'+((data.activity||'CIF')==='COA'?' selected':'')+'>COA</option>'+
+      '</select>'+
       '<input type="number" class="contractTotal" value="'+(data.nom||'')+'" placeholder="Total contrat" step="0.01" min="0" oninput="_updateContractSum(this)"/>'+
       '<select class="contractDev" onchange="_onContractDevChange(this)">'+currencySelectHTML(data.dev)+'</select>'+
-    '</div>'+
-    // v54 — Row 2 : Dépositaire alone (own line, takes ~half-width so it doesn't look lost)
-    '<div style="display:grid;grid-template-columns:1.5fr 1fr;gap:6px;margin-bottom:2px;font-size:9px;color:var(--text3);font-weight:600;letter-spacing:.3px;text-transform:uppercase;">'+
-      '<span>Dépositaire</span><span></span>'+
-    '</div>'+
-    '<div style="display:grid;grid-template-columns:1.5fr 1fr;gap:6px;margin-bottom:8px;align-items:center;">'+
       '<select class="contractDepo">'+depositaireSelectHTML(data.depositaire)+'</select>'+
-      '<span></span>'+
     '</div>'+
     // Commission structure block — collapsible
     '<div class="contract-commission" style="'+(hasCommData?'':'display:none;')+'background:var(--surface2);padding:8px 10px;border-radius:4px;margin-bottom:8px;">'+

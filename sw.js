@@ -165,12 +165,14 @@
 //     fournisseur (lookup keyed on .fourn only — assureur/banque ignored
 //     because the product is logged under the fournisseur SDG).
 //   · Fees snapshot, currency, type, pf config — all copied so the next
+// 2026-05-19 v57 — Close deal modal before save-to-catalogue popup (was popping behind).
+//   Allocation mismatch warning: red border on Total contrat + blocking confirm() if save with écart > 0.5.
 // 2026-05-19 v56 — Replaced buggy CIF/COA iOS toggle with native <select> dropdown.
 //   Dépositaire restored to same row as Type de contrat (5-col layout).
 //     deal with this product auto-fills correctly via the existing
 //     onDealIsinChange / _onDealProduitChange paths.
 // (Previous: 2026-05-18 v41 — Phase L.4 1 deal = 1 produit + cascade diag.)
-const CACHE_NAME = 'dealflow-v56';
+const CACHE_NAME = 'dealflow-v57';
 const APP_SHELL = [
   './',
   './index.html',

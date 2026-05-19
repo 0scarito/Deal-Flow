@@ -5132,6 +5132,26 @@ async function saveDeal(){
     // candidate list is normalised into the universal product-import modal
     // shape, then `auto_save_products` per-fourn lets the user opt-out of
     // future prompts. Linked-mode rows and skipped rows produce no write.
+    // v57 — Validate that Total contrat matches sum of nominaux per contract; warn before commit
+    var allocMismatch=[];
+    document.querySelectorAll('.deal-contract-block').forEach(function(ctb){
+      var totalEl=ctb.querySelector('.contractTotal');
+      var total=parseFloat(totalEl?totalEl.value:'')||0;
+      if(!total)return;
+      var sumNom=0;
+      ctb.querySelectorAll('.dfNominal').forEach(function(inp){
+        var n=parseFloat(inp.value); if(!isNaN(n)&&n>0)sumNom+=n;
+      });
+      if(Math.abs(sumNom-total)>0.5){
+        allocMismatch.push({total:total,sum:sumNom,diff:sumNom-total});
+      }
+    });
+    if(allocMismatch.length){
+      var msg='⚠ '+allocMismatch.length+' contrat(s) avec un écart entre Total contrat et somme des nominaux:\n\n';
+      allocMismatch.forEach(function(m,i){msg+='  Contrat '+(i+1)+': total '+f0(m.total)+' vs somme '+f0(m.sum)+' (écart '+f0(Math.abs(m.diff))+')\n';});
+      msg+='\nSauvegarder quand même ?';
+      if(!confirm(msg))return;
+    }
     var catalogueCandidates=[];
     var autoSaved=[];
     for(var ci=0;ci<tree.length;ci++){
@@ -5189,6 +5209,8 @@ async function saveDeal(){
     }
     if(autoSaved.length) toast(autoSaved.length+' produit(s) sauvés auto.');
     if(catalogueCandidates.length){
+      // v57 — Close deal modal first so save-to-catalogue popup is visible (was popping behind dealModal)
+      closeDM();
       var result=await _showSaveToCatalogueModal(catalogueCandidates);
       // commitList already applied inside the modal confirm handler — nothing
       // else to do here except log.
@@ -6395,15 +6417,27 @@ function _updateContractSum(anyChildOrContract){
   var dealCur=devEl?devEl.value:'EUR';
   var sumEl=contract.querySelector('.contract-sum');
   if(!sumEl)return;
-  if(!sumNom&&!total){sumEl.style.display='none';return;}
+  if(!sumNom&&!total){
+    sumEl.style.display='none';
+    if(totalEl)totalEl.style.borderColor='';
+    return;
+  }
   var sym=_curSymbol(dealCur);
   var sumPart='<b>Σ fourns</b> : '+f0(sumNom)+' '+sym;
   var totalPart='<b>Total contrat</b> : '+f0(total)+' '+sym;
   var warning='';
+  // v57 — visible warning: red border on .contractTotal when mismatch > 0.5 EUR
   if(total){
     var diff=sumNom-total;
-    if(Math.abs(diff)<0.5)warning=' <span style="color:var(--green);">✓ équilibré</span>';
-    else warning=' <span style="color:var(--red);">⚠ écart '+f0(Math.abs(diff))+' '+sym+'</span>';
+    if(Math.abs(diff)<0.5){
+      warning=' <span style="color:var(--green);">✓ équilibré</span>';
+      if(totalEl)totalEl.style.borderColor='';
+    } else {
+      warning=' <span style="color:var(--red);font-weight:600;">⚠ écart '+f0(Math.abs(diff))+' '+sym+'</span>';
+      if(totalEl)totalEl.style.borderColor='var(--red)';
+    }
+  } else {
+    if(totalEl)totalEl.style.borderColor='';
   }
   sumEl.innerHTML=sumPart+' &nbsp;·&nbsp; '+totalPart+warning;
   sumEl.style.display='';

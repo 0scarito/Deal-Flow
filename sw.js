@@ -2,7 +2,41 @@
 // Stratégie : network-first pour l'app shell (toujours essayer la dernière version,
 // fallback cache si offline). Aucune interception des appels Supabase / CDN.
 
-// 2026-05-19 v51 — Phase M.1 + M.2 + M.3 bundled: dynamic vendor management
+// 2026-05-19 v53 — CIF/COA activity type system :
+//   1. New `activity` column on deals table (text, default 'CIF', check
+//      constraint CIF|COA, backfilled). Migration SQL in db/deals_activity_v53.sql.
+//   2. Deal modal Line 1 promoted from 3 -> 4 columns (Vendeur / Trade date /
+//      Statut / Activité). Activité is an iOS-style pill toggle (CIF left blue,
+//      COA right green) — click slides the thumb. data-value drives JS, .is-cif /
+//      .is-coa class drives the CSS thumb position + active-label color.
+//   3. rowToDeal mapper defaults d.activity to 'CIF' for legacy rows that
+//      haven't been touched since migration. _buildDealRowFromContract carries
+//      activity through to the upsert payload. setupActivityToggle() is wired
+//      in openDealModal() (idempotent — _activityToggleWired flag).
+//   4. Pilotage : new 'Activité — répartition CIF vs COA' card at the bottom
+//      of the page. Two cells (CIF blue / COA green), each showing nb clients
+//      distincts, nb fournisseurs distincts, CA total (UF+Run+PF paid for the
+//      current year). renderActivite() runs inside renderCharts(); Running
+//      attribution uses fourn-set heuristic on rapprochement_db (no schema
+//      change there). Correlation one-liner summarises the % split.
+// (Previous: 2026-05-19 v52 — UX polish bundle (4 small fixes):
+//   1. Suivi Contrats : standalone "Templates de contrats" section removed
+//      (was top of page, dead code since L.7 — templates now managed inline
+//      per fournisseur). renderTemplatesPanel/toggleTemplatesPanel/ctrTemplatesOpen
+//      all dropped. openTemplateModal/confirmDeleteTemplate kept (still used by
+//      the inline fourn UI).
+//   2. Pilotage : "Répartition par devise (nominal)" chart moved next to
+//      "Pipeline & facturation — par statut" inside a single .g2 grid. Pipeline
+//      had been full-width since v50 (Audrey vs David removal); now both charts
+//      share the row, height-balanced at 220px each.
+//   3. Deal modal : Broker dropdown moved from Row 1 (alongside Fournisseur /
+//      Produit / Type / ISIN / Maturité) to Row 2 (next to Assureur + Nominal).
+//      Row 1 grid shrinks from 7 → 6 columns. All ids/handlers/.dfBroker class
+//      preserved — save path at saveDeal() unchanged.
+//   4. KPI titles : verified already dynamic via String(new Date().getFullYear()).
+//      No hardcoded year in any KPI label (CA total, UF payés, Running payés,
+//      Perf fees, Chiffre d'affaires). Confirmed clean — no edit needed.
+// (Previous: 2026-05-19 v51 — Phase M.1 + M.2 + M.3 bundled: dynamic vendor management
 //   (vendeurs_db schema + Équipe CRUD UI + sidebar/deal-form/client-form pickers data-driven).
 //   · New table vendeurs_db (id/name/color/initial/sort_order/created_at/archived_at)
 //     seeded with Audrey(blue) + David(green). RLS open. SQL in db/vendeurs_db_M1.sql.
@@ -90,7 +124,7 @@
 //     deal with this product auto-fills correctly via the existing
 //     onDealIsinChange / _onDealProduitChange paths.
 // (Previous: 2026-05-18 v41 — Phase L.4 1 deal = 1 produit + cascade diag.)
-const CACHE_NAME = 'dealflow-v51';
+const CACHE_NAME = 'dealflow-v53';
 const APP_SHELL = [
   './',
   './index.html',

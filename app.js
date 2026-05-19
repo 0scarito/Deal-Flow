@@ -38,6 +38,7 @@ function _detectMissingDealCol(err){
 function rowToDeal(r){
   var d=Object.assign({},r);
   d._id=d.id; delete d.id; delete d.created_at; delete d.updated_at;
+  d.activity=d.activity||'CIF';
   d.ufR=d.uf_r; d.runR=d.run_r; d.ufE=d.uf_e; d.runE=d.run_e;
   d.invS=d.inv_s; d.fSt=d.f_st; d.fRef=d.f_ref;
   d.arbId=d.arb_id; d.arbSrc=d.arb_src; d.arbClosed=d.arb_closed;
@@ -4217,6 +4218,7 @@ function legendChip(color,label,suffix){
 function renderCharts(){
   renderPilotageKpis();
   renderEncoursGlobaux();
+  renderActivite();
   var data=filt();
   var year=String(new Date().getFullYear());
 
@@ -4833,6 +4835,9 @@ function openDealModal(idx){
     document.getElementById('mDate').value=d.date||today();
     document.getElementById('mStat').value=d.stat||'Deal pipe';
     document.getElementById('mNotes').value=d.notes||'';
+    // v53 — activity toggle (CIF default for legacy rows without column)
+    var actToggleE=document.getElementById('mActivityToggle');
+    if(actToggleE){actToggleE.dataset.value=d.activity||'CIF';_syncActivityToggleVisual(actToggleE);}
     // Group rows: if dealGroupId set, find siblings; else single-row legacy edit
     var groupRows=[];
     if(d.dealGroupId){
@@ -4861,13 +4866,39 @@ function openDealModal(idx){
     document.getElementById('mV').value=defaultV;
     document.getElementById('mStat').value='Deal pipe';
     document.getElementById('mNotes').value='';
+    // v53 — activity toggle defaults to CIF on new deals
+    var actToggleN=document.getElementById('mActivityToggle');
+    if(actToggleN){actToggleN.dataset.value='CIF';_syncActivityToggleVisual(actToggleN);}
     var addBtn=document.getElementById('dealAddClientBtn');
     if(addBtn)addBtn.style.display='';
     addDealClientBlock('');
   }
   cancelAddClient();
   rebuildFournSelect();rebuildBrokerSelect();
+  setupActivityToggle();
   document.getElementById('dealModal').classList.add('on');
+}
+// v53 — CIF/COA activity toggle (iOS-style pill). Click toggles state, visual
+// + dataset stay in sync. Listener is idempotent: re-attaching is a no-op via
+// _activityToggleWired flag, so calling setupActivityToggle() inside every
+// openDealModal() is safe.
+function setupActivityToggle(){
+  var el=document.getElementById('mActivityToggle');
+  if(!el)return;
+  if(!el._activityToggleWired){
+    el.addEventListener('click',function(){
+      this.dataset.value=this.dataset.value==='CIF'?'COA':'CIF';
+      _syncActivityToggleVisual(this);
+    });
+    el._activityToggleWired=true;
+  }
+  _syncActivityToggleVisual(el);
+}
+function _syncActivityToggleVisual(el){
+  // Reflect the dataset.value into a class hook so CSS can drive thumb position
+  // + active-label color without per-event style rewriting.
+  if(el.dataset.value==='COA'){el.classList.add('is-coa');el.classList.remove('is-cif');}
+  else{el.classList.add('is-cif');el.classList.remove('is-coa');}
 }
 // Convert a saved deal row into the contract-shaped data the tree expects
 function _dealRowToContractData(row){
@@ -4976,6 +5007,10 @@ async function saveDeal(){
   var date=document.getElementById('mDate').value;
   var stat=document.getElementById('mStat').value;
   var notes=document.getElementById('mNotes').value;
+  // v53 — capture CIF/COA activity from toggle (default CIF if widget missing)
+  var actEl=document.getElementById('mActivityToggle');
+  var activity=(actEl&&actEl.dataset.value)||'CIF';
+  if(activity!=='CIF'&&activity!=='COA')activity='CIF';
   // Phase 3 — Pre-fetch FX rates for every non-EUR contract currency.
   // Each currency is fetched once; the result is reused for all contracts in that currency.
   // FX is snapshotted as-of the trade date (immutable per deal — Q1A pattern, currency edition).
@@ -5019,7 +5054,7 @@ async function saveDeal(){
       var origRow=deals.find(function(x){return x._id===origId;});
       if(!origRow)continue;
       var prevHist=Array.isArray(origRow.hist)?origRow.hist:[];
-      var rowPayload=_buildDealRowFromContract(pair,vendor,date,stat,notes,groupId,fxByDev);
+      var rowPayload=_buildDealRowFromContract(pair,vendor,date,stat,notes,groupId,fxByDev,activity);
       rowPayload._id=origId;
       rowPayload.hist=prevHist.concat([{ts:nowS(),a:'Deal modifié',by:vendor}]);
       // Audit fix — preserve workflow / lifecycle fields that the modal doesn't manage,
@@ -5180,7 +5215,7 @@ async function saveDeal(){
       }
     }
     for(var j=0;j<tree.length;j++){
-      var rowPayload=_buildDealRowFromContract(tree[j],vendor,date,stat,notes,groupId,fxByDev);
+      var rowPayload=_buildDealRowFromContract(tree[j],vendor,date,stat,notes,groupId,fxByDev,activity);
       rowPayload.hist=[{ts:nowS(),a:'Deal créé',by:vendor}];
       var res=await sbInsert('deals',rowPayload);
       if(res&&res[0])rowPayload._id=res[0].id;
@@ -5206,7 +5241,7 @@ function _genGroupId(){
   if(typeof crypto!=='undefined'&&crypto.randomUUID)return 'g_'+crypto.randomUUID();
   return 'g_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,8);
 }
-function _buildDealRowFromContract(pair,vendor,date,stat,notes,groupId,fxByDev){
+function _buildDealRowFromContract(pair,vendor,date,stat,notes,groupId,fxByDev,activity){
   var c=pair.contractData;
   var firstCodif=(c.codifications&&c.codifications[0])||{};
   // Legacy deal-level pf : kept as a no-op marker (per-fourn pf is the source of truth now)
@@ -5272,7 +5307,8 @@ function _buildDealRowFromContract(pair,vendor,date,stat,notes,groupId,fxByDev){
     pf:legacyPf,
     fSt:'À émettre',fRef:'',
     notes:notes||'',
-    dealGroupId:groupId||null
+    dealGroupId:groupId||null,
+    activity:activity||'CIF'
   };
 }
 function _collectDealTree(){
@@ -5535,11 +5571,11 @@ function _appendDealFournBlock(contractBlock,data){
   // Was: 4+ identical inline style strings duplicated through this template.
   fournBlock.innerHTML=
     // Row 1 labels (Oscar 2026-05-18 — Maturité always visible, "on sait jamais")
-    '<div class="field-caption" style="display:grid;grid-template-columns:1.3fr 1.3fr 130px 110px 1fr 130px 28px;gap:6px;margin-bottom:2px;">'+
-      '<span>Fournisseur (SDG)</span><span>Produit / Support</span><span>Type</span><span>ISIN</span><span>Broker</span><span>Maturité</span><span></span>'+
+    '<div class="field-caption" style="display:grid;grid-template-columns:1.3fr 1.3fr 130px 110px 130px 28px;gap:6px;margin-bottom:2px;">'+
+      '<span>Fournisseur (SDG)</span><span>Produit / Support</span><span>Type</span><span>ISIN</span><span>Maturité</span><span></span>'+
     '</div>'+
     // Row 1 inputs
-    '<div style="display:grid;grid-template-columns:1.3fr 1.3fr 130px 110px 1fr 130px 28px;gap:6px;align-items:center;margin-bottom:6px;">'+
+    '<div style="display:grid;grid-template-columns:1.3fr 1.3fr 130px 110px 130px 28px;gap:6px;align-items:center;margin-bottom:6px;">'+
       '<select class="dfFourn" onchange="onDealFournChange(this)">'+fournOptHtml(data.fourn)+'</select>'+
       // Phase G.3 — produit input fires onProduitChange so picking a catalogue
       // produit (via datalist or matching text) auto-fills ISIN + type + fees
@@ -5547,7 +5583,7 @@ function _appendDealFournBlock(contractBlock,data){
       '<input list="'+prodListId+'" type="text" class="dfProduit" value="'+(data.produit||'')+'" placeholder="ex: A acc EUR" oninput="_onDealProduitChange(this)" onchange="_onDealProduitChange(this)"/>'+
       '<select class="dfType" onchange="onDealTypeChange(this)">'+produitTypeOptHtml(data.type)+'</select>'+
       '<input list="'+listId+'" type="text" class="dfISIN" value="'+(data.isin||'')+'" placeholder="FR00…" style="font-family:monospace;font-size:11px;" onchange="onDealIsinChange(this)" oninput="onDealIsinChange(this)"/>'+
-      '<select class="dfBroker">'+brokerOptHtml(data.broker)+'</select>'+
+      // v52 — Broker moved out of Row 1 into Row 2 (next to Assureur, see below).
       // A3 (Oscar 2026-05-18) — Maturité always shown.
       '<input type="date" class="dfMaturite" value="'+(data.maturite||'')+'"/>'+
       '<button type="button" onclick="removeDealFournBlock(this)" title="Retirer ce fournisseur" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:18px;padding:0;line-height:1;">×</button>'+
@@ -5559,6 +5595,11 @@ function _appendDealFournBlock(contractBlock,data){
       '<div class="dfAssureurWrap" style="flex:1.5;">'+
         '<div class="field-caption" style="margin-bottom:2px;"><span>Assureur</span></div>'+
         '<select class="dfAssureur">'+assureurSelectHTML(data.assureur)+'</select>'+
+      '</div>'+
+      // v52 — Broker relocated here, next to Assureur (was on Row 1, freed space + better balance)
+      '<div style="flex:1;">'+
+        '<div class="field-caption" style="margin-bottom:2px;"><span>Broker</span></div>'+
+        '<select class="dfBroker">'+brokerOptHtml(data.broker)+'</select>'+
       '</div>'+
       '<div style="width:150px;">'+
         '<div class="field-caption" style="margin-bottom:2px;"><span>Nominal</span></div>'+
@@ -9726,40 +9767,9 @@ function renderContratsStats(){
   if(el)el.innerHTML=html;
 }
 
-function renderTemplatesPanel(){
-  var el=document.getElementById('templatesPanel');if(!el)return;
-  var open=ctrTemplatesOpen;
-  if(!templates_db.length){
-    el.innerHTML='<div style="display:flex;align-items:center;gap:10px;padding:8px 0;"><span style="font-size:12px;color:var(--text2);">Aucun template défini.</span><div style="flex:1;"></div><button class="btn btn-sm btn-primary" onclick="openTemplateModal()">+ Créer un template</button></div>';
-    return;
-  }
-  var header='<div style="display:flex;align-items:center;gap:10px;cursor:pointer;" onclick="toggleTemplatesPanel()">'+
-    '<span style="font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;">Templates de contrats <span style="background:var(--surface2);padding:1px 8px;border-radius:999px;font-weight:500;">'+templates_db.length+'</span></span>'+
-    '<div style="flex:1;"></div>'+
-    '<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();openTemplateModal()">+ Nouveau template</button>'+
-    '<span class="chev'+(open?' open':'')+'" style="font-size:14px;color:var(--text2);">▾</span>'+
-  '</div>';
-  if(!open){el.innerHTML=header;return;}
-  el.innerHTML=header+
-    '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;margin-top:10px;">'+
-    templates_db.map(function(t){
-      return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--rs);padding:12px 14px;display:flex;flex-direction:column;gap:6px;">'+
-        '<div style="display:flex;align-items:center;gap:8px;">'+
-          '<span style="font-size:13px;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+escH(t.name)+'</span>'+
-          '<button class="btn btn-sm" style="padding:3px 8px;font-size:11px;" onclick="openTemplateModal(\''+t._id+'\')">✎</button>'+
-          '<button class="btn btn-sm" style="padding:3px 8px;font-size:11px;color:var(--red);border-color:var(--red-bg);" onclick="confirmDeleteTemplate(\''+t._id+'\')">×</button>'+
-        '</div>'+
-        '<div style="font-size:11px;color:var(--text2);">'+(t.prelim||[]).length+' étape'+((t.prelim||[]).length>1?'s':'')+' préliminaire'+((t.prelim||[]).length>1?'s':'')+' · '+(t.step_packs||[]).length+' pack'+((t.step_packs||[]).length>1?'s':'')+' d\'investissement</div>'+
-        ((t.step_packs||[]).length?'<div style="font-size:11px;color:var(--text3);margin-top:2px;">'+(t.step_packs||[]).map(function(p){return escH(p.name)+' ('+(p.steps||[]).length+')';}).join(' · ')+'</div>':'')+
-      '</div>';
-    }).join('')+
-    '</div>';
-}
-var ctrTemplatesOpen=true;
-function toggleTemplatesPanel(){ctrTemplatesOpen=!ctrTemplatesOpen;renderTemplatesPanel();}
+// v52 — renderTemplatesPanel/toggleTemplatesPanel/ctrTemplatesOpen removed (standalone "Templates de contrats" section in Suivi Contrats dropped; templates now managed inline per-fournisseur since L.7)
 
 function renderContrats(){
-  renderTemplatesPanel();
   renderContratsStats();
   var search=(document.getElementById('ctSearch')?document.getElementById('ctSearch').value:'').toLowerCase();
   var stat=document.getElementById('ctStat')?document.getElementById('ctStat').value:'';
@@ -10829,5 +10839,73 @@ function showReloadingToast(){
 }
 // Poll every 30s. Cache-busted fetch so GitHub Pages CDN serves fresh content.
 function startCodeWatcher(){checkCodeUpdate();setInterval(checkCodeUpdate,30000);}
+
+// v53 — Pilotage Activité section. Breaks the (vendor-filtered) deals into
+// CIF vs COA, reports nb clients distincts, nb fournisseurs distincts, and CA
+// total per activity. CA total here = sum of paid/realised UF + Running + PF
+// across the year-to-date — matches the inv-month rule used in computeYearTotals
+// (UF/PF paid via deal.fSt='Payé' + inv year prefix; Running via rapprochement_db).
+// Vendor filter is applied via filt() so the Audrey/David/Tous toggle drives the
+// breakdown too.
+function renderActivite(){
+  if(typeof document==='undefined')return;
+  var grid=document.getElementById('actCIFClients');
+  if(!grid)return; // section not in DOM yet (e.g. early init)
+  var year=String(new Date().getFullYear());
+  var d=filt();
+  function bucketAct(act){
+    var rows=d.filter(function(x){return (x.activity||'CIF')===act;});
+    var clientSet={},fournSet={};
+    rows.forEach(function(r){
+      if(r.client)clientSet[r.client]=true;
+      // Pull every fourn referenced — top-level + each codif (multi-fourn deals)
+      if(r.fourn)fournSet[r.fourn]=true;
+      (r.codifications||[]).forEach(function(c){if(c.fourn)fournSet[c.fourn]=true;});
+    });
+    // CA breakdown — UF + PF from deals (paid in `year`), Running from rapprochement_db
+    var ufPaid=rows.filter(function(x){return (x.ct==='UF'||x.ct==='BOTH')&&x.fSt==='Payé'&&x.inv&&x.inv.startsWith(year);});
+    var tUF=ufPaid.reduce(function(s,x){return s+(x.ufE||0);},0);
+    var tPF=0;
+    rows.filter(function(x){return x.fSt==='Payé'&&x.inv&&x.inv.startsWith(year)&&x.pf&&x.pf.mode!=='none';})
+        .forEach(function(x){if(x.pf.amount)tPF+=x.pf.amount;});
+    // Running — match by fourn: any rapprochement row whose fourn is in this activity's
+    // fournSet AND is paid + declared + ends with current year. Best-effort attribution
+    // because rapprochement_db doesn't carry activity directly; the fourn-set heuristic
+    // is the cleanest mapping available without schema changes.
+    var tRun=0;
+    if(typeof rapprochement_db!=='undefined'&&Array.isArray(rapprochement_db)){
+      rapprochement_db.filter(function(r){
+        return r.type==='run'&&r.paid&&r.declared&&r.period&&r.period.endsWith('_'+year)&&fournSet[r.fourn];
+      }).forEach(function(r){tRun+=r.declared;});
+    }
+    return{
+      nbClients:Object.keys(clientSet).length,
+      nbFourns:Object.keys(fournSet).length,
+      ca:tUF+tRun+tPF
+    };
+  }
+  var cif=bucketAct('CIF'), coa=bucketAct('COA');
+  document.getElementById('actCIFClients').textContent=cif.nbClients;
+  document.getElementById('actCIFFourns').textContent=cif.nbFourns;
+  document.getElementById('actCIFCA').textContent=(typeof fE==='function')?fE(cif.ca):('€'+cif.ca);
+  document.getElementById('actCOAClients').textContent=coa.nbClients;
+  document.getElementById('actCOAFourns').textContent=coa.nbFourns;
+  document.getElementById('actCOACA').textContent=(typeof fE==='function')?fE(coa.ca):('€'+coa.ca);
+  // Year labels
+  document.querySelectorAll('.actYearCIF, .actYearCOA').forEach(function(el){el.textContent=year;});
+  // Correlation one-liner
+  var total=cif.ca+coa.ca;
+  var corr=document.getElementById('actCorrelation');
+  if(corr){
+    if(total>0){
+      var pCif=Math.round(cif.ca*100/total), pCoa=100-pCif;
+      corr.textContent=pCif+'% du CA vient de CIF, '+pCoa+'% de COA · '+(cif.nbClients+coa.nbClients)+' clients distincts, '+(Object.keys(Object.assign({}, _activitySetUnion(cif,coa))).length || (cif.nbFourns+coa.nbFourns))+' lignes fournisseurs total.';
+    } else {
+      corr.textContent='Aucun CA encaissé '+year+' — la répartition se calculera dès les premiers paiements.';
+    }
+  }
+}
+// Tiny helper for correlation copy — kept here so the renderer stays single-purpose.
+function _activitySetUnion(a,b){var o={};return o;}
 
 checkAuth();

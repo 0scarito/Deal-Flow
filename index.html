@@ -474,14 +474,36 @@
           <div class="card"><div class="card-hd">Mix par type de produit (encours)</div><div style="position:relative;height:200px;"><canvas id="cTypeProd"></canvas></div><div id="legTypeProd" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;font-size:11px;color:var(--text2);"></div></div>
         </div>
 
-        <!-- Pipeline (Audrey vs David chart removed in v50 — Oscar's request) -->
-        <div class="card" style="margin-bottom:14px;"><div class="card-hd">Pipeline &amp; facturation — par statut</div><div style="position:relative;height:220px;"><canvas id="cPipe"></canvas></div><div id="legPipe" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;font-size:11px;color:var(--text2);"></div></div>
+        <!-- Pipeline + Devise side-by-side (v52 — Devise moved next to Pipeline) -->
+        <div class="g2" style="margin-bottom:14px;">
+          <div class="card"><div class="card-hd">Pipeline &amp; facturation — par statut</div><div style="position:relative;height:220px;"><canvas id="cPipe"></canvas></div><div id="legPipe" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;font-size:11px;color:var(--text2);"></div></div>
+          <div class="card">
+            <div class="card-hd">Répartition par devise (nominal)</div>
+            <div style="position:relative;height:220px;"><canvas id="cDev"></canvas></div>
+            <div id="legDev" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;font-size:11px;color:var(--text2);"></div>
+          </div>
+        </div>
 
-        <!-- Devise -->
-        <div class="card" style="max-width:50%;">
-          <div class="card-hd">Répartition par devise (nominal)</div>
-          <div style="position:relative;height:160px;"><canvas id="cDev"></canvas></div>
-          <div id="legDev" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;font-size:11px;color:var(--text2);"></div>
+        <!-- v53 — Activité : répartition CIF vs COA -->
+        <div class="card">
+          <div class="card-hd"><h3 style="margin:0;font-size:11px;font-weight:500;color:var(--text2);text-transform:uppercase;letter-spacing:.06em;">Activité — répartition CIF vs COA</h3></div>
+          <div class="activite-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">
+            <div class="activite-cell" data-act="CIF" style="padding:14px 16px;border-radius:var(--rs);background:var(--blue-bg);border:1px solid rgba(29,95,212,.18);">
+              <h4 style="margin:0 0 10px;font-size:13px;font-weight:600;color:var(--blue-t);letter-spacing:.3px;">CIF <span style="font-size:10px;font-weight:400;color:var(--text3);">— Conseiller en Investissements Financiers</span></h4>
+              <div class="kpi-line" style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px dashed rgba(0,0,0,.06);font-size:12px;"><span class="kpi-lbl" style="color:var(--text2);">Nb clients distincts</span> <span class="kpi-val" id="actCIFClients" style="font-weight:600;color:var(--text);">0</span></div>
+              <div class="kpi-line" style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px dashed rgba(0,0,0,.06);font-size:12px;"><span class="kpi-lbl" style="color:var(--text2);">Nb fournisseurs distincts</span> <span class="kpi-val" id="actCIFFourns" style="font-weight:600;color:var(--text);">0</span></div>
+              <div class="kpi-line" style="display:flex;justify-content:space-between;padding:6px 0 0;font-size:13px;"><span class="kpi-lbl" style="color:var(--text2);">CA total <span class="actYearCIF"></span></span> <span class="kpi-val" id="actCIFCA" style="font-weight:700;color:var(--blue-t);">€0</span></div>
+            </div>
+            <div class="activite-cell" data-act="COA" style="padding:14px 16px;border-radius:var(--rs);background:var(--green-bg);border:1px solid rgba(26,138,74,.18);">
+              <h4 style="margin:0 0 10px;font-size:13px;font-weight:600;color:var(--green-t);letter-spacing:.3px;">COA <span style="font-size:10px;font-weight:400;color:var(--text3);">— Courtier en Opérations d'Assurance</span></h4>
+              <div class="kpi-line" style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px dashed rgba(0,0,0,.06);font-size:12px;"><span class="kpi-lbl" style="color:var(--text2);">Nb clients distincts</span> <span class="kpi-val" id="actCOAClients" style="font-weight:600;color:var(--text);">0</span></div>
+              <div class="kpi-line" style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px dashed rgba(0,0,0,.06);font-size:12px;"><span class="kpi-lbl" style="color:var(--text2);">Nb fournisseurs distincts</span> <span class="kpi-val" id="actCOAFourns" style="font-weight:600;color:var(--text);">0</span></div>
+              <div class="kpi-line" style="display:flex;justify-content:space-between;padding:6px 0 0;font-size:13px;"><span class="kpi-lbl" style="color:var(--text2);">CA total <span class="actYearCOA"></span></span> <span class="kpi-val" id="actCOACA" style="font-weight:700;color:var(--green-t);">€0</span></div>
+            </div>
+          </div>
+          <div class="activite-correlation" style="margin-top:14px;font-size:12px;color:var(--text2);text-align:center;padding:8px;background:var(--surface2);border-radius:var(--rs);">
+            <span id="actCorrelation">—</span>
+          </div>
         </div>
       </div>
 
@@ -633,7 +655,6 @@
 
       <!-- SUIVI CONTRATS -->
       <div class="page" id="p-contrats">
-        <div class="card" style="padding:14px 16px;margin-bottom:14px;" id="templatesPanel"></div>
         <div class="kpi-grid" id="contratsStats" style="margin-bottom:16px;"></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">
           <input type="text" id="ctSearch" placeholder="Rechercher client, n° contrat, ISIN, produit…" style="width:280px;" oninput="renderContrats()"/>
@@ -1191,11 +1212,21 @@
     <div class="modal-hd"><span class="modal-title" id="dmTitle">Nouveau deal</span><button class="close-btn" onclick="closeDM()">×</button></div>
     <div class="modal-body">
 
-      <!-- Ligne 1 : Vendeur / Trade date / Statut -->
-      <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px 16px;margin-bottom:14px;">
+      <!-- Ligne 1 : Vendeur / Trade date / Statut / Activité (v53) -->
+      <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 16px;margin-bottom:14px;">
         <div class="fl"><label>Vendeur</label><select id="mV"></select></div>
         <div class="fl"><label>Trade date</label><input type="date" id="mDate"/></div>
         <div class="fl"><label>Statut</label><select id="mStat"><option>Deal pipe</option><option>Deal réalisé</option><option>Deal payé</option></select></div>
+        <div class="fl">
+          <label>Activité</label>
+          <div class="toggle-cif-coa is-cif" id="mActivityToggle" data-value="CIF" role="switch" aria-label="Activité CIF ou COA">
+            <span class="toggle-track">
+              <span class="toggle-label toggle-label-cif">CIF</span>
+              <span class="toggle-label toggle-label-coa">COA</span>
+              <span class="toggle-thumb"></span>
+            </span>
+          </div>
+        </div>
       </div>
 
       <!-- Arbre Clients → Contrats → Fournisseurs -->

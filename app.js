@@ -787,6 +787,216 @@ async function autoLinkDealToContract(deal){
   if(lastAddedProd)prodExp[contract._id+'|'+lastAddedProd.id]=true;
 }
 
+// ── VENDEURS (Phase M.1 — dynamic vendor management) ────────────────────────
+function rowToVendeur(r){return{_id:r.id,name:r.name,color:r.color||'blue',initial:r.initial||(r.name?r.name[0].toUpperCase():'?'),sort_order:r.sort_order||0,archived_at:r.archived_at||null,created_at:r.created_at};}
+
+async function loadVendeurs(){
+  try{
+    var res=await sb.from('vendeurs_db').select('*').is('archived_at',null).order('sort_order');
+    if(res.error)throw res.error;
+    var rows=(res.data||[]).map(rowToVendeur);
+    if(rows.length){vendeurs_db=rows;}
+    else{vendeurs_db=VENDEURS_FALLBACK.slice();console.warn('vendeurs_db empty — using fallback Audrey/David');}
+  }catch(e){
+    console.warn('loadVendeurs failed — using fallback',e&&e.message);
+    vendeurs_db=VENDEURS_FALLBACK.slice();
+  }
+}
+
+// Also load archived ones (for Équipe management view) — separate fetch to keep
+// the active list (vendeurs_db) clean for pickers.
+var vendeurs_archived_db=[];
+async function loadVendeursArchived(){
+  try{
+    var res=await sb.from('vendeurs_db').select('*').not('archived_at','is',null).order('sort_order');
+    if(res.error)throw res.error;
+    vendeurs_archived_db=(res.data||[]).map(rowToVendeur);
+  }catch(e){vendeurs_archived_db=[];}
+}
+
+function getVendeurs(includeArchived){
+  if(!includeArchived)return vendeurs_db.slice();
+  return vendeurs_db.slice().concat(vendeurs_archived_db.slice());
+}
+
+// ── Phase M.3 — vendor pickers (sidebar + deal form + client form) ──────────
+// Sidebar vbtn loop — replaces hardcoded Audrey/David buttons from index.html
+function renderVbtnList(){
+  var el=document.getElementById('vbtnList');if(!el)return;
+  var active=getVendeurs(false).slice().sort(function(a,b){return (a.sort_order||0)-(b.sort_order||0);});
+  el.innerHTML=active.map(function(v){
+    var on=(curV===v.name)?' on':'';
+    return '<button class="vbtn'+on+'" onclick="setV(\''+escAttr(v.name)+'\',this)"><span class="av color-'+escH(v.color||'blue')+'">'+escH(v.initial||v.name[0]||'?')+'</span>'+escH(v.name)+'</button>';
+  }).join('');
+}
+
+// Deal form vendor dropdown (#mV) — populates with active vendors + pairs.
+// Preserves currentSel if it matches an existing option (handles archived vendor refs).
+function renderMVOptions(currentSel){
+  var el=document.getElementById('mV');if(!el)return;
+  var active=getVendeurs(false).slice().sort(function(a,b){return (a.sort_order||0)-(b.sort_order||0);});
+  var opts=[];
+  active.forEach(function(v){opts.push('<option value="'+escH(v.name)+'">'+escH(v.name)+'</option>');});
+  // Auto-generate co-ownership pairs (current "Audrey & David" behavior, generalised).
+  for(var i=0;i<active.length;i++){
+    for(var j=i+1;j<active.length;j++){
+      var pair=active[i].name+' & '+active[j].name;
+      opts.push('<option value="'+escH(pair)+'">'+escH(pair)+'</option>');
+    }
+  }
+  // If currentSel is set and NOT in the active list/pairs, add it at the bottom (archived ref)
+  if(currentSel){
+    var found=opts.some(function(o){return o.indexOf('value="'+escH(currentSel)+'"')!==-1;});
+    if(!found){opts.push('<option value="'+escH(currentSel)+'">'+escH(currentSel)+' (archivé)</option>');}
+  }
+  el.innerHTML=opts.join('');
+  if(currentSel)el.value=currentSel;
+}
+
+// Client form vendor dropdown (#cVendeur) — same treatment, with "— Aucun —" prefix.
+function renderCVendeurOptions(currentSel){
+  var el=document.getElementById('cVendeur');if(!el)return;
+  var active=getVendeurs(false).slice().sort(function(a,b){return (a.sort_order||0)-(b.sort_order||0);});
+  var opts=['<option value="">— Aucun —</option>'];
+  active.forEach(function(v){opts.push('<option value="'+escH(v.name)+'">'+escH(v.name)+'</option>');});
+  if(currentSel){
+    var found=active.some(function(v){return v.name===currentSel;});
+    if(!found){opts.push('<option value="'+escH(currentSel)+'">'+escH(currentSel)+' (archivé)</option>');}
+  }
+  el.innerHTML=opts.join('');
+  if(currentSel!=null)el.value=currentSel;
+}
+
+// ── Phase M.2 — Équipe Vendeurs CRUD ─────────────────────────────────────────
+function renderVendeurs(){
+  var el=document.getElementById('vendeursList');if(!el)return;
+  var active=getVendeurs(false).slice().sort(function(a,b){return (a.sort_order||0)-(b.sort_order||0);});
+  var archived=vendeurs_archived_db.slice().sort(function(a,b){return (a.sort_order||0)-(b.sort_order||0);});
+  var all=active.concat(archived);
+  var countEl=document.getElementById('vendeursCount');
+  if(countEl)countEl.textContent=active.length+' actif'+(active.length>1?'s':'')+(archived.length?' / '+archived.length+' archivé'+(archived.length>1?'s':''):'');
+  var warnEl=document.getElementById('vendeursCapWarn');
+  if(warnEl)warnEl.style.display=(active.length>=8)?'block':'none';
+  document.getElementById('vendeursEmpty').style.display=all.length?'none':'block';
+  if(!all.length){el.innerHTML='';return;}
+  el.innerHTML='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;">'+
+    all.map(function(v){
+      var isArch=!!v.archived_at;
+      var dim=isArch?'opacity:.55;':'';
+      var actionBtn=isArch
+        ? '<button class="btn btn-sm" onclick="reactivateVendeur(\''+escAttr(v._id||'')+'\')" style="font-size:11px;">Réactiver</button>'
+        : '<button class="btn btn-sm" onclick="archiveVendeur(\''+escAttr(v._id||'')+'\')" style="font-size:11px;color:var(--amber);border-color:var(--amber-bg);">Archiver</button>';
+      var editBtn=isArch?'':'<button class="btn btn-sm" onclick="openVendeurModal(\''+escAttr(v._id||'')+'\')" style="font-size:11px;">Modifier</button>';
+      var seedTag=(!v._id)?'<span style="font-size:10px;color:var(--text3);">(seed)</span>':'';
+      return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--rs);padding:12px 14px;display:flex;flex-direction:column;gap:8px;'+dim+'">'+
+        '<div style="display:flex;align-items:center;gap:8px;">'+
+          '<div class="av color-'+escH(v.color||'blue')+'" style="width:32px;height:32px;font-size:13px;">'+escH(v.initial||(v.name?v.name[0]:'?'))+'</div>'+
+          '<div style="flex:1;min-width:0;">'+
+            '<div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+escH(v.name)+(isArch?' <span style="font-size:10px;color:var(--amber);">(archivé)</span>':'')+' '+seedTag+'</div>'+
+            '<div style="font-size:11px;color:var(--text2);">'+escH(v.color||'blue')+' · ordre '+(v.sort_order||0)+'</div>'+
+          '</div>'+
+        '</div>'+
+        '<div style="display:flex;gap:6px;">'+editBtn+actionBtn+'</div>'+
+      '</div>';
+    }).join('')+'</div>';
+}
+
+function _renderVendeurColorChips(selected){
+  var el=document.getElementById('vendColorChips');if(!el)return;
+  el.innerHTML=VENDEUR_COLOR_PRESETS.map(function(c){
+    var sel=(c===selected)?'box-shadow:0 0 0 2px var(--text);transform:scale(1.08);':'';
+    return '<div onclick="_setVendeurColor(\''+c+'\')" class="av color-'+c+'" title="'+c+'" style="width:28px;height:28px;cursor:pointer;'+sel+'">'+c[0].toUpperCase()+'</div>';
+  }).join('');
+}
+function _setVendeurColor(c){
+  document.getElementById('vendColor').value=c;
+  _renderVendeurColorChips(c);
+}
+
+function openVendeurModal(vendId){
+  var v=vendId?(getVendeurs(true).find(function(x){return x._id===vendId;})):null;
+  document.getElementById('vendeurModalTitle').textContent=v?('Modifier '+v.name):'Nouveau vendeur';
+  document.getElementById('vendId').value=v?(v._id||''):'';
+  document.getElementById('vendName').value=v?v.name:'';
+  document.getElementById('vendColor').value=v?(v.color||'blue'):'blue';
+  document.getElementById('vendInitial').value=v?(v.initial||v.name[0].toUpperCase()):'';
+  _renderVendeurColorChips(v?(v.color||'blue'):'blue');
+  document.getElementById('vendeurModal').classList.add('on');
+  // Auto-fill initial from name on input
+  var nameEl=document.getElementById('vendName');
+  nameEl.oninput=function(){
+    var initEl=document.getElementById('vendInitial');
+    if(!initEl.value||initEl.dataset.auto==='1'){
+      initEl.value=(nameEl.value||'?')[0].toUpperCase();
+      initEl.dataset.auto='1';
+    }
+  };
+  setTimeout(function(){nameEl.focus();},50);
+}
+function closeVendeurModal(){document.getElementById('vendeurModal').classList.remove('on');}
+
+async function saveVendeurFromModal(){
+  var id=document.getElementById('vendId').value;
+  var name=document.getElementById('vendName').value.trim();
+  var color=document.getElementById('vendColor').value||'blue';
+  var initial=(document.getElementById('vendInitial').value.trim()||name[0]||'?').toUpperCase().slice(0,2);
+  if(!name){alert('Nom requis.');return;}
+  if(VENDEUR_COLOR_PRESETS.indexOf(color)===-1){alert('Couleur invalide.');return;}
+  // Soft cap warning on create
+  if(!id){
+    var activeCount=getVendeurs(false).length;
+    if(activeCount>=8){
+      if(!confirm('⚠ Vous avez déjà '+activeCount+' vendeurs actifs. Au-delà de 8 l\'UI devient encombrée (manque de couleurs distinctes). Continuer quand même ?'))return;
+    }
+  }
+  try{
+    if(id){
+      var res=await sb.from('vendeurs_db').update({name:name,color:color,initial:initial}).eq('id',id).select();
+      if(res.error)throw res.error;
+    } else {
+      // sort_order = max + 10 so new vendor lands at bottom
+      var maxOrder=getVendeurs(true).reduce(function(m,x){return Math.max(m,x.sort_order||0);},0);
+      var res2=await sb.from('vendeurs_db').insert({name:name,color:color,initial:initial,sort_order:maxOrder+10}).select();
+      if(res2.error)throw res2.error;
+    }
+    await loadVendeurs();
+    await loadVendeursArchived();
+    closeVendeurModal();
+    renderVbtnList();
+    renderVendeurs();
+    toast('Vendeur '+(id?'mis à jour':'créé')+'.');
+  }catch(e){console.error(e);alert('Erreur: '+(e.message||e));}
+}
+
+async function archiveVendeur(vendId){
+  if(!vendId){alert('Vendeur seed (non en base) — ajoutez-le via la migration SQL avant de l\'archiver.');return;}
+  var v=getVendeurs(true).find(function(x){return x._id===vendId;});
+  if(!v)return;
+  if(!confirm('Archiver '+v.name+' ?\n\nElle sera masquée des pickers (sidebar, deal form, client form) mais l\'historique reste intact pour le filtrage par vendeur archivé.'))return;
+  try{
+    var res=await sb.from('vendeurs_db').update({archived_at:new Date().toISOString()}).eq('id',vendId).select();
+    if(res.error)throw res.error;
+    await loadVendeurs();
+    await loadVendeursArchived();
+    renderVbtnList();
+    renderVendeurs();
+    toast('Vendeur archivé.');
+  }catch(e){console.error(e);alert('Erreur: '+(e.message||e));}
+}
+
+async function reactivateVendeur(vendId){
+  if(!vendId)return;
+  try{
+    var res=await sb.from('vendeurs_db').update({archived_at:null}).eq('id',vendId).select();
+    if(res.error)throw res.error;
+    await loadVendeurs();
+    await loadVendeursArchived();
+    renderVbtnList();
+    renderVendeurs();
+    toast('Vendeur réactivé.');
+  }catch(e){console.error(e);alert('Erreur: '+(e.message||e));}
+}
+
 // ── TEAM MEMBERS (gestion équipe + rôles) ───────────────────────────────────
 var team_members_db=[];
 var currentUserEmail=null;
@@ -947,6 +1157,10 @@ async function doLogout(){
 // ── APP ─────────────────────────────────────────────────────────────────────
 var deals=[],curV='Tous',sCol='date',sDir=-1,editIdx=-1,ct='UF',ftab='all',charts={};
 var clients_db=[], fourn_db=[], brokers_db=[];
+// Phase M.1 — dynamic vendor management (vendeurs_db replaces hardcoded Audrey/David)
+var vendeurs_db=[];
+var VENDEURS_FALLBACK=[{name:'Audrey',color:'blue',initial:'A',sort_order:1},{name:'David',color:'green',initial:'D',sort_order:2}];
+var VENDEUR_COLOR_PRESETS=['blue','green','purple','amber','red','teal','pink','slate'];
 
 deals=[];
 
@@ -1121,7 +1335,7 @@ function goTo(id,btn){
   else if(id==='fournisseurs')renderFourn();
   else if(id==='brokers')renderBrokers();
   else if(id==='contrats')renderContrats();
-  else if(id==='membres')renderMembres();
+  else if(id==='membres'){renderVendeurs();renderMembres();}
   else if(id==='commissions'){initCommPeriod();renderCommissions();}
   else renderAll();
 }
@@ -1132,6 +1346,8 @@ function renderAll(){
   // filter switches (Audrey/David/Tous) behave as a live filter on every page,
   // not just on Synthèse. Previously only renderKpis was called → the deals
   // table, contrats list, facturation page, etc. stayed stale until navigation.
+  // Phase M.3 — also re-render sidebar vbtn list (data-driven from vendeurs_db).
+  if(typeof renderVbtnList==='function')renderVbtnList();
   renderKpis();renderRecent();updateAlertBadge();updateContratsBadge();
   var isOn=function(id){var el=document.getElementById(id);return el&&el.classList.contains('on');};
   if(isOn('p-deals')&&typeof renderDeals==='function')renderDeals();
@@ -4611,7 +4827,9 @@ function openDealModal(idx){
   if(editIdx>=0){
     // EDIT mode — load the existing row + any siblings sharing dealGroupId
     var d=deals[editIdx];
-    document.getElementById('mV').value=d.v||'Audrey';
+    // Phase M.3 — populate mV from vendeurs_db (preserve d.v even if archived)
+    renderMVOptions(d.v||(vendeurs_db[0]&&vendeurs_db[0].name)||'');
+    document.getElementById('mV').value=d.v||(vendeurs_db[0]&&vendeurs_db[0].name)||'';
     document.getElementById('mDate').value=d.date||today();
     document.getElementById('mStat').value=d.stat||'Deal pipe';
     document.getElementById('mNotes').value=d.notes||'';
@@ -4636,8 +4854,11 @@ function openDealModal(idx){
     document.getElementById('dealAddClientBtn')&&(document.getElementById('dealAddClientBtn').style.display='none');
   } else {
     // NEW mode — empty tree + first client block pre-added for friction-zero
+    // Phase M.3 — populate mV from vendeurs_db, default to first active vendor
+    var defaultV=(vendeurs_db[0]&&vendeurs_db[0].name)||'Audrey';
+    renderMVOptions(defaultV);
     document.getElementById('mDate').value=today();
-    document.getElementById('mV').value='Audrey';
+    document.getElementById('mV').value=defaultV;
     document.getElementById('mStat').value='Deal pipe';
     document.getElementById('mNotes').value='';
     var addBtn=document.getElementById('dealAddClientBtn');
@@ -6252,6 +6473,8 @@ function openAddClientModal(name){
     var db=loadClientDB();var c=db.find(x=>x.name===name)||{};
     document.getElementById('cType').value=c.type||'PP';
     var clEl=document.getElementById('cClassif');if(clEl)clEl.value=c.classification||'';
+    // Phase M.3 — populate cVendeur from vendeurs_db (preserve archived ref)
+    renderCVendeurOptions(c.vendeur||'');
     document.getElementById('cVendeur').value=c.vendeur||'';
     document.getElementById('cEmail').value=c.email||'';
     var ecDisp=document.getElementById('cEncoursDisplay');if(ecDisp){var ec=encoursForClient(c.name);ecDisp.textContent=ec>0?fE(ec):'— (aucun deal actif)';}
@@ -6260,6 +6483,8 @@ function openAddClientModal(name){
   } else {
     document.getElementById('cType').value='PP';
     var clEl2=document.getElementById('cClassif');if(clEl2)clEl2.value='';
+    // Phase M.3 — populate cVendeur from vendeurs_db (new client, no preselection)
+    renderCVendeurOptions('');
     document.getElementById('cVendeur').value='';
     document.getElementById('cEmail').value='';
     var ecDisp2=document.getElementById('cEncoursDisplay');if(ecDisp2)ecDisp2.textContent='— (aucun deal pour l\'instant)';
@@ -10323,6 +10548,9 @@ async function initApp(){
       templates_db=((results[6].data)||[]).map(rowToTemplate);
       await seedDefaultTemplates();
     }
+    // Phase M.1 — load vendeurs_db (active + archived) — non-blocking if table missing
+    await loadVendeurs();
+    await loadVendeursArchived();
     if(!fourn_db.length)await seedFournisseurs();
     else await mergeFournDefaults();
     if(!brokers_db.length)await seedBrokers();
@@ -10483,6 +10711,17 @@ function setupRealtime(){
         if(document.getElementById('p-contrats')&&document.getElementById('p-contrats').classList.contains('on'))renderContrats();
         setLiveStatus('live');
       }catch(e){console.error('Realtime templates error',e);}
+    })
+    .on('postgres_changes',{event:'*',schema:'public',table:'vendeurs_db'},function(p){
+      try{
+        // Phase M — refetch both active + archived on any change; simpler than tracking
+        // archived_at transitions row by row (vendor mutations are rare anyway).
+        loadVendeurs().then(loadVendeursArchived).then(function(){
+          renderVbtnList();
+          if(document.getElementById('p-membres')&&document.getElementById('p-membres').classList.contains('on'))renderVendeurs();
+          setLiveStatus('live');
+        });
+      }catch(e){console.error('Realtime vendeurs_db error',e);}
     })
     .on('postgres_changes',{event:'*',schema:'public',table:'team_members'},function(p){
       try{

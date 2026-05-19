@@ -1,4 +1,4 @@
-:root{--bg:#f7f6f3;--surface:#fff;--surface2:#f0efe9;--border:rgba(0,0,0,0.08);--border-md:rgba(0,0,0,0.14);--text:#1a1a18;--text2:#6b6b65;--text3:#a0a09a;--blue:#1d5fd4;--blue-bg:#e8f0fd;--blue-t:#1a4db5;--green:#1a8a4a;--green-bg:#e4f5ec;--green-t:#156638;--amber:#b07a10;--amber-bg:#fdf3dc;--amber-t:#8a5e08;--red:#c23b3b;--red-bg:#fde8e8;--red-t:#9e2e2e;--purple:#6b4fc4;--purple-bg:#eeebfb;--purple-t:#4d36a0;--r:10px;--rs:6px;--sh:0 1px 3px rgba(0,0,0,0.07),0 1px 2px rgba(0,0,0,0.04);}
+:root{--bg:#f7f6f3;--surface:#fff;--surface2:#f0efe9;--border:rgba(0,0,0,0.08);--border-md:rgba(0,0,0,0.14);--text:#1a1a18;--text2:#6b6b65;--text3:#a0a09a;--blue:#1d5fd4;--blue-bg:#e8f0fd;--blue-t:#1a4db5;--green:#1a8a4a;--green-bg:#e4f5ec;--green-t:#156638;--amber:#b07a10;--amber-bg:#fdf3dc;--amber-t:#8a5e08;--red:#c23b3b;--red-bg:#fde8e8;--red-t:#9e2e2e;--purple:#6b4fc4;--purple-bg:#eeebfb;--purple-t:#4d36a0;--teal:#14b8a6;--teal-bg:#d6f4ee;--teal-t:#0f8a7c;--pink:#ec4899;--pink-bg:#fce4f0;--pink-t:#b1306f;--slate:#64748b;--slate-bg:#e4e8ee;--slate-t:#475264;--r:10px;--rs:6px;--sh:0 1px 3px rgba(0,0,0,0.07),0 1px 2px rgba(0,0,0,0.04);}
 *{box-sizing:border-box;margin:0;padding:0;}
 html,body{height:100%;}
 body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);font-size:13px;line-height:1.5;}
@@ -20,6 +20,15 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);fon
 .av-d{background:var(--green-bg);color:var(--green-t);}
 .av-p{background:var(--purple-bg);color:var(--purple-t);}
 .av-all{background:var(--surface2);color:var(--text2);}
+/* Phase M — color-based avatar classes (vendeurs_db.color drives the pill) */
+.av.color-blue{background:var(--blue-bg);color:var(--blue-t);}
+.av.color-green{background:var(--green-bg);color:var(--green-t);}
+.av.color-purple{background:var(--purple-bg);color:var(--purple-t);}
+.av.color-amber{background:var(--amber-bg);color:var(--amber-t);}
+.av.color-red{background:var(--red-bg);color:var(--red-t);}
+.av.color-teal{background:var(--teal-bg);color:var(--teal-t);}
+.av.color-pink{background:var(--pink-bg);color:var(--pink-t);}
+.av.color-slate{background:var(--slate-bg);color:var(--slate-t);}
 .nbtn svg{width:15px;height:15px;flex-shrink:0;opacity:.6;}
 .nbtn.on svg{opacity:1;}
 .alert-dot-badge{margin-left:auto;background:var(--red-bg);color:var(--red-t);border-radius:10px;padding:1px 7px;font-size:10px;font-weight:600;}

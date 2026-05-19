@@ -43,8 +43,7 @@
         <button class="btn btn-sm" onclick="goTo('membres',document.querySelector('.nbtn[onclick*=membres]')||null)" style="font-size:10px;padding:2px 8px;text-transform:none;letter-spacing:0;font-weight:500;" title="Gérer l'équipe et les rôles">Gérer</button>
       </div>
       <button class="vbtn on" onclick="setV('Tous',this)"><span class="av av-all">∗</span>Tous les deals</button>
-      <button class="vbtn" onclick="setV('Audrey',this)"><span class="av av-a">A</span>Audrey</button>
-      <button class="vbtn" onclick="setV('David',this)"><span class="av av-d">D</span>David</button>
+      <div id="vbtnList"></div>
     </div>
     <div class="sb-section" style="flex:1;display:flex;flex-direction:column;">
       <!-- Section Deals & Suivi -->
@@ -658,6 +657,19 @@
 
       <!-- ÉQUIPE / MEMBRES -->
       <div class="page" id="p-membres">
+        <!-- Phase M.2 — Vendeurs section (CRUD vendeurs_db) -->
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+          <h3 style="font-size:14px;font-weight:600;margin:0;">Vendeurs</h3>
+          <span style="font-size:11px;color:var(--text3);" id="vendeursCount"></span>
+          <div style="flex:1;"></div>
+          <button class="btn btn-primary" onclick="openVendeurModal()">+ Nouveau vendeur</button>
+        </div>
+        <div id="vendeursCapWarn" style="display:none;background:var(--amber-bg);border:1px solid rgba(176,122,16,.3);border-radius:var(--rs);padding:8px 12px;margin-bottom:10px;font-size:12px;color:var(--amber-t);">⚠ 8 vendeurs actifs — au-delà l'UI devient encombrée.</div>
+        <div id="vendeursList"></div>
+        <div id="vendeursEmpty" class="empty" style="display:none;">Aucun vendeur. Cliquez sur "+ Nouveau vendeur" pour commencer.</div>
+        <div style="height:24px;"></div>
+        <!-- Comptes (team_members_db) -->
+        <h3 style="font-size:14px;font-weight:600;margin:0 0 10px 0;">Comptes</h3>
         <div class="card" style="padding:14px 18px;margin-bottom:14px;background:var(--blue-bg);border:1px solid rgba(29,95,212,.2);">
           <div style="font-size:12px;color:var(--blue-t);line-height:1.5;">
             <b>Gestion des accès — par défaut tout le monde peut tout faire.</b><br>
@@ -1006,6 +1018,22 @@
     <div class="modal-ft"><button class="btn" onclick="closeMemberModal()">Annuler</button><button class="btn btn-primary" onclick="saveMemberFromModal()">Enregistrer</button></div>
   </div>
 </div>
+<div class="ov" id="vendeurModal">
+  <div class="modal" style="max-width:480px;">
+    <div class="modal-hd"><span class="modal-title" id="vendeurModalTitle">Nouveau vendeur</span><button class="close-btn" onclick="closeVendeurModal()">×</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="vendId"/>
+      <div class="fl"><label>Nom</label><input type="text" id="vendName" placeholder="ex: Sophie" autocomplete="off"/></div>
+      <div class="fl" style="margin-top:8px;"><label>Couleur</label>
+        <div id="vendColorChips" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px;"></div>
+        <input type="hidden" id="vendColor" value="blue"/>
+      </div>
+      <div class="fl" style="margin-top:8px;"><label>Initiale <span style="color:var(--text3);font-weight:400;">(1-2 caractères)</span></label><input type="text" id="vendInitial" maxlength="2" style="max-width:80px;"/></div>
+      <div style="font-size:11px;color:var(--text3);margin-top:10px;line-height:1.5;">Une fois enregistré, le vendeur apparaît dans la barre latérale (filtre) + le formulaire deal + le formulaire client. Archiver le vendeur le masque des pickers (mais préserve l'historique).</div>
+    </div>
+    <div class="modal-ft"><button class="btn" onclick="closeVendeurModal()">Annuler</button><button class="btn btn-primary" onclick="saveVendeurFromModal()">Enregistrer</button></div>
+  </div>
+</div>
 <div class="ov" id="prodModal">
   <div class="modal" style="max-width:640px;">
     <div class="modal-hd"><span class="modal-title" id="prodModalTitle">Ajouter un investissement</span><button class="close-btn" onclick="closeProdModal()">×</button></div>
@@ -1058,7 +1086,7 @@
                 <option value="D">D — dormant</option>
               </select>
             </div>
-            <div class="fl" style="margin-top:8px;"><label>Vendeur référent</label><select id="cVendeur"><option value="">— Aucun —</option><option>Audrey</option><option>David</option></select></div>
+            <div class="fl" style="margin-top:8px;"><label>Vendeur référent</label><select id="cVendeur"><option value="">— Aucun —</option></select></div>
             <div class="fl" style="margin-top:8px;"><label>Email</label><input type="text" id="cEmail" placeholder="jean.dupont@email.com"/></div>
             <div class="fl" style="margin-top:8px;"><label>Encours <span style="color:var(--text3);font-weight:400;">(calculé automatiquement)</span></label><div id="cEncoursDisplay" class="mono" style="padding:7px 10px;background:var(--surface2);border-radius:var(--rs);font-size:13px;color:var(--blue);font-weight:600;">—</div></div>
             <div class="fl" style="margin-top:8px;"><label>Notes</label><textarea id="cNotes" rows="3" style="width:100%;resize:vertical;"></textarea></div>
@@ -1165,7 +1193,7 @@
 
       <!-- Ligne 1 : Vendeur / Trade date / Statut -->
       <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px 16px;margin-bottom:14px;">
-        <div class="fl"><label>Vendeur</label><select id="mV"><option>Audrey</option><option>David</option><option>Audrey & David</option></select></div>
+        <div class="fl"><label>Vendeur</label><select id="mV"></select></div>
         <div class="fl"><label>Trade date</label><input type="date" id="mDate"/></div>
         <div class="fl"><label>Statut</label><select id="mStat"><option>Deal pipe</option><option>Deal réalisé</option><option>Deal payé</option></select></div>
       </div>

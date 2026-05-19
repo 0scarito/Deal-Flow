@@ -2,7 +2,30 @@
 // Stratégie : network-first pour l'app shell (toujours essayer la dernière version,
 // fallback cache si offline). Aucune interception des appels Supabase / CDN.
 
-// 2026-05-19 v54 — CIF/COA toggle relocated + per-contract (3 fixes) :
+// 2026-05-19 v55 — Universal product import + L.5 modal refactor (3 changes) :
+//   1. importCSV renamed to importDealsFile, now accepts .csv/.xlsx/.xlsm.
+//      Excel parsed via SheetJS (sheet_to_json with header:1, header-name
+//      mapping tolerant of column reordering, fallback to positional). Both
+//      paths converge on _processImportRows which scans for unknown (fourn,
+//      ISIN/part) combos and queues them into the universal product modal
+//      BEFORE inserting any deal. Deal-insert loop extracted into
+//      _executeDealImport so both "no new products" and "modal confirmed"
+//      paths reuse it.
+//   2. NEW productImportModal in index.html — universal review surface for
+//      product additions/updates. Editable ISIN/Name/Type/Currency/Fees with
+//      ADD-tranche button, link-to-existing dropdown per row, skip checkbox,
+//      and (in savedeal mode only) per-row "Toujours sauver pour <fourn>"
+//      flag that persists fourn.auto_save_products = true. Mode-switched
+//      DOM serves both Excel auto-detect and L.5 save-to-catalogue.
+//   3. L.5 popup (saveDeal) refactored : native confirm() replaced with
+//      _showSaveToCatalogueModal() promise wrapper around the new modal.
+//      Detection extended : in addition to "completely unknown" products,
+//      known products are now flagged when their fees array differs from
+//      the deal entry (deep compare on kind + pct to 4 decimals). Modal
+//      rows render as "Modifier produit existant" with a visual old/new
+//      fees diff. Per-fourn auto_save_products bypass = silent save with
+//      a toast, no modal interruption.
+// (Previous: 2026-05-19 v54 — CIF/COA toggle relocated + per-contract (3 fixes) :
 //   1. Activité toggle MOVED out of Line 1 (Vendeur/Trade date/Statut/Activité)
 //      and INTO the Contrat block, right next to Type de contrat. Line 1 grid
 //      restored to 3 columns (Vendeur / Trade date / Statut). Each contract
@@ -22,6 +45,7 @@
 //      deal row — fine because L.4 already collapsed deals to 1 contract).
 //      renderActivite() unchanged — still reads d.activity per-deal. Pilotage
 //      Activité card keeps working as-is.
+//      Pilotage Activité card keeps working as-is.)
 // (Previous: 2026-05-19 v53 — CIF/COA activity type system :
 //   1. New `activity` column on deals table (text, default 'CIF', check
 //      constraint CIF|COA, backfilled). Migration SQL in db/deals_activity_v53.sql.
@@ -144,7 +168,7 @@
 //     deal with this product auto-fills correctly via the existing
 //     onDealIsinChange / _onDealProduitChange paths.
 // (Previous: 2026-05-18 v41 — Phase L.4 1 deal = 1 produit + cascade diag.)
-const CACHE_NAME = 'dealflow-v54';
+const CACHE_NAME = 'dealflow-v55';
 const APP_SHELL = [
   './',
   './index.html',

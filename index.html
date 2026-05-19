@@ -69,7 +69,7 @@
         <button class="nbtn" onclick="goTo('alertes',this)" style="margin-top:6px;"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1l7 13H1z"/><path d="M8 6v4M8 12.5v.5"/></svg>Alertes <span id="alertesBadge" class="alert-dot-badge" style="display:none;"></span></button>
       </div>
     </div>
-    <input type="file" id="importFile" accept=".csv" style="display:none" onchange="importCSV(event)"/>
+    <input type="file" id="importFile" accept=".csv,.xlsx,.xlsm" style="display:none" onchange="importDealsFile(event)"/>
   </aside>
   <!-- Confirm modal: delete deal with linked Suivi Contrat investissement -->
   <div class="ov" id="dealDeleteConfirmModal">
@@ -893,6 +893,26 @@
     <div class="modal-ft">
       <button class="btn" onclick="closeUFFactModal()">Annuler</button>
       <button class="btn btn-primary" style="background:var(--green);border-color:var(--green);" onclick="confirmUFInvoice()">✓ Générer la facture PDF</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL UNIVERSAL PRODUCT IMPORT (v55) — Excel auto-detect + L.5 refactor -->
+<div class="ov" id="productImportModal">
+  <div class="modal" style="max-width:920px;max-height:85vh;overflow-y:auto;">
+    <div class="modal-hd">
+      <span class="modal-title" id="productImportTitle">Nouveaux produits détectés</span>
+      <button class="close-btn" onclick="cancelProductImport()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p style="color:var(--muted);margin-bottom:16px;font-size:12px;">
+        <span id="productImportCount">0</span> produit(s) inconnu(s) trouvé(s). Vérifie / corrige / lie a un produit existant ou skip, puis valide.
+      </p>
+      <div id="productImportRows"></div>
+    </div>
+    <div class="modal-ft">
+      <button class="btn" onclick="cancelProductImport()">Annuler</button>
+      <button class="btn btn-primary" id="productImportConfirmBtn" onclick="confirmProductImport()">Valider tout &amp; insérer</button>
     </div>
   </div>
 </div>

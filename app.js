@@ -5149,13 +5149,14 @@ async function saveDeal(){
         return;
       }
     }
-    // Phase L.5 (Oscar 2026-05-18) — save-to-catalogue prompt. For each
-    // codif-deal in the (now split) tree, if its (produit, ISIN) doesn't
-    // match any entry in its fournisseur's catalogue, offer to add it on
-    // submit. Trigger = deal submit (not blur, per Oscar). Lookup keyed
-    // on `fourn` field only (assureur/banque ignored — the product is
-    // logged under the fournisseur SDG, where it actually lives).
-    var catalogueAdds=[];
+    // Phase L.5 (v55 refactor) — save-to-catalogue modal flow.
+    // For each codif-deal in the tree, detect (a) entirely new products, OR
+    // (b) known products whose fees differ from what was just entered. The
+    // candidate list is normalised into the universal product-import modal
+    // shape, then `auto_save_products` per-fourn lets the user opt-out of
+    // future prompts. Linked-mode rows and skipped rows produce no write.
+    var catalogueCandidates=[];
+    var autoSaved=[];
     for(var ci=0;ci<tree.length;ci++){
       var cpair=tree[ci];
       var cc=cpair.contractData;
@@ -5165,52 +5166,78 @@ async function saveDeal(){
       if(!fournName) continue;
       var prodName=(codif.produit||'').trim();
       var prodIsin=(codif.isin||'').trim();
-      // Skip if both produit name and ISIN are empty — probably an oversight,
-      // not a real new product worth catalogue-ing.
       if(!prodName && !prodIsin) continue;
       var existing=(typeof getFournProducts==='function')?getFournProducts(fournName):[];
-      var matchesExisting=existing.some(function(p){
-        var pIsin=(p.isin||'').trim().toUpperCase();
-        var pPart=(p.part||'').trim().toLowerCase();
-        if(prodIsin && pIsin===prodIsin.toUpperCase()) return true;
-        if(prodName && pPart===prodName.toLowerCase()) return true;
-        return false;
-      });
-      if(matchesExisting) continue;
-      catalogueAdds.push({
-        fourn:fournName,
-        product:{
-          isin:prodIsin,
-          part:prodName,
+      var matchByIsin=prodIsin?existing.find(function(p){return (p.isin||'').toUpperCase()===prodIsin.toUpperCase();}):null;
+      var matchByName=!matchByIsin?existing.find(function(p){return (p.part||'').toLowerCase()===prodName.toLowerCase();}):null;
+      var match=matchByIsin||matchByName||null;
+      var newFees=codif.feeSnapshot||[];
+      var f=fourn_db.find(function(x){return x.name===fournName;});
+      if(!match){
+        var newProduct={
+          fourn:fournName, isin:prodIsin, part:prodName,
+          type:codif.type||'action',
           currency:codif.currency||cc.dev||'EUR',
-          type:codif.type||'',
-          fees:codif.feeSnapshot||[],
-          unit:'part',
-          pf:codif.pf||{mode:'none'}
-        }
-      });
-    }
-    if(catalogueAdds.length){
-      var summary=catalogueAdds.map(function(a){
-        return '· '+(a.product.part||'(sans nom)')+(a.product.isin?' — ISIN '+a.product.isin:'')+
-               (a.product.fees&&a.product.fees.length?' — '+a.product.fees.length+' tranche(s) de frais':'')+
-               ' → catalogue de '+a.fourn;
-      }).join('\n');
-      var ok=confirm(catalogueAdds.length+' nouveau(x) produit(s) détecté(s) — pas encore au catalogue du fournisseur :\n\n'+summary+'\n\nLes ajouter au catalogue (le produit sera reconnu pour les prochains deals) ?');
-      if(ok){
-        var addedCount=0;
-        for(var ai=0;ai<catalogueAdds.length;ai++){
-          var add=catalogueAdds[ai];
-          var f=fourn_db.find(function(x){return x.name===add.fourn;});
-          if(!f) continue;
+          fees:newFees, _link:'', _skip:false,
+          _existingFees:null, _mode:'new'
+        };
+        if(f && f.auto_save_products){
+          // Silent auto-save — bypass modal.
           f.products=f.products||[];
-          f.products.push(add.product);
-          try{
-            if(f._id) await sbUpdate('fournisseurs',f._id,f);
-            addedCount++;
-          }catch(e){console.error('[L.5] catalogue add failed for '+add.fourn,e);}
+          f.products.push({isin:prodIsin, part:prodName, currency:newProduct.currency,
+            type:newProduct.type, fees:newFees, unit:'part', pf:codif.pf||{mode:'none'}});
+          try{ if(f._id) await sbUpdate('fournisseurs',f._id,f); autoSaved.push(prodName||prodIsin); }
+          catch(e){ console.error('[L.5 auto] write failed for '+fournName,e); }
+        }else{
+          catalogueCandidates.push(newProduct);
         }
-        if(addedCount) toast(addedCount+' produit(s) ajouté(s) au catalogue.');
+      }else if(_feesDiffer(match.fees||[], newFees)){
+        // Known product, different fees — surface as "Modifier"
+        var updProduct={
+          fourn:fournName, isin:match.isin||prodIsin, part:match.part||prodName,
+          type:match.type||codif.type||'action',
+          currency:match.currency||codif.currency||cc.dev||'EUR',
+          fees:newFees, _link:'', _skip:false,
+          _existingFees:match.fees||[], _mode:'update', _existingRef:match
+        };
+        if(f && f.auto_save_products){
+          // Silent update of fees + type/currency.
+          match.fees=newFees;
+          try{ if(f._id) await sbUpdate('fournisseurs',f._id,f); autoSaved.push((match.part||match.isin||'?')+' (fees)'); }
+          catch(e){ console.error('[L.5 auto] fee update failed for '+fournName,e); }
+        }else{
+          catalogueCandidates.push(updProduct);
+        }
+      }
+    }
+    if(autoSaved.length) toast(autoSaved.length+' produit(s) sauvés auto.');
+    if(catalogueCandidates.length){
+      var result=await _showSaveToCatalogueModal(catalogueCandidates);
+      // commitList already applied inside the modal confirm handler — nothing
+      // else to do here except log.
+      if(result && result.commitList && result.commitList.length){
+        var written=0;
+        for(var ai=0;ai<result.commitList.length;ai++){
+          var add=result.commitList[ai];
+          var fW=fourn_db.find(function(x){return x.name===add.fourn;});
+          if(!fW) continue;
+          fW.products=fW.products||[];
+          if(add._mode==='update' && add._existingRef){
+            add._existingRef.fees=add.fees;
+            add._existingRef.type=add.type;
+            add._existingRef.currency=add.currency;
+            if(add.isin) add._existingRef.isin=add.isin;
+            if(add.part) add._existingRef.part=add.part;
+          }else{
+            fW.products.push({
+              isin:add.isin, part:add.part, currency:add.currency, type:add.type,
+              fees:add.fees, unit:'part', pf:{mode:'none'}
+            });
+          }
+          try{ if(fW._id) await sbUpdate('fournisseurs',fW._id,fW); written++; }
+          catch(e){ console.error('[L.5] catalogue write failed for '+add.fourn,e); }
+        }
+        if(written) toast(written+' produit(s) catalogue mis à jour.');
       }
     }
     for(var j=0;j<tree.length;j++){
@@ -6422,41 +6449,486 @@ function exportCSV(){
   var csv=[h.join(','),...rows.map(r=>r.join(','))].join('\n');
   var a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8;'}));a.download='deals_'+today()+'.csv';a.click();
 }
-function importCSV(e){
+// ── DEAL IMPORT (v55: CSV + Excel + product auto-detect) ─────────────────────
+// 2026-05-19 v55 — importCSV renamed to importDealsFile (alias kept).
+// Supports CSV / XLSX / XLSM. Before inserting deals, scans rows for unknown
+// (fourn, ISIN/part) combos and surfaces a blocking modal so user can review,
+// edit, link-to-existing, or skip each new product. Only after the user
+// validates the catalogue are deals inserted.
+var _pendingProductImports=[];   // [{fourn, isin, part, type, currency, fees, sourceRowIdx, _link, _skip}]
+var _pendingDealRowsForImport=null; // raw deal rows queued behind the modal
+var _pendingFileInput=null;       // <input> element, to clear .value after import
+var _productImportMode='import';  // 'import' | 'savedeal' — controls what confirm does
+var _saveDealResolve=null;        // promise resolver for L.5 modal flow
+
+// Backward-compatible alias — index.html legacy onclick may still call it.
+function importCSV(e){return importDealsFile(e);}
+
+function importDealsFile(e){
   var file=e.target.files[0];if(!file)return;
-  var fileInput=e.target;
-  var EXPECTED_COLS=22;
-  var reader=new FileReader();
-  reader.onload=async function(ev){
-    var lines=ev.target.result.split('\n').filter(function(l){return l.trim();}),imp=0,skipped=0,errors=[];
-    try{
-      for(var li=1;li<lines.length;li++){
-        var c=lines[li].split(',');
-        if(c.length<EXPECTED_COLS){skipped++;errors.push('Ligne '+(li+1)+': '+c.length+' colonnes (attendu '+EXPECTED_COLS+')');continue;}
-        // Column order: 0=Vendeur,1=Date,2=Client,3=Contrat,4=Fournisseur,5=Broker,6=Produit,7=ISIN,
-        // 8=Nominal,9=Devise,10=FX,11=Issue,12=End,13=Type,14=UF%,15=Run%,16=UF EUR,17=Run EUR,
-        // 18=Statut,19=Ref,20=Invoice,21=Notes
-        var d={v:c[0]||'Audrey',date:c[1]||today(),stat:'Deal réalisé',client:c[2]||'',contrat:c[3]||'',fourn:c[4]||'',broker:c[5]||'',produit:c[6]||'',isin:c[7]||'',nom:parseFloat(c[8])||0,dev:c[9]||'EUR',fx:parseFloat(c[10])||1,issue:c[11]||'',end:c[12]||'',ct:c[13]||'UF',ufR:parseFloat(c[14])||0,runR:parseFloat(c[15])||0,ufE:parseFloat(c[16])||0,runE:parseFloat(c[17])||0,tva:0,fSt:c[18]||'À émettre',fRef:c[19]||'',inv:c[20]||'',notes:c[21]||'',hist:[{ts:nowS(),a:'Importé depuis CSV',by:'Import'}]};
-        try{
-          var res=await sbInsert('deals',d);
-          if(res&&res[0])d._id=res[0].id;
-          deals.push(d);imp++;
-        }catch(insErr){
-          skipped++;errors.push('Ligne '+(li+1)+': '+(insErr.message||insErr));
+  _pendingFileInput=e.target;
+  var name=(file.name||'').toLowerCase();
+  var isExcel=/\.xlsx$|\.xlsm$/.test(name);
+  if(isExcel){
+    _parseExcelDealsFile(file).then(_processImportRows).catch(function(err){
+      console.error('[import] excel parse failed',err);
+      alert('Erreur lecture Excel : '+(err.message||err));
+      if(_pendingFileInput) _pendingFileInput.value='';
+    });
+  }else{
+    _parseCsvDealsFile(file).then(_processImportRows).catch(function(err){
+      console.error('[import] csv parse failed',err);
+      alert('Erreur lecture CSV : '+(err.message||err));
+      if(_pendingFileInput) _pendingFileInput.value='';
+    });
+  }
+}
+
+function _parseCsvDealsFile(file){
+  return new Promise(function(resolve,reject){
+    var EXPECTED_COLS=22;
+    var reader=new FileReader();
+    reader.onload=function(ev){
+      try{
+        var lines=ev.target.result.split('\n').filter(function(l){return l.trim();});
+        var rows=[];
+        var parseErrors=[];
+        for(var li=1;li<lines.length;li++){
+          var c=lines[li].split(',');
+          if(c.length<EXPECTED_COLS){parseErrors.push('Ligne '+(li+1)+': '+c.length+' colonnes (attendu '+EXPECTED_COLS+')');continue;}
+          rows.push({
+            v:c[0]||'Audrey',date:c[1]||today(),stat:'Deal réalisé',
+            client:c[2]||'',contrat:c[3]||'',fourn:c[4]||'',broker:c[5]||'',
+            produit:c[6]||'',isin:c[7]||'',
+            nom:parseFloat(c[8])||0,dev:c[9]||'EUR',fx:parseFloat(c[10])||1,
+            issue:c[11]||'',end:c[12]||'',ct:c[13]||'UF',
+            ufR:parseFloat(c[14])||0,runR:parseFloat(c[15])||0,
+            ufE:parseFloat(c[16])||0,runE:parseFloat(c[17])||0,
+            tva:0,fSt:c[18]||'À émettre',fRef:c[19]||'',inv:c[20]||'',notes:c[21]||''
+          });
         }
-      }
-      var msg=imp+' deal(s) importé(s).';
-      if(skipped)msg+='\n\n'+skipped+' ligne(s) ignorée(s):\n'+errors.slice(0,5).join('\n')+(errors.length>5?'\n…':'');
-      alert(msg);renderAll();
-    }catch(fatal){
-      alert('Import interrompu: '+(fatal.message||fatal)+'\n\n'+imp+' deal(s) importé(s) avant l\'erreur.');
-      renderAll();
-    }finally{
-      fileInput.value='';
+        resolve({rows:rows, parseErrors:parseErrors, source:'CSV'});
+      }catch(err){reject(err);}
+    };
+    reader.onerror=function(){reject(new Error('Erreur de lecture du fichier.'));};
+    reader.readAsText(file);
+  });
+}
+
+async function _parseExcelDealsFile(file){
+  toast('Chargement '+file.name+'…');
+  var XLSX=await _loadSheetJS();
+  var buf=await file.arrayBuffer();
+  var wb=XLSX.read(buf,{type:'array',cellDates:true});
+  if(!wb.SheetNames||!wb.SheetNames.length) throw new Error('Fichier vide.');
+  // Use first sheet by default; user-customised exports may rename it.
+  var sheet=wb.Sheets[wb.SheetNames[0]];
+  // header:1 returns array-of-arrays; first row = headers, rest = data.
+  var aoa=XLSX.utils.sheet_to_json(sheet,{header:1,defval:null,raw:false});
+  if(!aoa.length) throw new Error('Onglet vide.');
+  var headers=(aoa[0]||[]).map(function(h){return String(h||'').trim();});
+  var H=function(name){return headers.indexOf(name);};
+  // Map by header name — tolerant of column reordering. Falls back to positional
+  // index if a header is missing (matches CSV column order).
+  function pick(row,name,fallbackIdx){
+    var i=H(name); if(i===-1) i=fallbackIdx;
+    return (i>=0 && i<row.length)? row[i] : null;
+  }
+  var rows=[];
+  var parseErrors=[];
+  for(var li=1;li<aoa.length;li++){
+    var r=aoa[li]; if(!r||!r.length||r.every(function(v){return v==null||v==='';})) continue;
+    try{
+      var dateRaw=pick(r,'Date',1);
+      var dateStr=(dateRaw instanceof Date)?dateRaw.toISOString().slice(0,10):String(dateRaw||today()).slice(0,10);
+      var issueRaw=pick(r,'Issue',11);
+      var issueStr=(issueRaw instanceof Date)?issueRaw.toISOString().slice(0,10):String(issueRaw||'').slice(0,10);
+      var endRaw=pick(r,'End',12);
+      var endStr=(endRaw instanceof Date)?endRaw.toISOString().slice(0,10):String(endRaw||'').slice(0,10);
+      rows.push({
+        v:String(pick(r,'Vendeur',0)||'Audrey'),
+        date:dateStr,
+        stat:'Deal réalisé',
+        client:String(pick(r,'Client',2)||''),
+        contrat:String(pick(r,'Contrat',3)||''),
+        fourn:String(pick(r,'Fournisseur',4)||''),
+        broker:String(pick(r,'Broker',5)||''),
+        produit:String(pick(r,'Produit',6)||''),
+        isin:String(pick(r,'ISIN',7)||''),
+        nom:parseFloat(pick(r,'Nominal',8))||0,
+        dev:String(pick(r,'Devise',9)||'EUR'),
+        fx:parseFloat(pick(r,'FX',10))||1,
+        issue:issueStr,
+        end:endStr,
+        ct:String(pick(r,'Type',13)||'UF'),
+        ufR:parseFloat(pick(r,'UF%',14))||0,
+        runR:parseFloat(pick(r,'Run%',15))||0,
+        ufE:parseFloat(pick(r,'UF EUR',16))||0,
+        runE:parseFloat(pick(r,'Run EUR',17))||0,
+        tva:0,
+        fSt:String(pick(r,'Statut',18)||'À émettre'),
+        fRef:String(pick(r,'Ref',19)||''),
+        inv:String(pick(r,'Invoice',20)||''),
+        notes:String(pick(r,'Notes',21)||''),
+        // pass-through extras for fee inference (Excel users sometimes add cols)
+        _xRaw:r, _xHeaders:headers
+      });
+    }catch(rowErr){
+      parseErrors.push('Ligne '+(li+1)+': '+(rowErr.message||rowErr));
     }
+  }
+  return {rows:rows, parseErrors:parseErrors, source:'Excel'};
+}
+
+// Inspect a parsed row + (optional) source headers for fee hints. Returns a
+// fees[] array in the fourn.products[].fees shape. Heuristic: prefer explicit
+// UF% / Run% columns, else infer from ct (UF / Run / UF+Run).
+function _inferFeesFromImportRow(row){
+  var fees=[];
+  var uf=Number(row.ufR)||0;
+  var run=Number(row.runR)||0;
+  // Look for extra columns specific to product fee templates in the source row.
+  if(row._xHeaders && row._xRaw){
+    var hdr=row._xHeaders, raw=row._xRaw;
+    var ufIdx=hdr.indexOf('uf_pct'); if(ufIdx===-1) ufIdx=hdr.indexOf('UF prod %');
+    var rnIdx=hdr.indexOf('run_pct'); if(rnIdx===-1) rnIdx=hdr.indexOf('Run prod %');
+    if(ufIdx>=0 && raw[ufIdx]!=null && raw[ufIdx]!=='') uf=parseFloat(raw[ufIdx])||uf;
+    if(rnIdx>=0 && raw[rnIdx]!=null && raw[rnIdx]!=='') run=parseFloat(raw[rnIdx])||run;
+  }
+  var ct=(row.ct||'').toLowerCase();
+  if(uf>0 && run>0) fees.push({kind:'UF+Run', pct:uf+run});
+  else if(uf>0) fees.push({kind:'UF', pct:uf});
+  else if(run>0) fees.push({kind:'Run', pct:run});
+  else if(ct.indexOf('uf+run')!==-1) fees.push({kind:'UF+Run', pct:0});
+  else if(ct.indexOf('run')!==-1) fees.push({kind:'Run', pct:0});
+  else fees.push({kind:'UF', pct:0});
+  return fees;
+}
+
+// After rows parsed: scan for unknown (fourn, isin/part) combos. If any found,
+// open the universal product modal. Else go straight to insert.
+function _processImportRows(parsed){
+  var rows=parsed.rows;
+  if(parsed.parseErrors && parsed.parseErrors.length){
+    console.warn('[import] parse errors:', parsed.parseErrors);
+  }
+  if(!rows.length){
+    alert('Aucune ligne valide a importer.');
+    if(_pendingFileInput) _pendingFileInput.value='';
+    return;
+  }
+  var pending=[];
+  // De-dupe by (fourn|isin|part) so the modal doesn't show the same product 50×.
+  var seenKey={};
+  for(var i=0;i<rows.length;i++){
+    var row=rows[i];
+    var fournName=(row.fourn||'').trim();
+    if(!fournName) continue;
+    var isin=(row.isin||'').trim();
+    var part=(row.produit||'').trim();
+    if(!isin && !part) continue;
+    var key=fournName+'|'+isin.toUpperCase()+'|'+part.toLowerCase();
+    if(seenKey[key]) continue;
+    seenKey[key]=true;
+    var existingByIsin=isin?getFournProductByIsin(fournName,isin):null;
+    var existingByName=!existingByIsin?getFournProducts(fournName).find(function(p){return (p.part||'').toLowerCase()===part.toLowerCase();}):null;
+    var existing=existingByIsin||existingByName||null;
+    var inferredFees=_inferFeesFromImportRow(row);
+    if(!existing){
+      pending.push({
+        fourn:fournName, isin:isin, part:part,
+        type:row.ct||'action', currency:row.dev||'EUR',
+        fees:inferredFees, sourceRowIdx:i, _link:'', _skip:false,
+        _existingFees:null, _mode:'new'
+      });
+    }else{
+      // Known product — but fees may differ. Deep compare.
+      var changed=_feesDiffer(existing.fees||[], inferredFees);
+      if(changed){
+        pending.push({
+          fourn:fournName, isin:existing.isin||isin, part:existing.part||part,
+          type:existing.type||row.ct||'action',
+          currency:existing.currency||row.dev||'EUR',
+          fees:inferredFees, sourceRowIdx:i, _link:'', _skip:false,
+          _existingFees:existing.fees||[], _mode:'update', _existingRef:existing
+        });
+      }
+    }
+  }
+  if(pending.length>0){
+    _pendingProductImports=pending;
+    _pendingDealRowsForImport=rows;
+    _productImportMode='import';
+    openProductImportModal();
+    return;
+  }
+  _executeDealImport(rows);
+}
+
+// Deep compare two fees arrays. kind exact match, pct rounded to 4 decimals.
+function _feesDiffer(a,b){
+  a=a||[]; b=b||[];
+  if(a.length!==b.length) return true;
+  var norm=function(arr){
+    return arr.map(function(x){return (x.kind||'')+':'+(Math.round(((+x.pct)||0)*10000)/10000);}).sort();
   };
-  reader.onerror=function(){alert('Erreur de lecture du fichier.');fileInput.value='';};
-  reader.readAsText(file);
+  var na=norm(a), nb=norm(b);
+  for(var i=0;i<na.length;i++) if(na[i]!==nb[i]) return true;
+  return false;
+}
+
+// Execute the queued deal insert loop (factored out of importCSV so both the
+// "no new products" path and the "modal confirmed" path can reuse it).
+async function _executeDealImport(rows){
+  var imp=0, skipped=0, errors=[];
+  try{
+    for(var li=0;li<rows.length;li++){
+      var r=rows[li];
+      // Re-resolve fees from possibly-updated catalogue for snapshot fidelity
+      var d={
+        v:r.v,date:r.date,stat:r.stat,client:r.client,contrat:r.contrat,
+        fourn:r.fourn,broker:r.broker,produit:r.produit,isin:r.isin,
+        nom:r.nom,dev:r.dev,fx:r.fx,issue:r.issue,end:r.end,ct:r.ct,
+        ufR:r.ufR,runR:r.runR,ufE:r.ufE,runE:r.runE,tva:0,
+        fSt:r.fSt,fRef:r.fRef,inv:r.inv,notes:r.notes,
+        hist:[{ts:nowS(),a:'Importé',by:'Import'}]
+      };
+      try{
+        var res=await sbInsert('deals',d);
+        if(res&&res[0])d._id=res[0].id;
+        deals.push(d); imp++;
+      }catch(insErr){
+        skipped++; errors.push('Ligne '+(li+2)+': '+(insErr.message||insErr));
+      }
+    }
+    var msg=imp+' deal(s) importé(s).';
+    if(skipped) msg+='\n\n'+skipped+' ligne(s) ignorée(s):\n'+errors.slice(0,5).join('\n')+(errors.length>5?'\n…':'');
+    alert(msg);
+    renderAll();
+  }catch(fatal){
+    alert('Import interrompu: '+(fatal.message||fatal)+'\n\n'+imp+' deal(s) importé(s) avant l\'erreur.');
+    renderAll();
+  }finally{
+    if(_pendingFileInput){_pendingFileInput.value=''; _pendingFileInput=null;}
+    _pendingDealRowsForImport=null;
+    _pendingProductImports=[];
+  }
+}
+
+// ── UNIVERSAL PRODUCT IMPORT MODAL ───────────────────────────────────────────
+// Two modes: 'import' (Excel/CSV auto-detect) and 'savedeal' (L.5 popup
+// replacement). Same DOM, different state + different confirm behaviour.
+
+function openProductImportModal(){
+  document.getElementById('productImportCount').textContent=_pendingProductImports.length;
+  document.getElementById('productImportTitle').textContent=
+    (_productImportMode==='savedeal')?'Sauvegarder au catalogue ?':'Nouveaux produits détectés';
+  _renderProductImportRows();
+  document.getElementById('productImportModal').classList.add('on');
+}
+
+function closeProductImportModal(){
+  document.getElementById('productImportModal').classList.remove('on');
+}
+
+function cancelProductImport(){
+  closeProductImportModal();
+  if(_productImportMode==='savedeal'){
+    var resolve=_saveDealResolve; _saveDealResolve=null;
+    _pendingProductImports=[]; _productImportMode='import';
+    if(resolve) resolve({commitList:[], cancelled:true});
+    return;
+  }
+  // import mode — drop the queue entirely
+  if(_pendingFileInput){_pendingFileInput.value=''; _pendingFileInput=null;}
+  _pendingProductImports=[];
+  _pendingDealRowsForImport=null;
+  toast('Import annulé.');
+}
+
+function _renderProductImportRows(){
+  var host=document.getElementById('productImportRows');
+  var FEE_KINDS=['UF','Run','UF+Run'];
+  var TYPES=['action','obligation','fonds','etf','structuré','immo','sci','assurance','autre'];
+  var CURRENCIES=['EUR','USD','GBP','CHF','JPY'];
+  host.innerHTML=_pendingProductImports.map(function(p,idx){
+    var products=getFournProducts(p.fourn);
+    var linkOpts='<option value="">— Créer nouveau —</option>'+products.map(function(prod,pi){
+      var lbl=(prod.part||'(sans nom)')+(prod.isin?(' / '+prod.isin):'');
+      return '<option value="'+pi+'"'+(p._link===String(pi)?' selected':'')+'>'+lbl+'</option>';
+    }).join('');
+    var feeRows=(p.fees||[{kind:'UF',pct:0}]).map(function(fee,fi){
+      return '<div style="display:flex;gap:6px;align-items:center;margin-bottom:4px;">'+
+        '<select data-pim-fee-kind="'+idx+'_'+fi+'" style="flex:0 0 90px;padding:4px;font-size:11px;">'+
+          FEE_KINDS.map(function(k){return '<option value="'+k+'"'+(fee.kind===k?' selected':'')+'>'+k+'</option>';}).join('')+
+        '</select>'+
+        '<input type="number" step="0.01" data-pim-fee-pct="'+idx+'_'+fi+'" value="'+(fee.pct||0)+'" style="flex:0 0 80px;padding:4px;font-size:11px;" placeholder="%"/>'+
+        '<span style="font-size:11px;color:var(--text3);">%</span>'+
+        (fi>0?'<button type="button" class="btn" style="padding:2px 8px;font-size:10px;" onclick="_pimRemoveFee('+idx+','+fi+')">×</button>':'')+
+      '</div>';
+    }).join('');
+    var modeLabel=p._mode==='update'
+      ? '<span style="background:#f59e0b;color:#fff;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;">Modifier produit existant</span>'
+      : '<span style="background:var(--green);color:#fff;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;">Créer nouveau</span>';
+    var diffBlock='';
+    if(p._mode==='update' && p._existingFees){
+      var oldStr=p._existingFees.map(function(x){return x.kind+' '+(x.pct||0)+'%';}).join(' / ')||'(aucun)';
+      var newStr=(p.fees||[]).map(function(x){return x.kind+' '+(x.pct||0)+'%';}).join(' / ')||'(aucun)';
+      diffBlock='<div style="background:rgba(245,158,11,.08);border-left:3px solid #f59e0b;padding:6px 10px;margin-bottom:8px;font-size:11px;">'+
+        '<div style="color:var(--muted);">Frais actuels : <strong>'+oldStr+'</strong></div>'+
+        '<div style="color:var(--text);">Frais détectés : <strong>'+newStr+'</strong></div>'+
+      '</div>';
+    }
+    return '<div style="border:1px solid var(--border);border-radius:var(--rs);padding:12px;margin-bottom:10px;background:var(--surface);'+(p._skip?'opacity:.5;':'')+'" data-pim-row="'+idx+'">'+
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">'+
+        '<div style="font-size:13px;font-weight:600;">'+p.fourn+'</div>'+
+        modeLabel+
+      '</div>'+
+      diffBlock+
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">'+
+        '<div><div style="font-size:10px;color:var(--text3);margin-bottom:2px;">ISIN</div><input type="text" data-pim-isin="'+idx+'" value="'+(p.isin||'')+'" style="width:100%;padding:5px;font-size:12px;"/></div>'+
+        '<div><div style="font-size:10px;color:var(--text3);margin-bottom:2px;">Nom / Part</div><input type="text" data-pim-part="'+idx+'" value="'+(p.part||'').replace(/"/g,'&quot;')+'" style="width:100%;padding:5px;font-size:12px;"/></div>'+
+        '<div><div style="font-size:10px;color:var(--text3);margin-bottom:2px;">Type</div><select data-pim-type="'+idx+'" style="width:100%;padding:5px;font-size:12px;">'+TYPES.map(function(t){return '<option value="'+t+'"'+(p.type===t?' selected':'')+'>'+t+'</option>';}).join('')+'</select></div>'+
+        '<div><div style="font-size:10px;color:var(--text3);margin-bottom:2px;">Devise</div><select data-pim-cur="'+idx+'" style="width:100%;padding:5px;font-size:12px;">'+CURRENCIES.map(function(c){return '<option value="'+c+'"'+(p.currency===c?' selected':'')+'>'+c+'</option>';}).join('')+'</select></div>'+
+      '</div>'+
+      '<div style="margin-bottom:10px;"><div style="font-size:10px;color:var(--text3);margin-bottom:4px;">Frais</div>'+feeRows+
+        '<button type="button" class="btn" style="padding:3px 10px;font-size:10px;margin-top:4px;" onclick="_pimAddFee('+idx+')">+ Ajouter une tranche</button>'+
+      '</div>'+
+      '<div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;font-size:12px;">'+
+        '<label style="display:flex;align-items:center;gap:6px;flex:1;min-width:200px;"><span style="font-size:10px;color:var(--text3);">Lier a existant :</span>'+
+          '<select data-pim-link="'+idx+'" onchange="_pimOnLinkChange('+idx+')" style="flex:1;padding:4px;font-size:11px;">'+linkOpts+'</select>'+
+        '</label>'+
+        '<label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" data-pim-skip="'+idx+'"'+(p._skip?' checked':'')+' onchange="_pimOnSkipChange('+idx+')"/>Skip</label>'+
+        (_productImportMode==='savedeal'?'<label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" data-pim-always="'+idx+'"/>Toujours sauver pour '+p.fourn+'</label>':'')+
+      '</div>'+
+    '</div>';
+  }).join('');
+}
+
+function _pimReadRow(idx){
+  var p=_pendingProductImports[idx]; if(!p) return null;
+  var get=function(attr){var el=document.querySelector('[data-pim-'+attr+'="'+idx+'"]');return el?el.value:null;};
+  p.isin=(get('isin')||'').trim();
+  p.part=(get('part')||'').trim();
+  p.type=get('type')||p.type;
+  p.currency=get('cur')||p.currency;
+  p._link=get('link')||'';
+  var skipEl=document.querySelector('[data-pim-skip="'+idx+'"]');
+  p._skip=!!(skipEl&&skipEl.checked);
+  var alwaysEl=document.querySelector('[data-pim-always="'+idx+'"]');
+  p._always=!!(alwaysEl&&alwaysEl.checked);
+  // Re-read fees
+  var fees=[];
+  document.querySelectorAll('[data-pim-fee-kind^="'+idx+'_"]').forEach(function(kEl){
+    var key=kEl.getAttribute('data-pim-fee-kind').split('_')[1];
+    var pEl=document.querySelector('[data-pim-fee-pct="'+idx+'_'+key+'"]');
+    fees.push({kind:kEl.value, pct:parseFloat(pEl?pEl.value:0)||0});
+  });
+  if(fees.length) p.fees=fees;
+  return p;
+}
+
+function _pimAddFee(idx){
+  _pimReadRow(idx);
+  var p=_pendingProductImports[idx];
+  p.fees=p.fees||[]; p.fees.push({kind:'Run',pct:0});
+  _renderProductImportRows();
+}
+function _pimRemoveFee(idx,fi){
+  _pimReadRow(idx);
+  var p=_pendingProductImports[idx];
+  p.fees.splice(fi,1);
+  if(!p.fees.length) p.fees=[{kind:'UF',pct:0}];
+  _renderProductImportRows();
+}
+function _pimOnSkipChange(idx){
+  var skipEl=document.querySelector('[data-pim-skip="'+idx+'"]');
+  _pendingProductImports[idx]._skip=!!(skipEl&&skipEl.checked);
+  _renderProductImportRows();
+}
+function _pimOnLinkChange(idx){
+  var linkEl=document.querySelector('[data-pim-link="'+idx+'"]');
+  _pendingProductImports[idx]._link=linkEl?linkEl.value:'';
+}
+
+async function confirmProductImport(){
+  // Read every row before acting
+  for(var i=0;i<_pendingProductImports.length;i++) _pimReadRow(i);
+
+  // savedeal mode — return committed candidates to the caller, don't touch deals
+  if(_productImportMode==='savedeal'){
+    var commitList=[]; var fournsToFlag=[];
+    for(var k=0;k<_pendingProductImports.length;k++){
+      var p=_pendingProductImports[k];
+      if(p._skip) continue;
+      if(p._link!=='' && p._link!=null){
+        // Linked to existing — no new product to commit, nothing to do.
+        continue;
+      }
+      commitList.push(p);
+      if(p._always) fournsToFlag.push(p.fourn);
+    }
+    // Persist auto-save flag per fournisseur (dedup).
+    var seen={};
+    for(var fi=0;fi<fournsToFlag.length;fi++){
+      var fn=fournsToFlag[fi]; if(seen[fn]) continue; seen[fn]=true;
+      var f=fourn_db.find(function(x){return x.name===fn;});
+      if(!f) continue;
+      f.auto_save_products=true;
+      try{ if(f._id) await sbUpdate('fournisseurs',f._id,f); }
+      catch(e){ console.error('[L.5] auto_save flag persist failed for '+fn,e); }
+    }
+    closeProductImportModal();
+    var resolve=_saveDealResolve; _saveDealResolve=null;
+    _pendingProductImports=[]; _productImportMode='import';
+    if(resolve) resolve({commitList:commitList, cancelled:false});
+    return;
+  }
+
+  // import mode — commit new/updated products to catalogues, then resume deal insert
+  var commitCount=0;
+  for(var j=0;j<_pendingProductImports.length;j++){
+    var p2=_pendingProductImports[j];
+    if(p2._skip) continue;
+    if(p2._link!=='' && p2._link!=null){
+      // linked to existing — nothing to write
+      continue;
+    }
+    var f2=fourn_db.find(function(x){return x.name===p2.fourn;});
+    if(!f2) continue;
+    f2.products=f2.products||[];
+    if(p2._mode==='update' && p2._existingRef){
+      // Mutate existing product object in-place
+      p2._existingRef.fees=p2.fees;
+      p2._existingRef.type=p2.type;
+      p2._existingRef.currency=p2.currency;
+      if(p2.isin) p2._existingRef.isin=p2.isin;
+      if(p2.part) p2._existingRef.part=p2.part;
+    }else{
+      f2.products.push({
+        isin:p2.isin, part:p2.part, currency:p2.currency, type:p2.type,
+        fees:p2.fees, unit:'part', pf:{mode:'none'}
+      });
+    }
+    try{ if(f2._id) await sbUpdate('fournisseurs',f2._id,f2); commitCount++; }
+    catch(e){ console.error('[import] catalogue write failed for '+p2.fourn,e); }
+  }
+  if(commitCount) toast(commitCount+' produit(s) catalogue mis à jour.');
+  closeProductImportModal();
+  var rowsToInsert=_pendingDealRowsForImport||[];
+  _pendingProductImports=[];
+  _pendingDealRowsForImport=null;
+  _executeDealImport(rowsToInsert);
+}
+
+// Promise wrapper used by saveDeal (L.5 modal flow).
+function _showSaveToCatalogueModal(candidates){
+  return new Promise(function(resolve){
+    _pendingProductImports=candidates;
+    _productImportMode='savedeal';
+    _saveDealResolve=resolve;
+    openProductImportModal();
+  });
 }
 
 // ── CLIENTS ──────────────────────────────────────────────────────────────────

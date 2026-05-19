@@ -4029,7 +4029,7 @@ function renderCharts(){
       }
     });
   }
-  var runEntriesForChart=billingEntries(data).filter(function(e){return (e.ct==='RUN'||e.ct==='BOTH')&&e.runE>0;});
+  var runEntriesForChart=billingEntries(data).filter(function(e){return e.runE>0;});
   // For each month in the window, compute forward-looking run for deals active that month
   var months12=[];
   var nowD=new Date();

@@ -50,7 +50,7 @@
 //     deal with this product auto-fills correctly via the existing
 //     onDealIsinChange / _onDealProduitChange paths.
 // (Previous: 2026-05-18 v41 — Phase L.4 1 deal = 1 produit + cascade diag.)
-const CACHE_NAME = 'dealflow-v46';
+const CACHE_NAME = 'dealflow-v47';
 const APP_SHELL = [
   './',
   './index.html',

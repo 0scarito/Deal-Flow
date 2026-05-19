@@ -25,6 +25,29 @@
 //      rows render as "Modifier produit existant" with a visual old/new
 //      fees diff. Per-fourn auto_save_products bypass = silent save with
 //      a toast, no modal interruption.
+// 2026-05-19 v58 — Facturation bucketing + PF tracked-perf + alert (3 fixes) :
+//   1. "Suivi des factures Up-Front" and "Suivi des factures Perf fees" no longer
+//      show deals with fSt='À émettre' (Ayal/Fantômas bug). Canonical "this is an
+//      invoice" predicate is now entry.invS != empty. Unissued entries belong
+//      ONLY in the rapprochement / "Deals à facturer" tables (renderUFRappr /
+//      renderPFRappr). Fix lives in _filterInvByTab — single chokepoint for UF/PF
+//      Suivi tables. Run/rapprochement_db flow unchanged (it already filters
+//      r.declared!=null and was correct).
+//   2. PF amount in renderPFInvTable is now derived LIVE from the product's
+//      vlHistory (Suivi Perf imports) instead of relying solely on the stored
+//      codif.pf.amount snapshot. New helpers : codifFindProduct, codifProductTracked,
+//      codifProductPerfPct, codifEffectivePFAmount. Formula (pct mode) :
+//        pfAmount = codif.nominalEUR × max(0, perfPct - hurdle) × rate / 10000
+//      where perfPct = (latestVL - earliestVL) / earliestVL × 100. Fixed mode
+//      unchanged (returns stored amount). The Suivi-Perf push action remains the
+//      way to persist the snapshot for invoicing; this just keeps the display
+//      honest in real time.
+//   3. New dynamic alert "Perf non trackée — <produit>" in buildAlerts (category
+//      rapprochement, severity warning). Raised for every distinct (fourn, isin)
+//      with a pct-mode PF whose product has no vlHistory. NOT dismissable —
+//      auto-resolves the moment the user imports the suivi de perf. Dedup so
+//      multiple deals on the same product surface as a single alert row.
+// (Previous: 2026-05-19 v55 — Universal product import + L.5 modal refactor.)
 // (Previous: 2026-05-19 v54 — CIF/COA toggle relocated + per-contract (3 fixes) :
 //   1. Activité toggle MOVED out of Line 1 (Vendeur/Trade date/Statut/Activité)
 //      and INTO the Contrat block, right next to Type de contrat. Line 1 grid
@@ -165,14 +188,17 @@
 //     fournisseur (lookup keyed on .fourn only — assureur/banque ignored
 //     because the product is logged under the fournisseur SDG).
 //   · Fees snapshot, currency, type, pf config — all copied so the next
-// 2026-05-19 v57 — Close deal modal before save-to-catalogue popup (was popping behind).
+//     deal with this product auto-fills correctly via the existing
+//     onDealIsinChange / _onDealProduitChange paths.
+// (Previous: 2026-05-19 v57 — Close deal modal before save-to-catalogue popup (was popping behind).)
+
 //   Allocation mismatch warning: red border on Total contrat + blocking confirm() if save with écart > 0.5.
 // 2026-05-19 v56 — Replaced buggy CIF/COA iOS toggle with native <select> dropdown.
 //   Dépositaire restored to same row as Type de contrat (5-col layout).
 //     deal with this product auto-fills correctly via the existing
 //     onDealIsinChange / _onDealProduitChange paths.
 // (Previous: 2026-05-18 v41 — Phase L.4 1 deal = 1 produit + cascade diag.)
-const CACHE_NAME = 'dealflow-v57';
+const CACHE_NAME = 'dealflow-v58';
 const APP_SHELL = [
   './',
   './index.html',

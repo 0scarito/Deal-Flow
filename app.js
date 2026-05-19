@@ -3093,12 +3093,25 @@ function renderPFInvTable(){
     if(d.fSt==='Payé'){btn=_renderStandbyBtn(idx,d,'unMarkPFInvPaid');}
     else if(d.fSt==='Facturé'){btn='<button class="btn btn-sm" style="background:var(--green);color:white;border-color:var(--green);" onclick="markPFInvPaid('+idx+')">Marquer payé</button>';}
     else {btn='—';}
-    // PF amount display : fixed mode → known amount; pct mode → "À calculer (X% / hurdle Y%)"
+    // v58 — PF amount display now derived from tracked product perf (vlHistory).
+    //   fixed : show stored amount.
+    //   pct   : if product tracked → show LIVE computed amount (current vlHistory).
+    //           if NOT tracked → show "Perf non trackée" inline tag (alert also raised
+    //           in buildAlerts → category 'rapprochement', severity 'warning').
     var amountCell;
     if(e.pf.mode==='fixed'){
       amountCell='<td style="text-align:right;font-weight:500;color:var(--green);">'+fE(e.pf.amount||0)+'</td>';
     } else if(e.pf.mode==='pct'){
-      amountCell='<td style="text-align:right;font-size:11px;color:var(--amber-t);"><span style="font-style:italic;">À calculer</span><br/><span style="color:var(--text3);">'+(e.pf.rate||0)+'% / hurdle '+(e.pf.hurdle||0)+'%</span></td>';
+      var tracked=codifProductTracked(e.codif);
+      if(tracked){
+        var liveAmt=codifEffectivePFAmount(e.codif,e.deal);
+        var perfPct=codifProductPerfPct(e.codif);
+        var perfLbl=(perfPct!=null)?perfPct.toFixed(2)+'%':'—';
+        amountCell='<td style="text-align:right;font-weight:500;color:var(--green);">'+fE(liveAmt)+
+          '<br/><span style="font-size:10px;color:var(--text3);font-weight:400;">perf '+perfLbl+' · '+(e.pf.rate||0)+'%/hurdle '+(e.pf.hurdle||0)+'%</span></td>';
+      } else {
+        amountCell='<td style="text-align:right;font-size:11px;color:var(--amber-t);"><span style="font-style:italic;">Perf non trackée</span><br/><span style="color:var(--text3);">importer via Suivi Perf</span></td>';
+      }
     } else {
       amountCell='<td style="text-align:right;color:var(--text3);">—</td>';
     }
@@ -3318,10 +3331,17 @@ function _standbySecondsLeft(d){
 }
 function _filterInvByTab(all,tab){
   // tab values : 'all' | 'aE' | 'fact' | 'pay' | 'archives'
+  // v58 — Bucketing fix : "Suivi des factures" only contains entries that have
+  // been ISSUED (invS set). Entries with fSt='À émettre' (no invoice yet) belong
+  // in the rapprochement / "Deals à facturer" tables, NOT here. Canonical
+  // "this is an invoice" predicate = entry.invS != null/empty.
   if(tab==='archives')return all.filter(_isPaidArchived);
+  // Drop unissued entries entirely — they are listed in the "Deals à facturer"
+  // tab (renderUFRappr/renderPFRappr), not here.
+  var issued=all.filter(function(d){return d.invS && d.invS.length;});
   // For non-archive tabs, always exclude already-archived paid (timestamped > 60s ago)
-  var live=all.filter(function(d){return !_isPaidArchived(d);});
-  if(tab==='aE')return live.filter(function(d){return !d.fSt||d.fSt==='À émettre';});
+  var live=issued.filter(function(d){return !_isPaidArchived(d);});
+  if(tab==='aE')return live.filter(function(d){return !d.fSt||d.fSt==='À émettre';}); // legacy — always empty post-v58
   if(tab==='fact')return live.filter(function(d){return d.fSt==='Facturé';});
   if(tab==='pay')return live.filter(function(d){return d.fSt==='Payé';});
   return live; // 'all'
@@ -3986,6 +4006,32 @@ function buildAlerts(){
       }
     }
     if(r.declared<0)alerts.push({id:'rappr-neg-'+r.id,severity:'warning',category:'rapprochement',title:'Rapprochement avec montant négatif',detail:r.fourn+' · '+(r.period||''),action:null});
+  });
+
+  // v58 — PF on untracked product (current-state, auto-resolves when product is
+  // tracked via Suivi Perf import). NOT dismissable — by nature ephemeral.
+  // Dedup by (fourn, isin) so multiple deals on the same untracked product
+  // surface as a single alert.
+  var pfUntrackedSeen={};
+  deals.forEach(function(d){
+    if(d.archived)return;
+    if(!Array.isArray(d.codifications))return;
+    d.codifications.forEach(function(c){
+      if(!c||!c.pf||c.pf.mode!=='pct')return; // only pct mode needs tracked perf
+      if(typeof codifProductTracked==='function' && codifProductTracked(c))return; // already tracked
+      var key=(c.fourn||'?')+'|'+(c.isin||c.produit||'?');
+      if(pfUntrackedSeen[key])return;
+      pfUntrackedSeen[key]=true;
+      alerts.push({
+        id:'pf-untracked-'+key,
+        severity:'warning',
+        category:'rapprochement',
+        title:'Perf non trackée — '+(c.produit||c.isin||'?'),
+        detail:'Importez le suivi de perf via Suivi Perf pour calculer la PF de '+(c.fourn||'?'),
+        action:{type:'deal',payload:d._id||null},
+        dismissable:false // auto-resolves when vlHistory populated
+      });
+    });
   });
 
   // DONNÉES ORPHELINES
@@ -6279,6 +6325,74 @@ function codifCurrentUfE(codif, deal){
   var nom=codifCurrentNominal(codif, deal);
   var rate=codifEffectiveUfR(codif, deal);
   return Math.round(nom * (rate/100));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// v58 — PF amount derived from tracked product perf (vlHistory)
+// ═══════════════════════════════════════════════════════════════════════════
+// Find the product entry on its fourn (matched by ISIN preferred, fallback name).
+// Returns {fourn, product} or null. Only searches SDG fournisseurs (where vlHistory lives).
+function codifFindProduct(codif){
+  if(!codif||typeof fourn_db==='undefined')return null;
+  var fname=codif.fourn||'';
+  var isin=codif.isin||'';
+  var part=codif.produit||'';
+  var f=fourn_db.find(function(x){return x.name===fname;});
+  if(!f||!Array.isArray(f.products))return null;
+  var p=null;
+  if(isin)p=f.products.find(function(x){return x.isin===isin;});
+  if(!p&&part)p=f.products.find(function(x){return (x.part||'').trim()===part.trim();});
+  return p?{fourn:f,product:p}:null;
+}
+// Is this codif's product tracked (= has vlHistory with at least 2 datapoints)?
+function codifProductTracked(codif){
+  var hit=codifFindProduct(codif);
+  if(!hit)return false;
+  var h=hit.product.vlHistory;
+  return Array.isArray(h)&&h.length>=2;
+}
+// Gross perf % of the codif's product over its full tracked vlHistory window
+// (earliestVL → latestVL). Returns null if not tracked.
+function codifProductPerfPct(codif){
+  var hit=codifFindProduct(codif);
+  if(!hit)return null;
+  var h=hit.product.vlHistory;
+  if(!Array.isArray(h)||h.length<2)return null;
+  var sorted=h.slice().sort(function(a,b){return (a.date||'').localeCompare(b.date||'');});
+  var vl0=sorted[0].vl||0;
+  var vl1=sorted[sorted.length-1].vl||0;
+  if(!vl0)return null;
+  return ((vl1-vl0)/vl0)*100;
+}
+// Effective PF amount for this codif, computed from the product's vlHistory.
+//   - 'fixed' mode  : returns codif.pf.amount as-is (no perf calc needed).
+//   - 'pct' mode    : returns nominalEUR × max(0, perf% - hurdle%) × rate% / 10000.
+//                     Returns 0 if product not tracked (Fix #3 emits an alert).
+//   - 'none' mode   : returns 0.
+//
+// FORMULA (pct mode) :
+//     pfAmount = codif.nominal × max(0, perfPct - hurdle) × rate / 10000
+//   where perfPct = (latestVL - earliestVL) / earliestVL × 100
+//
+// This is what the billing tables SHOULD display. Stored codif.pf.amount remains
+// the snapshot from the last Suivi-Perf push (or fixed-mode manual entry).
+function codifEffectivePFAmount(codif, deal){
+  if(!codif||!codif.pf||!codif.pf.mode||codif.pf.mode==='none')return 0;
+  var pf=codif.pf;
+  if(pf.mode==='fixed')return pf.amount||0;
+  if(pf.mode==='pct'){
+    var perfPct=codifProductPerfPct(codif);
+    if(perfPct==null)return 0; // not tracked → 0 (alert raised separately)
+    var hurdle=pf.hurdle||0;
+    var over=perfPct-hurdle;
+    if(over<=0)return 0;
+    var nom=parseFloat(codif.nominal)||0;
+    if(!nom)return 0;
+    var fx=(deal&&deal.fx)||1;
+    var nomEur=Math.round(nom/fx);
+    return Math.round(nomEur*over*(pf.rate||0)/10000);
+  }
+  return 0;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -25,6 +25,7 @@
 //      rows render as "Modifier produit existant" with a visual old/new
 //      fees diff. Per-fourn auto_save_products bypass = silent save with
 //      a toast, no modal interruption.
+// 2026-05-19 v59 — Fournisseurs DB: nouvelle colonne Nominal (sum codif.nominal par fourn) entre Nb deals et UF total.
 // 2026-05-19 v58 — Facturation bucketing + PF tracked-perf + alert (3 fixes) :
 //   1. "Suivi des factures Up-Front" and "Suivi des factures Perf fees" no longer
 //      show deals with fSt='À émettre' (Ayal/Fantômas bug). Canonical "this is an
@@ -198,7 +199,7 @@
 //     deal with this product auto-fills correctly via the existing
 //     onDealIsinChange / _onDealProduitChange paths.
 // (Previous: 2026-05-18 v41 — Phase L.4 1 deal = 1 produit + cascade diag.)
-const CACHE_NAME = 'dealflow-v58';
+const CACHE_NAME = 'dealflow-v59';
 const APP_SHELL = [
   './',
   './index.html',

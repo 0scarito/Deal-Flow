@@ -8908,23 +8908,25 @@ function renderFourn(){
   entries.forEach(function(e){
     var name=e.fourn||'';
     if(!name) return;
-    if(!byFourn[name]) byFourn[name]={ufE:0,runE:0,lastDate:'',dealIds:new Set()};
+    if(!byFourn[name]) byFourn[name]={ufE:0,runE:0,nominalSum:0,lastDate:'',dealIds:new Set()};
     byFourn[name].ufE  += e.ufE||0;
     byFourn[name].runE += e.runE||0;
+    byFourn[name].nominalSum += e.nominal||0;
     byFourn[name].dealIds.add(e._id||e.deal);
     var dt=e.date||'';
     if(dt>byFourn[name].lastDate) byFourn[name].lastDate=dt;
   });
   list.forEach(function(f){
-    var agg = byFourn[f.name] || {ufE:0,runE:0,lastDate:'',dealIds:new Set()};
+    var agg = byFourn[f.name] || {ufE:0,runE:0,nominalSum:0,lastDate:'',dealIds:new Set()};
     var nb = agg.dealIds.size;
     var tUF = agg.ufE;
     var tRun = agg.runE;
+    var tNom = agg.nominalSum;
     var last = agg.lastDate || '—';
     var bc=FAMILLE_BADGE[f.famille]||'bgr';
     var bl=FAMILLE_LABELS[f.famille]||f.famille;
     var r=t.insertRow();
-    r.innerHTML='<td style="font-weight:500;cursor:pointer;" title="Double-cliquer pour modifier" ondblclick="openFournModal(\''+escAttr(f.name)+'\')">'+escH(f.name)+'</td><td><span class="badge '+bc+'">'+bl+'</span></td><td style="text-align:center;">'+nb+'</td><td style="text-align:right;color:var(--blue);font-weight:500;">'+(tUF>0?fE(tUF):'—')+'</td><td style="text-align:right;color:var(--green);font-weight:500;">'+(tRun>0?fE(tRun):'—')+'</td><td class="mono" style="color:var(--text2);">'+escH(last)+'</td>';
+    r.innerHTML='<td style="font-weight:500;cursor:pointer;" title="Double-cliquer pour modifier" ondblclick="openFournModal(\''+escAttr(f.name)+'\')">'+escH(f.name)+'</td><td><span class="badge '+bc+'">'+bl+'</span></td><td style="text-align:center;">'+nb+'</td><td style="text-align:right;color:var(--text);font-weight:500;">'+(tNom>0?fE(tNom):'—')+'</td><td style="text-align:right;color:var(--blue);font-weight:500;">'+(tUF>0?fE(tUF):'—')+'</td><td style="text-align:right;color:var(--green);font-weight:500;">'+(tRun>0?fE(tRun):'—')+'</td><td class="mono" style="color:var(--text2);">'+escH(last)+'</td>';
   });
   rebuildFournSelect();
 }

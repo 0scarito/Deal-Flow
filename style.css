@@ -212,3 +212,16 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--blue);bo
 ::-webkit-scrollbar{width:5px;height:5px;}
 ::-webkit-scrollbar-track{background:transparent;}
 ::-webkit-scrollbar-thumb{background:var(--border-md);border-radius:3px;}
+
+
+/* v53 — CIF/COA iOS-style activity toggle (deal modal Line 1) */
+.toggle-cif-coa{display:inline-block;width:140px;height:32px;cursor:pointer;user-select:none;position:relative;font-family:inherit;}
+.toggle-cif-coa .toggle-track{position:relative;display:block;width:100%;height:100%;border-radius:16px;background:var(--surface2);border:1px solid var(--border-md);transition:background 200ms ease,border-color 200ms ease;overflow:hidden;}
+.toggle-cif-coa .toggle-thumb{position:absolute;top:2px;left:2px;width:calc(50% - 2px);height:calc(100% - 4px);border-radius:14px;background:var(--blue);box-shadow:0 1px 3px rgba(0,0,0,.18);transition:transform 200ms ease,background 200ms ease;}
+.toggle-cif-coa.is-coa .toggle-thumb{transform:translateX(100%);background:var(--green);}
+.toggle-cif-coa .toggle-label{position:absolute;top:0;width:50%;height:100%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:var(--text2);transition:color 200ms ease;z-index:1;pointer-events:none;}
+.toggle-cif-coa .toggle-label-cif{left:0;}
+.toggle-cif-coa .toggle-label-coa{right:0;}
+.toggle-cif-coa.is-cif .toggle-label-cif{color:#fff;}
+.toggle-cif-coa.is-coa .toggle-label-coa{color:#fff;}
+.toggle-cif-coa:hover .toggle-track{border-color:var(--text3);}

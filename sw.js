@@ -2,7 +2,27 @@
 // Stratégie : network-first pour l'app shell (toujours essayer la dernière version,
 // fallback cache si offline). Aucune interception des appels Supabase / CDN.
 
-// 2026-05-19 v53 — CIF/COA activity type system :
+// 2026-05-19 v54 — CIF/COA toggle relocated + per-contract (3 fixes) :
+//   1. Activité toggle MOVED out of Line 1 (Vendeur/Trade date/Statut/Activité)
+//      and INTO the Contrat block, right next to Type de contrat. Line 1 grid
+//      restored to 3 columns (Vendeur / Trade date / Statut). Each contract
+//      now carries its own CIF/COA — even though a deal is 1 client × 1
+//      contract since L.4, this keeps activity semantically on the contract
+//      where it belongs. Dépositaire pushed to its own row below to keep the
+//      4-col Type/Activité/Total/Devise layout breathable.
+//   2. Click handler rewritten as event delegation on #dealModal
+//      (modal._activityToggleDelegated flag — idempotent). Works for every
+//      .toggle-cif-coa in the modal, including ones added after open via
+//      add-contract / add-client during the same session. Visual flips on
+//      click; .dataset.value + .is-cif / .is-coa class stay in sync.
+//   3. saveDeal reads activity from the per-contract toggle (via
+//      _collectContractBlock -> contractData.activity). _buildDealRowFromContract
+//      prefers contractData.activity over the legacy `activity` arg. The
+//      activity column on the deals table is unchanged (still 1 value per
+//      deal row — fine because L.4 already collapsed deals to 1 contract).
+//      renderActivite() unchanged — still reads d.activity per-deal. Pilotage
+//      Activité card keeps working as-is.
+// (Previous: 2026-05-19 v53 — CIF/COA activity type system :
 //   1. New `activity` column on deals table (text, default 'CIF', check
 //      constraint CIF|COA, backfilled). Migration SQL in db/deals_activity_v53.sql.
 //   2. Deal modal Line 1 promoted from 3 -> 4 columns (Vendeur / Trade date /
@@ -124,7 +144,7 @@
 //     deal with this product auto-fills correctly via the existing
 //     onDealIsinChange / _onDealProduitChange paths.
 // (Previous: 2026-05-18 v41 — Phase L.4 1 deal = 1 produit + cascade diag.)
-const CACHE_NAME = 'dealflow-v53';
+const CACHE_NAME = 'dealflow-v54';
 const APP_SHELL = [
   './',
   './index.html',

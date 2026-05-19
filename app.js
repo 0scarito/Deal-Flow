@@ -4835,9 +4835,7 @@ function openDealModal(idx){
     document.getElementById('mDate').value=d.date||today();
     document.getElementById('mStat').value=d.stat||'Deal pipe';
     document.getElementById('mNotes').value=d.notes||'';
-    // v53 — activity toggle (CIF default for legacy rows without column)
-    var actToggleE=document.getElementById('mActivityToggle');
-    if(actToggleE){actToggleE.dataset.value=d.activity||'CIF';_syncActivityToggleVisual(actToggleE);}
+    // v54 — activity is per-contract; it's hydrated by addDealContractBlock via _dealRowToContractData
     // Group rows: if dealGroupId set, find siblings; else single-row legacy edit
     var groupRows=[];
     if(d.dealGroupId){
@@ -4866,9 +4864,7 @@ function openDealModal(idx){
     document.getElementById('mV').value=defaultV;
     document.getElementById('mStat').value='Deal pipe';
     document.getElementById('mNotes').value='';
-    // v53 — activity toggle defaults to CIF on new deals
-    var actToggleN=document.getElementById('mActivityToggle');
-    if(actToggleN){actToggleN.dataset.value='CIF';_syncActivityToggleVisual(actToggleN);}
+    // v54 — activity defaults to CIF on each new contract block (handled in addDealContractBlock)
     var addBtn=document.getElementById('dealAddClientBtn');
     if(addBtn)addBtn.style.display='';
     addDealClientBlock('');
@@ -4878,21 +4874,22 @@ function openDealModal(idx){
   setupActivityToggle();
   document.getElementById('dealModal').classList.add('on');
 }
-// v53 — CIF/COA activity toggle (iOS-style pill). Click toggles state, visual
-// + dataset stay in sync. Listener is idempotent: re-attaching is a no-op via
-// _activityToggleWired flag, so calling setupActivityToggle() inside every
-// openDealModal() is safe.
+// v54 — CIF/COA activity toggle (iOS-style pill). Now lives PER CONTRACT inside
+// the modal (class .dfActivityToggle) — there can be N of them in a single
+// modal. We use event delegation on the modal body so the listener is wired
+// exactly once and works for every current AND future toggle the user
+// adds (e.g. add-contract / add-client during a session).
 function setupActivityToggle(){
-  var el=document.getElementById('mActivityToggle');
-  if(!el)return;
-  if(!el._activityToggleWired){
-    el.addEventListener('click',function(){
-      this.dataset.value=this.dataset.value==='CIF'?'COA':'CIF';
-      _syncActivityToggleVisual(this);
-    });
-    el._activityToggleWired=true;
-  }
-  _syncActivityToggleVisual(el);
+  var modal=document.getElementById('dealModal');
+  if(!modal)return;
+  if(modal._activityToggleDelegated)return; // idempotent
+  modal.addEventListener('click',function(e){
+    var t=e.target&&e.target.closest&&e.target.closest('.toggle-cif-coa');
+    if(!t||!modal.contains(t))return;
+    t.dataset.value=t.dataset.value==='CIF'?'COA':'CIF';
+    _syncActivityToggleVisual(t);
+  });
+  modal._activityToggleDelegated=true;
 }
 function _syncActivityToggleVisual(el){
   // Reflect the dataset.value into a class hook so CSS can drive thumb position
@@ -4919,6 +4916,7 @@ function _dealRowToContractData(row){
     contrat:row.contrat||'Assurance Vie Lux',
     nom:row.nom||0,dev:row.dev||'EUR',depositaire:row.depositaire||'',
     ct:row.ct||'UF',ufR:row.ufR||'',runR:row.runR||'',tva:row.tva||0,
+    activity:row.activity||'CIF', // v54 — per-contract activity restored on edit
     codifications:codifs
   };
 }
@@ -5007,10 +5005,11 @@ async function saveDeal(){
   var date=document.getElementById('mDate').value;
   var stat=document.getElementById('mStat').value;
   var notes=document.getElementById('mNotes').value;
-  // v53 — capture CIF/COA activity from toggle (default CIF if widget missing)
-  var actEl=document.getElementById('mActivityToggle');
-  var activity=(actEl&&actEl.dataset.value)||'CIF';
-  if(activity!=='CIF'&&activity!=='COA')activity='CIF';
+  // v54 — activity is now per-contract (lives on each contract block).
+  // We keep a fallback `activity` var here for backward compat with the
+  // _buildDealRowFromContract signature; the actual source-of-truth is
+  // contractData.activity collected by _collectContractBlock.
+  var activity='CIF';
   // Phase 3 — Pre-fetch FX rates for every non-EUR contract currency.
   // Each currency is fetched once; the result is reused for all contracts in that currency.
   // FX is snapshotted as-of the trade date (immutable per deal — Q1A pattern, currency edition).
@@ -5243,6 +5242,10 @@ function _genGroupId(){
 }
 function _buildDealRowFromContract(pair,vendor,date,stat,notes,groupId,fxByDev,activity){
   var c=pair.contractData;
+  // v54 — activity now lives per-contract on contractData.activity; fall back
+  // to the legacy `activity` arg if absent (defensive — older callers).
+  var effectiveActivity=(c&&c.activity)||activity||'CIF';
+  if(effectiveActivity!=='CIF'&&effectiveActivity!=='COA')effectiveActivity='CIF';
   var firstCodif=(c.codifications&&c.codifications[0])||{};
   // Legacy deal-level pf : kept as a no-op marker (per-fourn pf is the source of truth now)
   var legacyPf=(firstCodif.pf&&firstCodif.pf.mode&&firstCodif.pf.mode!=='none')?firstCodif.pf:{mode:'none'};
@@ -5308,7 +5311,7 @@ function _buildDealRowFromContract(pair,vendor,date,stat,notes,groupId,fxByDev,a
     fSt:'À émettre',fRef:'',
     notes:notes||'',
     dealGroupId:groupId||null,
-    activity:activity||'CIF'
+    activity:effectiveActivity
   };
 }
 function _collectDealTree(){
@@ -5329,6 +5332,10 @@ function _collectContractBlock(ctb){
   var nom=parseFloat(ctb.querySelector('.contractTotal').value)||0;
   var dev=ctb.querySelector('.contractDev').value;
   var depo=ctb.querySelector('.contractDepo').value;
+  // v54 — per-contract activity from the .dfActivityToggle inside this block
+  var actTog=ctb.querySelector('.dfActivityToggle');
+  var activity=(actTog&&actTog.dataset.value)||'CIF';
+  if(activity!=='CIF'&&activity!=='COA')activity='CIF';
   // Commission structure may be hidden (collapsed) — query may return null; default sensibly.
   var ctEl=ctb.querySelector('.contractCT');
   var ufREl=ctb.querySelector('.contractUFR');
@@ -5419,6 +5426,7 @@ function _collectContractBlock(ctb){
     _id:ctb.dataset.origDealId||null,
     contrat:contrat,nom:nom,dev:dev,depositaire:depo,
     ct:derived.ct, ufR:derived.ufR, runR:derived.runR, tva:tva,
+    activity:activity, // v54 — per-contract activity carried into save flow
     codifications:codifications
   };
 }
@@ -5470,6 +5478,7 @@ function addDealContractBlock(clientBlock,data){
   data=Object.assign({
     contrat:'Assurance Vie Lux',nom:'',dev:'EUR',depositaire:'',
     ct:'UF',ufR:'',runR:'',tva:0,codifications:[],
+    activity:'CIF', // v54 — per-contract CIF/COA toggle
     _id:null
   },data||{});
   var contractsContainer=clientBlock.querySelector('.deal-contracts');
@@ -5487,16 +5496,30 @@ function addDealContractBlock(clientBlock,data){
       '<button type="button" class="btn-toggle-commission" onclick="toggleContractCommission(this)" style="background:none;border:1px dashed var(--border);color:var(--text2);cursor:pointer;font-size:10px;padding:3px 8px;border-radius:3px;'+(hasCommData?'display:none;':'')+'">+ Frais de structure</button>'+
       '<button type="button" class="btn btn-sm btn-remove-contract" onclick="removeDealContractBlock(this)" style="color:var(--red);border-color:var(--red-bg);font-size:10px;padding:3px 8px;">× contrat</button>'+
     '</div>'+
-    // Labels row 1
-    '<div style="display:grid;grid-template-columns:1.3fr 130px 90px 1.5fr;gap:6px;margin-bottom:2px;font-size:9px;color:var(--text3);font-weight:600;letter-spacing:.3px;text-transform:uppercase;">'+
-      '<span>Type de contrat</span><span>Total contrat</span><span>Devise</span><span>Dépositaire</span>'+
+    // v54 — Labels row 1 : type / activité / total / devise. Dépositaire moved to row 2.
+    '<div style="display:grid;grid-template-columns:1.3fr 150px 130px 90px;gap:6px;margin-bottom:2px;font-size:9px;color:var(--text3);font-weight:600;letter-spacing:.3px;text-transform:uppercase;">'+
+      '<span>Type de contrat</span><span>Activité</span><span>Total contrat</span><span>Devise</span>'+
     '</div>'+
-    // Row : type / total / devise / dépositaire
-    '<div style="display:grid;grid-template-columns:1.3fr 130px 90px 1.5fr;gap:6px;margin-bottom:8px;align-items:center;">'+
+    // Row : type / activité / total / devise
+    '<div style="display:grid;grid-template-columns:1.3fr 150px 130px 90px;gap:6px;margin-bottom:8px;align-items:center;">'+
       '<select class="contractType" onchange="_onContractTypeChange(this)">'+contratSelectHTML(data.contrat)+'</select>'+
+      '<div class="toggle-cif-coa dfActivityToggle '+((data.activity||'CIF')==='COA'?'is-coa':'is-cif')+'" data-value="'+((data.activity||'CIF')==='COA'?'COA':'CIF')+'" role="switch" aria-label="Activité CIF ou COA">'+
+        '<span class="toggle-track">'+
+          '<span class="toggle-label toggle-label-cif">CIF</span>'+
+          '<span class="toggle-label toggle-label-coa">COA</span>'+
+          '<span class="toggle-thumb"></span>'+
+        '</span>'+
+      '</div>'+
       '<input type="number" class="contractTotal" value="'+(data.nom||'')+'" placeholder="Total contrat" step="0.01" min="0" oninput="_updateContractSum(this)"/>'+
       '<select class="contractDev" onchange="_onContractDevChange(this)">'+currencySelectHTML(data.dev)+'</select>'+
+    '</div>'+
+    // v54 — Row 2 : Dépositaire alone (own line, takes ~half-width so it doesn't look lost)
+    '<div style="display:grid;grid-template-columns:1.5fr 1fr;gap:6px;margin-bottom:2px;font-size:9px;color:var(--text3);font-weight:600;letter-spacing:.3px;text-transform:uppercase;">'+
+      '<span>Dépositaire</span><span></span>'+
+    '</div>'+
+    '<div style="display:grid;grid-template-columns:1.5fr 1fr;gap:6px;margin-bottom:8px;align-items:center;">'+
       '<select class="contractDepo">'+depositaireSelectHTML(data.depositaire)+'</select>'+
+      '<span></span>'+
     '</div>'+
     // Commission structure block — collapsible
     '<div class="contract-commission" style="'+(hasCommData?'':'display:none;')+'background:var(--surface2);padding:8px 10px;border-radius:4px;margin-bottom:8px;">'+

@@ -1212,21 +1212,11 @@
     <div class="modal-hd"><span class="modal-title" id="dmTitle">Nouveau deal</span><button class="close-btn" onclick="closeDM()">×</button></div>
     <div class="modal-body">
 
-      <!-- Ligne 1 : Vendeur / Trade date / Statut / Activité (v53) -->
-      <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 16px;margin-bottom:14px;">
+      <!-- Ligne 1 : Vendeur / Trade date / Statut (v54 — Activité moved to per-contract block) -->
+      <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px 16px;margin-bottom:14px;">
         <div class="fl"><label>Vendeur</label><select id="mV"></select></div>
         <div class="fl"><label>Trade date</label><input type="date" id="mDate"/></div>
         <div class="fl"><label>Statut</label><select id="mStat"><option>Deal pipe</option><option>Deal réalisé</option><option>Deal payé</option></select></div>
-        <div class="fl">
-          <label>Activité</label>
-          <div class="toggle-cif-coa is-cif" id="mActivityToggle" data-value="CIF" role="switch" aria-label="Activité CIF ou COA">
-            <span class="toggle-track">
-              <span class="toggle-label toggle-label-cif">CIF</span>
-              <span class="toggle-label toggle-label-coa">COA</span>
-              <span class="toggle-thumb"></span>
-            </span>
-          </div>
-        </div>
       </div>
 
       <!-- Arbre Clients → Contrats → Fournisseurs -->

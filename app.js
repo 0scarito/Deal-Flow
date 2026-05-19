@@ -3390,6 +3390,25 @@ function renderFact(){
     '<div class="empty">Aucune facture UF dans cette catégorie.</div>';
   // Batch B.3 — async pass to fill USD conversion mentions with billing-date FX rate
   _updateFactFxMentions(show);
+  // L.10 v50 — vendor filter cascade: re-render the visible Facturation sub-tab so
+  // its 'Rapprochement par fournisseur' table (and Suivi Factures table) follow curV.
+  // Previously only the UF list at the top filtered; UF/RUN/PF rapprochement tables
+  // stayed stale because renderFact didn't call renderUFRappr / renderRecapFourn / renderPFRappr.
+  try {
+    var _ufVis = document.getElementById('factUFSection');
+    var _runVis = document.getElementById('factRUNSection');
+    var _pfVis = document.getElementById('factPFSection');
+    if (_ufVis && _ufVis.style.display !== 'none') {
+      if (typeof renderUFRappr === 'function') renderUFRappr();
+      if (typeof renderUFInvTable === 'function') renderUFInvTable();
+    } else if (_runVis && _runVis.style.display !== 'none') {
+      if (typeof renderRecapFourn === 'function') renderRecapFourn();
+      if (typeof renderRunInvTable === 'function') renderRunInvTable();
+    } else if (_pfVis && _pfVis.style.display !== 'none') {
+      if (typeof renderPFRappr === 'function') renderPFRappr();
+      if (typeof renderPFInvTable === 'function') renderPFInvTable();
+    }
+  } catch(e) { console.warn('renderFact sub-tab re-render skipped', e); }
 }
 // Batch B.3 — fetch period FX (= invoice date or today) for each USD facture
 // and render the conversion mention inline. Snapshot trade-date FX is also shown
@@ -4103,68 +4122,6 @@ function renderCharts(){
   if(charts.pt)charts.pt.destroy();
   if(ptL.length)charts.pt=new Chart(document.getElementById('cTypeProd'),{type:'doughnut',data:{labels:ptL,datasets:[{data:ptV,backgroundColor:PALETTE.slice(0,ptL.length),borderWidth:2,borderColor:'#fff',hoverOffset:8}]},options:{responsive:true,maintainAspectRatio:false,cutout:'62%',plugins:{legend:{display:false},tooltip:Object.assign({},CHART_DEFAULTS.tooltip,{callbacks:{label:function(c){return c.label+' : '+fE(c.raw);}}})}}});
   document.getElementById('legTypeProd').innerHTML=ptL.length?ptL.map(function(l,i){return legendChip(PALETTE[i],l,fE(ptV[i]));}).join(''):'<span style="color:var(--text3);">Renseignez le type de produit dans les deals.</span>';
-
-  // ── 6. Audrey vs David — VALIDÉ vs PIPE split (v49) ─────────────────────
-  // VALIDÉ = d.invS set (invoice sent to fournisseur — Facturé OR Payé status).
-  // PIPE   = !d.invS (À émettre / undefined — fournisseur not yet billed).
-  // Stacked UF+Run+PF per (vendor, bucket) — x-axis: Audrey VAL · Audrey PIPE · David VAL · David PIPE.
-  var t=computeYearTotals(year);
-  var vData={
-    Audrey:{val:{uf:0,run:0,pf:0},pipe:{uf:0,run:0,pf:0}},
-    David: {val:{uf:0,run:0,pf:0},pipe:{uf:0,run:0,pf:0}}
-  };
-  // UF/PF — bucket by invS (sent to fournisseur or not). Keep year filter on inv date.
-  data.forEach(function(d){
-    if(!d.inv||!d.inv.startsWith(year))return;
-    var bucket=d.invS?'val':'pipe';
-    var split=d.v==='Audrey & David'?0.5:1;
-    if(d.v==='Audrey'||d.v==='Audrey & David')vData.Audrey[bucket].uf+=(d.ufE||0)*split;
-    if(d.v==='David'||d.v==='Audrey & David')vData.David[bucket].uf+=(d.ufE||0)*split;
-    if(d.pf&&d.pf.amount){
-      if(d.v==='Audrey'||d.v==='Audrey & David')vData.Audrey[bucket].pf+=d.pf.amount*split;
-      if(d.v==='David'||d.v==='Audrey & David')vData.David[bucket].pf+=d.pf.amount*split;
-    }
-  });
-  // Running — VALIDÉ from paid rapprochements (already declared/cashed)
-  rapprochement_db.forEach(function(r){
-    if(r.type!=='run'||!r.paid||!r.declared||!r.period||!r.period.endsWith('_'+year))return;
-    var fournDeals=deals.filter(function(x){return (x.ct==='RUN'||x.ct==='BOTH')&&x.fourn===r.fourn;});
-    var totalRunE=fournDeals.reduce(function(s,x){return s+(x.runE||0);},0);
-    if(!totalRunE)return;
-    ['Audrey','David'].forEach(function(v){
-      var vRunE=fournDeals.filter(function(x){return x.v===v||x.v==='Audrey & David';}).reduce(function(s,x){return s+(x.runE||0)*(x.v==='Audrey & David'?0.5:1);},0);
-      vData[v].val.run+=r.declared*(vRunE/totalRunE);
-    });
-  });
-  // Running — PIPE: forward-looking expected run for active deals NOT yet covered by a paid rappro this year.
-  // Approximation: annual runE per deal, minus the share already counted as VALIDÉ.
-  ['Audrey','David'].forEach(function(v){
-    var vDeals=deals.filter(function(x){
-      if(x.arbClosed)return false;
-      if(!(x.ct==='RUN'||x.ct==='BOTH'))return false;
-      return x.v===v||x.v==='Audrey & David';
-    });
-    var totalAnnual=vDeals.reduce(function(s,x){return s+(x.runE||0)*(x.v==='Audrey & David'?0.5:1);},0);
-    var pipeRun=totalAnnual-vData[v].val.run;
-    vData[v].pipe.run=Math.max(0,pipeRun);
-  });
-  if(charts.ven)charts.ven.destroy();
-  var venLabels=['Audrey VAL','Audrey PIPE','David VAL','David PIPE'];
-  var venUF =[vData.Audrey.val.uf, vData.Audrey.pipe.uf, vData.David.val.uf, vData.David.pipe.uf].map(Math.round);
-  var venRun=[vData.Audrey.val.run,vData.Audrey.pipe.run,vData.David.val.run,vData.David.pipe.run].map(Math.round);
-  var venPF =[vData.Audrey.val.pf, vData.Audrey.pipe.pf, vData.David.val.pf, vData.David.pipe.pf].map(Math.round);
-  charts.ven=new Chart(document.getElementById('cVendeurs'),{
-    type:'bar',
-    data:{
-      labels:venLabels,
-      datasets:[
-        {label:'UF',data:venUF,backgroundColor:'#1d5fd4',borderRadius:6,maxBarThickness:60},
-        {label:'Running',data:venRun,backgroundColor:'#1a8a4a',borderRadius:6,maxBarThickness:60},
-        {label:'Perf fees',data:venPF,backgroundColor:'#6b4fc4',borderRadius:6,maxBarThickness:60}
-      ]
-    },
-    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{boxWidth:12,boxHeight:12,padding:14,font:CHART_DEFAULTS.font,color:'#374151'}},tooltip:Object.assign({},CHART_DEFAULTS.tooltip,{callbacks:{title:function(items){return items[0].label;},label:function(c){return c.dataset.label+' : '+fE(c.raw);}}})},scales:{x:{stacked:true,grid:{display:false,drawBorder:false},ticks:{color:'#374151',font:Object.assign({},CHART_DEFAULTS.font,{size:12,weight:'600'})}},y:{stacked:true,ticks:{color:'#9aa0a6',font:CHART_DEFAULTS.font,callback:function(v){return v>=1000?Math.round(v/1000)+'k':v;}},grid:{color:CHART_DEFAULTS.gridSoft,drawBorder:false},beginAtZero:true}}}
-  });
 
   // ── 7. Pipeline & facturation par statut (À émettre / Facturé / Payé) ──
   var statuses=['À émettre','Facturé','Payé'];

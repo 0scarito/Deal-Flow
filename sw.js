@@ -2,7 +2,16 @@
 // Stratégie : network-first pour l'app shell (toujours essayer la dernière version,
 // fallback cache si offline). Aucune interception des appels Supabase / CDN.
 
-// 2026-05-19 v49 — L.10 Pilotage forward window + vendor scoping (Suivi Contrats, Facturation) + Audrey vs David VALIDÉ/PIPE split.
+// 2026-05-19 v50 — L.10 Facturation Rapprochement par fournisseur vendor filter + Audrey vs David chart removed.
+//   · renderFact : at the end of the function, re-render the currently visible Facturation sub-tab
+//     (UF / RUN / PF) so its "Rapprochement par fournisseur" table + Suivi Factures table follow
+//     curV. Bug : the Running rapprochement (recapRUNT, "Amundi AM / ASG Capital / EURAZEO ~182k€")
+//     stayed stale when toggling Audrey/David because renderAll → renderFact didn't cascade into
+//     renderRecapFourn (only fired on tab click, not on vendor change). UF + PF same pattern.
+//   · Pilotage : "Audrey vs David — VALIDÉ vs PIPE" chart REMOVED (Oscar's request — v49 added it,
+//     v50 removes it). cVendeurs canvas + parent card + the g2 wrapper around (Vendeurs, Pipeline)
+//     collapsed — Pipeline chart now stands alone full-width. 62 lines of renderCharts removed.
+// (Previous: 2026-05-19 v49 — L.10 Pilotage forward window + vendor scoping (Suivi Contrats, Facturation) + Audrey vs David VALIDÉ/PIPE split.)
 //   · Pilotage Évolution Mensuelle : months12 window now -3 → +8 (3 back, 9 forward)
 //     instead of 12 backward. Series aligned to months12 so chart populates even when
 //     all deals are trade-dated in current month (forward-est fills horizon).
@@ -66,7 +75,7 @@
 //     deal with this product auto-fills correctly via the existing
 //     onDealIsinChange / _onDealProduitChange paths.
 // (Previous: 2026-05-18 v41 — Phase L.4 1 deal = 1 produit + cascade diag.)
-const CACHE_NAME = 'dealflow-v49';
+const CACHE_NAME = 'dealflow-v50';
 const APP_SHELL = [
   './',
   './index.html',

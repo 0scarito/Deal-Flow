@@ -2578,7 +2578,7 @@ async function confirmRetrait(){
 }
 
 var factType='UF';
-var ufDealTab='all';
+// v60 — Removed dead var ufDealTab + setUFDealTab + renderUFDeals (orphaned, no HTML targets exist).
 
 function setFactType(t,btn){
   factType=t;
@@ -2596,54 +2596,7 @@ function setFactType(t,btn){
   if(t==='PF'){renderPFRappr();renderPFInvTable();}
 }
 
-function setUFDealTab(tab,btn){
-  ufDealTab=tab;
-  document.querySelectorAll('#ufDealTabs .btn').forEach(b=>{b.style.background='';b.style.color='';b.style.borderColor='';});
-  if(btn){btn.style.background='var(--text)';btn.style.color='var(--surface)';btn.style.borderColor='var(--text)';}
-  renderUFDeals();
-}
-
-function renderUFDeals(){
-  // Phase D.3 — iterate codification-level entries, not raw deals. A deal with
-  // Amundi (Run) + Wealins (UF) on the same contract now lands here ONLY for
-  // its UF codification(s), not the whole deal. `d.ufR` / `d.fourn` etc. on
-  // the entry refer to codif-level values; `d._id` and other deal-level
-  // passthrough fields work as before.
-  // v49 — vendor scoping: pipe filt() through billingEntries so curV applies.
-  var all=billingUFEntries(billingEntries(filt()));
-  var filtered=ufDealTab==='all'?all
-    :ufDealTab==='aE'?all.filter(d=>!d.fSt||d.fSt==='À émettre')
-    :ufDealTab==='fact'?all.filter(d=>d.fSt==='Facturé')
-    :all.filter(d=>d.fSt==='Payé');
-  var t=document.getElementById('ufDealsT');if(!t)return;
-  while(t.rows.length>1)t.deleteRow(1);
-  document.getElementById('ufDealsEmpty').style.display=filtered.length?'none':'block';
-  filtered.slice().sort((a,b)=>a.fourn.localeCompare(b.fourn)||(b.date||'').localeCompare(a.date||'')).forEach(function(d){
-    // For per-row actions, idx must point to the parent deal in `deals` array.
-    var idx=deals.indexOf(d.deal);
-    var statut=d.fSt==='Payé'?'<span class="badge bg">Payée</span>':d.fSt==='Facturé'?'<span class="badge bb">Facturée</span>':'<span class="badge ba">À émettre</span>';
-    var btn=d.fSt==='Payé'
-      ?'<span style="font-size:11px;color:var(--green);">✓ Payé</span>'
-      :d.fSt==='Facturé'
-        ?'<button class="btn btn-sm" style="background:var(--green);color:white;border-color:var(--green);" onclick="markUFInvPaid('+idx+')">Marquer payé</button>'
-        :'<button class="btn btn-sm" style="background:var(--green);color:white;border-color:var(--green);" onclick="openUFFactModalDeal('+idx+')">Facturer</button>';
-    // Use codif's nominal for the line (not the deal total). Convert to EUR using deal fx.
-    var nomE=Math.round((d.nominal||0)/(d.fx||1));
-    var r=t.insertRow();
-    r.innerHTML=
-      '<td style="font-weight:500;">'+d.fourn+'</td>'+
-      '<td>'+d.client+'</td>'+
-      '<td style="color:var(--text2);">'+d.produit+'</td>'+
-      '<td class="mono" style="color:var(--text2);">'+(d.issue||d.date||'—')+'</td>'+
-      '<td style="text-align:right;" class="mono">'+fE(nomE)+'</td>'+
-      '<td style="text-align:right;color:var(--text2);">'+(d.ufR||0)+'%</td>'+
-      '<td style="text-align:right;font-weight:600;color:var(--blue);">'+fE(d.ufE)+'</td>'+
-      '<td class="mono" style="color:var(--text2);">'+(d.invS||'—')+'</td>'+
-      '<td class="mono" style="color:var(--green);">'+(d.inv||'—')+'</td>'+
-      '<td>'+statut+'</td>'+
-      '<td>'+btn+'</td>';
-  });
-}
+// v60 — Removed setUFDealTab + renderUFDeals (orphan dead code).
 
 
 var recapFam='ALL', recapTrim=1, recapTrimYear=new Date().getFullYear();
@@ -7701,6 +7654,12 @@ async function confirmPerfImport(){
   toast('Import validé — '+savedCount+' produit(s) mis à jour avec les données '+p.periodLabel+'.');
   if(typeof renderFourn==='function')renderFourn();
   if(typeof renderSuiviPerf==='function')renderSuiviPerf();
+  // v60 — auto-push PF computed amounts into Facturation (replaces manual button click)
+  try {
+    if(typeof pushPerfFeesToFacturation==='function'){
+      await pushPerfFeesToFacturation({silent:true});
+    }
+  } catch(e){console.warn('Auto-push PF after import failed:', e);}
 }
 
 // ── Suivi Perf — page dédiée (import LFIS + tableau + graph + perf fees over-perf) ──

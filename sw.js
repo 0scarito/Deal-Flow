@@ -25,6 +25,7 @@
 //      rows render as "Modifier produit existant" with a visual old/new
 //      fees diff. Per-fourn auto_save_products bypass = silent save with
 //      a toast, no modal interruption.
+// 2026-05-19 v61 — Suivi Perf import: unmatched rows interactive — user picks fourn + edits name/type/fees, confirm auto-creates products in catalogue + writes vlHistory.
 // 2026-05-19 v60.1 — PF perf switched from cumulative-window to per-period (since last PF invoice baseline).
 // 2026-05-19 v60 — Cleanup orphan renderUFDeals + auto-push PF after perf import (no manual button).
 // 2026-05-19 v59 — Fournisseurs DB: nouvelle colonne Nominal (sum codif.nominal par fourn) entre Nb deals et UF total.
@@ -201,7 +202,7 @@
 //     deal with this product auto-fills correctly via the existing
 //     onDealIsinChange / _onDealProduitChange paths.
 // (Previous: 2026-05-18 v41 — Phase L.4 1 deal = 1 produit + cascade diag.)
-const CACHE_NAME = 'dealflow-v60-1';
+const CACHE_NAME = 'dealflow-v61';
 const APP_SHELL = [
   './',
   './index.html',

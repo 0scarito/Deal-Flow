@@ -7598,12 +7598,19 @@ function _renderPerfImportModal(){
       '<td style="padding:5px 8px;border-bottom:1px solid var(--border);text-align:right;color:var(--text3);font-size:11px;">'+(it.tauxRetro?(it.tauxRetro*100).toFixed(3)+'%':'—')+'</td>'+
     '</tr>';
   }).join('');
-  var unmatchedRows=p.unmatched.map(function(it){
-    return '<tr>'+
+  // v61 — Interactive unmatched rows : user picks fourn + edits type/fees, on confirm we create the product.
+  var fournOptsHtml='<option value="">— Skip —</option>'+
+    (fourn_db||[]).slice().sort(function(a,b){return (a.name||'').localeCompare(b.name||'');})
+      .map(function(f){return '<option value="'+escAttr(f.name)+'">'+escH(f.name)+'</option>';}).join('');
+  var unmatchedRows=p.unmatched.map(function(it,uIdx){
+    return '<tr data-pf-unm-row="'+uIdx+'">'+
       '<td style="padding:5px 8px;border-bottom:1px solid var(--border);font-family:monospace;font-size:11px;">'+escH(it.isin)+'</td>'+
-      '<td style="padding:5px 8px;border-bottom:1px solid var(--border);">'+escH(it.libelle)+'</td>'+
-      '<td style="padding:5px 8px;border-bottom:1px solid var(--border);text-align:right;color:var(--text2);">'+(it.encoursMoyen?fE(it.encoursMoyen):'—')+'</td>'+
-      '<td style="padding:5px 8px;border-bottom:1px solid var(--border);text-align:right;color:var(--text2);">'+(it.montantHT?fE(it.montantHT):'—')+'</td>'+
+      '<td style="padding:5px 8px;border-bottom:1px solid var(--border);"><input type="text" class="pfUnmLib" value="'+escAttr(it.libelle||'')+'" style="width:100%;font-size:11px;padding:2px 4px;" /></td>'+
+      '<td style="padding:5px 8px;border-bottom:1px solid var(--border);"><select class="pfUnmFourn" style="font-size:11px;padding:2px 4px;width:100%;">'+fournOptsHtml+'</select></td>'+
+      '<td style="padding:5px 8px;border-bottom:1px solid var(--border);"><select class="pfUnmType" style="font-size:11px;padding:2px 4px;"><option value="fonds">fonds</option><option value="action">action</option><option value="obligation">obligation</option><option value="autre">autre</option></select></td>'+
+      '<td style="padding:5px 8px;border-bottom:1px solid var(--border);"><select class="pfUnmKind" style="font-size:11px;padding:2px 4px;"><option value="Run">Run</option><option value="UF">UF</option><option value="UF+Run">UF+Run</option></select></td>'+
+      '<td style="padding:5px 8px;border-bottom:1px solid var(--border);text-align:right;"><input type="number" class="pfUnmPct" step="0.01" min="0" value="0" style="width:60px;font-size:11px;padding:2px 4px;text-align:right;" /></td>'+
+      '<td style="padding:5px 8px;border-bottom:1px solid var(--border);text-align:right;color:var(--text2);font-size:11px;">'+(it.encoursMoyen?fE(it.encoursMoyen):'—')+'</td>'+
     '</tr>';
   }).join('');
   body.innerHTML=
@@ -7618,13 +7625,13 @@ function _renderPerfImportModal(){
         '<thead><tr style="background:var(--surface2);"><th style="padding:5px 8px;text-align:left;font-size:10px;color:var(--text3);">ISIN</th><th style="padding:5px 8px;text-align:left;font-size:10px;color:var(--text3);">Fournisseur / Produit</th><th style="padding:5px 8px;text-align:right;font-size:10px;color:var(--text3);">Dernier VL</th><th style="padding:5px 8px;text-align:right;font-size:10px;color:var(--text3);">Encours moyen</th><th style="padding:5px 8px;text-align:right;font-size:10px;color:var(--text3);">Montant HT</th><th style="padding:5px 8px;text-align:right;font-size:10px;color:var(--text3);">Taux rétro</th></tr></thead>'+
         '<tbody>'+matchedRows+'</tbody>'+
       '</table>':'')+
-    (p.unmatched.length?'<div style="font-size:11px;color:var(--amber-t);font-weight:600;margin-bottom:6px;text-transform:uppercase;letter-spacing:.3px;">⚠ Non matchés (ajouter ces ISIN au catalogue Fournisseurs pour les importer)</div>'+
+    (p.unmatched.length?'<div style="font-size:11px;color:var(--amber-t);font-weight:600;margin-bottom:6px;text-transform:uppercase;letter-spacing:.3px;">⚠ Non matchés — choisis un fournisseur pour créer le produit auto (sinon Skip)</div>'+
       '<table style="width:100%;border-collapse:collapse;font-size:12px;">'+
-        '<thead><tr style="background:var(--surface2);"><th style="padding:5px 8px;text-align:left;font-size:10px;color:var(--text3);">ISIN</th><th style="padding:5px 8px;text-align:left;font-size:10px;color:var(--text3);">Libellé</th><th style="padding:5px 8px;text-align:right;font-size:10px;color:var(--text3);">Encours moyen</th><th style="padding:5px 8px;text-align:right;font-size:10px;color:var(--text3);">Montant HT</th></tr></thead>'+
+        '<thead><tr style="background:var(--surface2);"><th style="padding:5px 8px;text-align:left;font-size:10px;color:var(--text3);">ISIN</th><th style="padding:5px 8px;text-align:left;font-size:10px;color:var(--text3);">Nom (éditable)</th><th style="padding:5px 8px;text-align:left;font-size:10px;color:var(--text3);">Fournisseur</th><th style="padding:5px 8px;text-align:left;font-size:10px;color:var(--text3);">Type</th><th style="padding:5px 8px;text-align:left;font-size:10px;color:var(--text3);">Kind</th><th style="padding:5px 8px;text-align:right;font-size:10px;color:var(--text3);">%</th><th style="padding:5px 8px;text-align:right;font-size:10px;color:var(--text3);">Enc. moy.</th></tr></thead>'+
         '<tbody>'+unmatchedRows+'</tbody>'+
       '</table>':'');
-  document.getElementById('perfImportConfirmBtn').textContent=p.matched.length?'Valider l\'import ('+p.matched.length+' produits)':'Aucun matché — fermer';
-  document.getElementById('perfImportConfirmBtn').disabled=!p.matched.length;
+  document.getElementById('perfImportConfirmBtn').textContent=(p.matched.length||p.unmatched.length)?'Valider l\'import ('+(p.matched.length+' matchés'+(p.unmatched.length?' + '+p.unmatched.length+' à créer si fourn sélectionné':''))+')':'Aucun produit — fermer';
+  document.getElementById('perfImportConfirmBtn').disabled=!(p.matched.length||p.unmatched.length);
   document.getElementById('perfImportModal').classList.add('on');
 }
 function closePerfImportModal(){
@@ -7632,8 +7639,40 @@ function closePerfImportModal(){
   _pendingPerfImport=null;
 }
 async function confirmPerfImport(){
-  if(!_pendingPerfImport||!_pendingPerfImport.matched.length){closePerfImportModal();return;}
+  if(!_pendingPerfImport){closePerfImportModal();return;}
   var p=_pendingPerfImport;
+  // v61 — pre-pass : create products for unmatched rows where user picked a fourn
+  var createdCount=0;
+  try{
+    var unmRows=document.querySelectorAll('#perfImportBody tr[data-pf-unm-row]');
+    for(var ui=0;ui<unmRows.length;ui++){
+      var tr=unmRows[ui];
+      var uIdx=parseInt(tr.getAttribute('data-pf-unm-row'),10);
+      var item=p.unmatched[uIdx];if(!item)continue;
+      var fournName=(tr.querySelector('.pfUnmFourn')||{}).value||'';
+      if(!fournName)continue; // skip
+      var libelle=((tr.querySelector('.pfUnmLib')||{}).value||item.libelle||'').trim();
+      var ptype=(tr.querySelector('.pfUnmType')||{}).value||'fonds';
+      var kind=(tr.querySelector('.pfUnmKind')||{}).value||'Run';
+      var pct=parseFloat((tr.querySelector('.pfUnmPct')||{}).value)||0;
+      var f=fourn_db.find(function(x){return x.name===fournName;});
+      if(!f)continue;
+      f.products=Array.isArray(f.products)?f.products:[];
+      var existing=f.products.find(function(pr){return (pr.isin||'').toUpperCase()===(item.isin||'').toUpperCase();});
+      var newProd;
+      if(existing){
+        newProd=existing;
+      }else{
+        newProd={isin:item.isin,part:libelle,type:ptype,unit:'part',currency:'EUR',fees:[{kind:kind,pct:pct}],pf:{mode:'none'}};
+        f.products.push(newProd);
+        createdCount++;
+      }
+      // Move this unmatched row into matched so the existing vlHistory write picks it up
+      p.matched.push({fourn:f,product:newProd,item:item});
+    }
+    if(createdCount){toast(createdCount+' produit(s) créé(s) dans le catalogue Fournisseurs.');}
+  }catch(e){console.error('v61 unmatched create failed:',e);}
+  if(!p.matched.length){closePerfImportModal();return;}
   var todayStr=today();
   var savedCount=0;
   for(var i=0;i<p.matched.length;i++){

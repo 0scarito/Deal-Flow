@@ -665,7 +665,12 @@ async function autoLinkDealToContract(deal){
   // use the named template's first step_pack as the prelim source.
   var prelimSteps=[], pickedTemplateName=null;
   if(primaryFourn && Array.isArray(primaryFourn.prelim_steps) && primaryFourn.prelim_steps.length){
-    prelimSteps=JSON.parse(JSON.stringify(primaryFourn.prelim_steps));
+    // v63 fix : the inline fourn editor stores prelim_steps as {id, name} but the
+    // Suivi Contrat renderer (renderContrats) reads step.label. Without this normalisation
+    // the checkboxes appeared blank in the contract page. Map name→label here.
+    prelimSteps=JSON.parse(JSON.stringify(primaryFourn.prelim_steps)).map(function(_s){
+      return {id:_s.id||newStepId(), label:_s.label||_s.name||'', done:false};
+    });
   } else if(primaryFourn && primaryFourn.template_name && templateByName(primaryFourn.template_name)){
     pickedTemplateName=primaryFourn.template_name;
     prelimSteps=templatePrelimCopy(pickedTemplateName);
@@ -751,7 +756,11 @@ async function autoLinkDealToContract(deal){
       });
     }
     if(matchedProduct && Array.isArray(matchedProduct.investment_steps) && matchedProduct.investment_steps.length){
-      steps=JSON.parse(JSON.stringify(matchedProduct.investment_steps));
+      // v63 fix : same shape mismatch as prelim_steps. The product editor stores
+      // investment_steps as {id, name}, the contract Suivi renderer reads step.label.
+      steps=JSON.parse(JSON.stringify(matchedProduct.investment_steps)).map(function(_s){
+        return {id:_s.id||newStepId(), label:_s.label||_s.name||'', done:false};
+      });
     } else {
       // Legacy path — named template via fourn.template_name → contract.template_name fallback
       tplUsed=_pickPackTemplate(item.fourn,contract.template_name);
@@ -1167,6 +1176,12 @@ deals=[];
 
 function f0(n){return new Intl.NumberFormat('fr-FR',{maximumFractionDigits:0}).format(Math.round(n||0));}
 function fE(n){return '€\u202f'+f0(n);}
+// v63 — precise EUR display for pro-rata amounts. Shows 2 decimals when the value
+// isn't a whole euro so quarterly running fees (e.g. 30€/year → Q1 = 7.5€) don't
+// get JS-round-up'd to 8€ via Math.round (7.5 → 8 in JS, breaks the 4×Qn = annual
+// invariant). Integer values render with no decimals to keep big-amount columns clean.
+function f2(n){n=n||0;var r=Math.round(n*100)/100;if(r===Math.round(r))return new Intl.NumberFormat('fr-FR',{maximumFractionDigits:0}).format(r);return new Intl.NumberFormat('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2}).format(r);}
+function fE2(n){return '€\u202f'+f2(n);}
 function today(){return new Date().toISOString().split('T')[0];}
 function nowS(){return new Date().toLocaleString('fr-FR');}
 // XSS-safe escape helpers
@@ -2657,13 +2672,21 @@ function calcRunProrataTrim(d,trimDates){
   // Known limitation: when a retrait happens DURING this trim, we use the
   // end-of-trim nominal for the whole period — slightly under-bills that one
   // quarter. Accurate intra-quarter prorata is a Phase D.5 refinement.
+  //
+  // v63 formula : pro-rata = baseRun × (daysInPeriod / 365). For a full quarter
+  // that's baseRun × 90/365 ≈ baseRun × 0.2466. The fallback when tradeStr is
+  // missing uses the same days-in-trim formula instead of baseRun/4 so the result
+  // matches a "trade-at-start-of-trim" deal exactly. Display rounding lives in
+  // fE2 (2-decimal renderer) — DO NOT pre-round here, the 4× Qn = annual
+  // invariant requires keeping the float through to render.
   var baseRun = d.runE;
   if(d.codif && d.deal && typeof codifCurrentRunE==='function'){
     baseRun = codifCurrentRunE(d.codif, d.deal);
   }
   if(!baseRun || baseRun===0) return 0;
+  var fullTrimDays=Math.round((trimDates.end-trimDates.start)/(1000*60*60*24))+1;
   var tradeStr=d.issue||d.date;
-  if(!tradeStr)return baseRun/4;
+  if(!tradeStr)return baseRun*(fullTrimDays/365);
   var trade=new Date(tradeStr);
   if(trade>trimDates.end)return 0;
   var effStart=trade>trimDates.start?trade:trimDates.start;
@@ -2716,7 +2739,7 @@ function renderRecapFourn(){
     var bc=FAMILLE_BADGE[item.fourn.famille]||'bgr';
     var bl=FAMILLE_LABELS[item.fourn.famille]||item.fourn.famille||'—';
     var ecart=item.declared!=null?item.declared-item.theoTrim:null;
-    var ecartCell=ecart!=null?'<span style="font-weight:600;color:'+(Math.abs(ecart)<1?'var(--green)':ecart>0?'var(--purple)':'var(--red)')+';">'+(ecart>=0?'+':'')+fE(ecart)+'</span>':'—';
+    var ecartCell=ecart!=null?'<span style="font-weight:600;color:'+(Math.abs(ecart)<1?'var(--green)':ecart>0?'var(--purple)':'var(--red)')+';">'+(ecart>=0?'+':'')+fE2(ecart)+'</span>':'—';
     var statut=item.facture?'<span class="badge bg">Facturé</span>':item.declared==null?'<span class="badge ba">À saisir</span>':Math.abs(ecart)<1?'<span class="badge bg">Validé</span>':'<span class="badge br">Écart</span>';
     if(ecart!=null&&Math.abs(ecart)>=1)nbEcart++;
     totalNom+=item.nomEUR;totalTheo+=item.theoTrim;if(item.declared!=null)totalDecl+=item.declared;
@@ -2750,7 +2773,7 @@ function renderRecapFourn(){
   // KPIs
   document.getElementById('recapKpi').innerHTML=
     kH('Encours total',fE(totalNom),runRows.length+' fournisseurs')+
-    kH('Fact. théorique '+trimDates.label,fE(totalTheo),'pro-rata temporis')+
+    kH('Fact. théorique '+trimDates.label,fE2(totalTheo),'pro-rata temporis')+
     kH('Déclaré fournisseurs',totalDecl>0?fE(totalDecl):'—',runRows.filter(r=>r.declared!=null).length+' / '+runRows.length+' saisis')+
     kH('En écart',nbEcart>0?nbEcart+' fourn.':'Aucun',nbEcart>0?'à vérifier':'',nbEcart>0?'danger':'');
 
@@ -3168,7 +3191,7 @@ function renderUFRappr(){
   rows.forEach(function(item){
     var bc=FAMILLE_BADGE[item.fourn.famille]||'bgr';var bl=FAMILLE_LABELS[item.fourn.famille]||'—';
     var ecart=item.declared!=null?item.declared-item.theo:null;
-    var ecartCell=ecart!=null?'<span style="font-weight:600;color:'+(Math.abs(ecart)<1?'var(--green)':ecart>0?'var(--purple)':'var(--red)')+';">'+(ecart>=0?'+':'')+fE(ecart)+'</span>':'—';
+    var ecartCell=ecart!=null?'<span style="font-weight:600;color:'+(Math.abs(ecart)<1?'var(--green)':ecart>0?'var(--purple)':'var(--red)')+';">'+(ecart>=0?'+':'')+fE2(ecart)+'</span>':'—';
     var statut=item.facture?'<span class="badge bg">Facturé</span>':item.declared==null?'<span class="badge ba">À saisir</span>':Math.abs(ecart)<1?'<span class="badge bg">Validé</span>':'<span class="badge br">Écart</span>';
     var r=t.insertRow();
     var safeName=item.fourn.name.replace(/'/g,"\\'");
@@ -5796,12 +5819,12 @@ function _appendDealFournBlock(contractBlock,data){
     // top-borders fighting for attention.
     '<div class="df-group">'+
     '<div class="df-group-hd">Facturation & frais</div>'+
-    // Mode facturation (Fast / Feed)
+    // Mode facturation (FAS / FID) — v63 : labels d'affichage renommés (les value 'fast'/'feed' restent stockés tels quels pour back-compat)
     '<div class="dfBillingBlock df-subblock-in-group" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'+
       '<span class="field-caption-sm">FACTURATION</span>'+
       '<select class="dfBillingMode" onchange="_onDfBillingModeChange(this)" style="font-size:11px;">'+
-        '<option value="fast"'+((data.billingMode||'fast')==='fast'?' selected':'')+'>Fast — facture unique au closing</option>'+
-        '<option value="feed"'+(data.billingMode==='feed'?' selected':'')+'>Feed — running annuel facturé à la SDG</option>'+
+        '<option value="fast"'+((data.billingMode||'fast')==='fast'?' selected':'')+'>FAS — facture unique au closing</option>'+
+        '<option value="feed"'+(data.billingMode==='feed'?' selected':'')+'>FID — running annuel facturé à la SDG</option>'+
       '</select>'+
       '<span class="dfBillingHint" style="font-size:10px;color:var(--text3);font-style:italic;">'+(data.billingMode==='feed'?'→ facture annuelle à émettre vers '+(data.fourn||'la société de gestion'):'→ une seule facture (UF) au save')+'</span>'+
     '</div>'+
@@ -11670,3 +11693,14 @@ function renderActivite(){
 function _activitySetUnion(a,b){var o={};return o;}
 
 checkAuth();
+
+// v63 — Facturation page : auto-refresh every 4 seconds to surface live updates
+// (rapprochements, invoice statuses, etc.) without manual reload. Lightweight :
+// only re-renders if the page is currently active.
+setInterval(function(){
+  try {
+    if (document.getElementById('p-facturation') && document.getElementById('p-facturation').classList.contains('on')) {
+      if (typeof renderFact === 'function') renderFact();
+    }
+  } catch(e) { /* silent */ }
+}, 4000);

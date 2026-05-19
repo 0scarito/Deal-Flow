@@ -2,6 +2,23 @@
 // Stratégie : network-first pour l'app shell (toujours essayer la dernière version,
 // fallback cache si offline). Aucune interception des appels Supabase / CDN.
 
+// 2026-05-19 v63 — UX & math polish (4 fixes) :
+//   1. Deal modal billing-mode labels renamed Fast → FAS, Feed → FID (value=
+//      'fast'/'feed' stored unchanged — pure cosmetic rename, no data migration).
+//   2. autoLinkDealToContract now normalises fourn.prelim_steps + product.
+//      investment_steps from {id,name} shape to {id,label,done} shape at copy
+//      time. Without this, the Suivi Contrat renderer (which reads step.label)
+//      surfaced empty checkboxes whenever steps came from the inline fourn
+//      editor (which stores .name). Step titles now propagate correctly.
+//   3. Facturation page auto-refreshes every 4 s (setInterval guarded by
+//      page-active check + try/catch). No more manual reload to see live
+//      updates from rapprochements / status changes.
+//   4. Pro-rata RUN display fix : Math.round(7.5) = 8 in JS broke the
+//      4×Qn = annual invariant (30€/an → Q1 affichait 8€ → 4×8=32). New
+//      fE2/f2 helpers render 2-decimal precision when the value isn't a whole
+//      euro, applied to recap RUN theoTrim + ecart cells + KPI. Also fixed
+//      the calcRunProrataTrim fallback (when tradeStr is missing) from
+//      baseRun/4 → baseRun × (jours_du_trim / 365), matches the normal path.
 // 2026-05-19 v62 — Intelligent alerts refactor (4 changes) :
 //   1. buildAlerts() is now PURE — pulls only from current in-memory state
 //      (deals/contracts_db/fourn_db/brokers_db/clients_db/rapprochement_db),
@@ -231,7 +248,7 @@
 //     deal with this product auto-fills correctly via the existing
 //     onDealIsinChange / _onDealProduitChange paths.
 // (Previous: 2026-05-18 v41 — Phase L.4 1 deal = 1 produit + cascade diag.)
-const CACHE_NAME = 'dealflow-v62';
+const CACHE_NAME = 'dealflow-v63';
 const APP_SHELL = [
   './',
   './index.html',

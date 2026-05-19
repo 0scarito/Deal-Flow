@@ -978,6 +978,12 @@ function filt(){
   });
 }
 function filtIncludingArchived(){return filt();} // alias kept for clarity at call sites
+// v49 — vendor of a client name (lookup in clients_db). Used by Contrats + Facturation
+// to apply curV filter on rows that reference a client by name, not by full deal.
+function vendeurOfClient(name){
+  var c=clients_db.find(function(x){return x.name===name;});
+  return (c&&c.vendeur)||'';
+}
 function toast(m){var t=document.getElementById('toast');t.textContent=m;t.classList.add('on');setTimeout(()=>t.classList.remove('on'),2200);}
 async function saveLocal(){
   // Sync all deals to Supabase
@@ -2386,7 +2392,8 @@ function renderUFDeals(){
   // its UF codification(s), not the whole deal. `d.ufR` / `d.fourn` etc. on
   // the entry refer to codif-level values; `d._id` and other deal-level
   // passthrough fields work as before.
-  var all=billingUFEntries();
+  // v49 — vendor scoping: pipe filt() through billingEntries so curV applies.
+  var all=billingUFEntries(billingEntries(filt()));
   var filtered=ufDealTab==='all'?all
     :ufDealTab==='aE'?all.filter(d=>!d.fSt||d.fSt==='À émettre')
     :ufDealTab==='fact'?all.filter(d=>d.fSt==='Facturé')
@@ -3132,7 +3139,8 @@ function _kickFactStandbyTimer(){
 function renderUFInvTable(){
   // Phase D.3 — codif-level entries so UF lists exactly the codifs that carry UF
   // fees, never the whole deal.
-  var all=billingUFEntries();
+  // v49 — vendor scoping: pipe filt() through billingEntries so curV applies.
+  var all=billingUFEntries(billingEntries(filt()));
   // Audit fix — restart standby timer if rows are still in the 60s window (e.g. after page reload)
   if(all.some(function(e){return _isPaidStandby(e.deal);}))_kickFactStandbyTimer();
   var filtered=_filterInvByTab(all,ufInvTab);
@@ -4033,9 +4041,9 @@ function renderCharts(){
   // For each month in the window, compute forward-looking run for deals active that month
   var months12=[];
   var nowD=new Date();
-  for(var i=11;i>=0;i--){
-    var d2=new Date(nowD.getFullYear(),nowD.getMonth()-i,1);
-    months12.push(d2.toISOString().slice(0,7));
+  for(var i=-3;i<=8;i++){
+    var d2=new Date(nowD.getFullYear(),nowD.getMonth()+i,1);
+    months12.push(d2.getFullYear()+'-'+String(d2.getMonth()+1).padStart(2,'0'));
   }
   months12.forEach(function(mKey){
     var pm=mKey.split('-');
@@ -4052,9 +4060,10 @@ function renderCharts(){
       byM[mKey].run+=Math.round((e.runE||0)/12);
     });
   });
-  var months=Object.keys(byM).sort();
-  // Last 12 months window for readability
-  if(months.length>12)months=months.slice(-12);
+  // Forward window: 3 back + 9 forward — align series with months12 (covers recent deals + Run capacity horizon)
+  var months=months12.slice();
+  // Ensure every month has a bucket so series arrays match labels length
+  months.forEach(function(mKey){if(!byM[mKey])byM[mKey]={uf:0,run:0};});
   var mUF=months.map(function(m){return Math.round(byM[m].uf);});
   var mRun=months.map(function(m){return Math.round(byM[m].run);});
   var mLabels=months.map(function(m){var p=m.split('-');return ['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'][parseInt(p[1])-1]+' '+p[0].slice(2);});
@@ -4095,21 +4104,28 @@ function renderCharts(){
   if(ptL.length)charts.pt=new Chart(document.getElementById('cTypeProd'),{type:'doughnut',data:{labels:ptL,datasets:[{data:ptV,backgroundColor:PALETTE.slice(0,ptL.length),borderWidth:2,borderColor:'#fff',hoverOffset:8}]},options:{responsive:true,maintainAspectRatio:false,cutout:'62%',plugins:{legend:{display:false},tooltip:Object.assign({},CHART_DEFAULTS.tooltip,{callbacks:{label:function(c){return c.label+' : '+fE(c.raw);}}})}}});
   document.getElementById('legTypeProd').innerHTML=ptL.length?ptL.map(function(l,i){return legendChip(PALETTE[i],l,fE(ptV[i]));}).join(''):'<span style="color:var(--text3);">Renseignez le type de produit dans les deals.</span>';
 
-  // ── 6. Audrey vs David (commissions cumulées année) ──────────────────────
+  // ── 6. Audrey vs David — VALIDÉ vs PIPE split (v49) ─────────────────────
+  // VALIDÉ = d.invS set (invoice sent to fournisseur — Facturé OR Payé status).
+  // PIPE   = !d.invS (À émettre / undefined — fournisseur not yet billed).
+  // Stacked UF+Run+PF per (vendor, bucket) — x-axis: Audrey VAL · Audrey PIPE · David VAL · David PIPE.
   var t=computeYearTotals(year);
-  var vData={Audrey:{uf:0,run:0,pf:0},David:{uf:0,run:0,pf:0}};
-  // UF/PF — direct from deals
+  var vData={
+    Audrey:{val:{uf:0,run:0,pf:0},pipe:{uf:0,run:0,pf:0}},
+    David: {val:{uf:0,run:0,pf:0},pipe:{uf:0,run:0,pf:0}}
+  };
+  // UF/PF — bucket by invS (sent to fournisseur or not). Keep year filter on inv date.
   data.forEach(function(d){
-    if(d.fSt!=='Payé'||!d.inv||!d.inv.startsWith(year))return;
+    if(!d.inv||!d.inv.startsWith(year))return;
+    var bucket=d.invS?'val':'pipe';
     var split=d.v==='Audrey & David'?0.5:1;
-    if(d.v==='Audrey'||d.v==='Audrey & David')vData.Audrey.uf+=(d.ufE||0)*split;
-    if(d.v==='David'||d.v==='Audrey & David')vData.David.uf+=(d.ufE||0)*split;
+    if(d.v==='Audrey'||d.v==='Audrey & David')vData.Audrey[bucket].uf+=(d.ufE||0)*split;
+    if(d.v==='David'||d.v==='Audrey & David')vData.David[bucket].uf+=(d.ufE||0)*split;
     if(d.pf&&d.pf.amount){
-      if(d.v==='Audrey'||d.v==='Audrey & David')vData.Audrey.pf+=d.pf.amount*split;
-      if(d.v==='David'||d.v==='Audrey & David')vData.David.pf+=d.pf.amount*split;
+      if(d.v==='Audrey'||d.v==='Audrey & David')vData.Audrey[bucket].pf+=d.pf.amount*split;
+      if(d.v==='David'||d.v==='Audrey & David')vData.David[bucket].pf+=d.pf.amount*split;
     }
   });
-  // Running — attribute by share
+  // Running — VALIDÉ from paid rapprochements (already declared/cashed)
   rapprochement_db.forEach(function(r){
     if(r.type!=='run'||!r.paid||!r.declared||!r.period||!r.period.endsWith('_'+year))return;
     var fournDeals=deals.filter(function(x){return (x.ct==='RUN'||x.ct==='BOTH')&&x.fourn===r.fourn;});
@@ -4117,21 +4133,37 @@ function renderCharts(){
     if(!totalRunE)return;
     ['Audrey','David'].forEach(function(v){
       var vRunE=fournDeals.filter(function(x){return x.v===v||x.v==='Audrey & David';}).reduce(function(s,x){return s+(x.runE||0)*(x.v==='Audrey & David'?0.5:1);},0);
-      vData[v].run+=r.declared*(vRunE/totalRunE);
+      vData[v].val.run+=r.declared*(vRunE/totalRunE);
     });
   });
+  // Running — PIPE: forward-looking expected run for active deals NOT yet covered by a paid rappro this year.
+  // Approximation: annual runE per deal, minus the share already counted as VALIDÉ.
+  ['Audrey','David'].forEach(function(v){
+    var vDeals=deals.filter(function(x){
+      if(x.arbClosed)return false;
+      if(!(x.ct==='RUN'||x.ct==='BOTH'))return false;
+      return x.v===v||x.v==='Audrey & David';
+    });
+    var totalAnnual=vDeals.reduce(function(s,x){return s+(x.runE||0)*(x.v==='Audrey & David'?0.5:1);},0);
+    var pipeRun=totalAnnual-vData[v].val.run;
+    vData[v].pipe.run=Math.max(0,pipeRun);
+  });
   if(charts.ven)charts.ven.destroy();
+  var venLabels=['Audrey VAL','Audrey PIPE','David VAL','David PIPE'];
+  var venUF =[vData.Audrey.val.uf, vData.Audrey.pipe.uf, vData.David.val.uf, vData.David.pipe.uf].map(Math.round);
+  var venRun=[vData.Audrey.val.run,vData.Audrey.pipe.run,vData.David.val.run,vData.David.pipe.run].map(Math.round);
+  var venPF =[vData.Audrey.val.pf, vData.Audrey.pipe.pf, vData.David.val.pf, vData.David.pipe.pf].map(Math.round);
   charts.ven=new Chart(document.getElementById('cVendeurs'),{
     type:'bar',
     data:{
-      labels:['Audrey','David'],
+      labels:venLabels,
       datasets:[
-        {label:'UF',data:[Math.round(vData.Audrey.uf),Math.round(vData.David.uf)],backgroundColor:'#1d5fd4',borderRadius:6,maxBarThickness:60},
-        {label:'Running',data:[Math.round(vData.Audrey.run),Math.round(vData.David.run)],backgroundColor:'#1a8a4a',borderRadius:6,maxBarThickness:60},
-        {label:'Perf fees',data:[Math.round(vData.Audrey.pf),Math.round(vData.David.pf)],backgroundColor:'#6b4fc4',borderRadius:6,maxBarThickness:60}
+        {label:'UF',data:venUF,backgroundColor:'#1d5fd4',borderRadius:6,maxBarThickness:60},
+        {label:'Running',data:venRun,backgroundColor:'#1a8a4a',borderRadius:6,maxBarThickness:60},
+        {label:'Perf fees',data:venPF,backgroundColor:'#6b4fc4',borderRadius:6,maxBarThickness:60}
       ]
     },
-    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{boxWidth:12,boxHeight:12,padding:14,font:CHART_DEFAULTS.font,color:'#374151'}},tooltip:Object.assign({},CHART_DEFAULTS.tooltip,{callbacks:{label:function(c){return c.dataset.label+' : '+fE(c.raw);}}})},scales:{x:{stacked:true,grid:{display:false,drawBorder:false},ticks:{color:'#374151',font:Object.assign({},CHART_DEFAULTS.font,{size:13,weight:'600'})}},y:{stacked:true,ticks:{color:'#9aa0a6',font:CHART_DEFAULTS.font,callback:function(v){return v>=1000?Math.round(v/1000)+'k':v;}},grid:{color:CHART_DEFAULTS.gridSoft,drawBorder:false},beginAtZero:true}}}
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{boxWidth:12,boxHeight:12,padding:14,font:CHART_DEFAULTS.font,color:'#374151'}},tooltip:Object.assign({},CHART_DEFAULTS.tooltip,{callbacks:{title:function(items){return items[0].label;},label:function(c){return c.dataset.label+' : '+fE(c.raw);}}})},scales:{x:{stacked:true,grid:{display:false,drawBorder:false},ticks:{color:'#374151',font:Object.assign({},CHART_DEFAULTS.font,{size:12,weight:'600'})}},y:{stacked:true,ticks:{color:'#9aa0a6',font:CHART_DEFAULTS.font,callback:function(v){return v>=1000?Math.round(v/1000)+'k':v;}},grid:{color:CHART_DEFAULTS.gridSoft,drawBorder:false},beginAtZero:true}}}
   });
 
   // ── 7. Pipeline & facturation par statut (À émettre / Facturé / Payé) ──
@@ -9484,9 +9516,17 @@ var prodExp={};      // contractId|prodId → expanded
 function fmtEUR(n){return new Intl.NumberFormat('fr-FR',{style:'currency',currency:'EUR',maximumFractionDigits:0}).format(n||0);}
 
 function renderContratsStats(){
-  var total=contracts_db.length;
+  // v49 — vendor scoping: count only contracts of clients owned by curV
+  var ctrList=contracts_db.slice();
+  if(curV!=='Tous'){
+    ctrList=ctrList.filter(function(c){
+      var v=vendeurOfClient(c.client);
+      return v===curV||v.indexOf(curV)!==-1;
+    });
+  }
+  var total=ctrList.length;
   var allProds=[];
-  contracts_db.forEach(function(c){(c.produits||[]).forEach(function(p){allProds.push(p);});});
+  ctrList.forEach(function(c){(c.produits||[]).forEach(function(p){allProds.push(p);});});
   var done=0,prog=0,totalEUR=0;
   allProds.forEach(function(p){
     var pr=prodProgress(p);
@@ -9543,6 +9583,13 @@ function renderContrats(){
   var stat=document.getElementById('ctStat')?document.getElementById('ctStat').value:'';
   var sort=document.getElementById('ctSort')?document.getElementById('ctSort').value:'recent';
   var list=contracts_db.slice();
+  // v49 — vendor scoping: filter by curV (client→vendeur lookup)
+  if(curV!=='Tous'){
+    list=list.filter(function(c){
+      var v=vendeurOfClient(c.client);
+      return v===curV||v.indexOf(curV)!==-1;
+    });
+  }
   if(search){
     list=list.filter(function(c){
       var hay=(c.client+' '+(c.num||'')+' '+(c.notes||'')).toLowerCase();

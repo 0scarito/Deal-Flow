@@ -2,6 +2,22 @@
 // Stratégie : network-first pour l'app shell (toujours essayer la dernière version,
 // fallback cache si offline). Aucune interception des appels Supabase / CDN.
 
+// 2026-05-19 v49 — L.10 Pilotage forward window + vendor scoping (Suivi Contrats, Facturation) + Audrey vs David VALIDÉ/PIPE split.
+//   · Pilotage Évolution Mensuelle : months12 window now -3 → +8 (3 back, 9 forward)
+//     instead of 12 backward. Series aligned to months12 so chart populates even when
+//     all deals are trade-dated in current month (forward-est fills horizon).
+//   · vendeurOfClient(name) helper added near filt(). Lookup client.vendeur in clients_db.
+//   · renderContrats + renderContratsStats : filter contracts by curV via client→vendeur.
+//   · renderUFInvTable + renderUFDeals : billingUFEntries(billingEntries(filt())) so
+//     Facturation respects curV (was leaking other vendors' deals into Audrey/David tabs).
+//   · Pilotage chart "Audrey vs David" : VALIDÉ (invS set) vs PIPE (!invS) stacked split.
+//     4 bars (Audrey VAL / Audrey PIPE / David VAL / David PIPE) × 3 stacks (UF/Run/PF).
+//     Pipe Run = annual runE minus already-validated paid rappros, floored at 0.
+// (Previous: 2026-05-19 v48 — instrumentation only, never deployed.)
+// Bumped 2026-05-19 — v48 instrumentation — Évolution mensuelle chart debug (never shipped):
+//   · console.log [TL chart v48] in renderCharts → reveals runEntriesForChart count,
+//     months12 window, paidQByFourn, final byM. Removed in v49 along with the root-cause fix.
+// (Previous: 2026-05-19 v47 — drop ct filter on runEntriesForChart in renderCharts.)
 // Bumped 2026-05-19 — Phase L.9 — Pilotage + Facturation + Alertes fixes (Oscar 2026-05-19):
 //   · Running mensuel chart : new formula = paid rappros (distributed over 3 months)
 //     + forward-looking runE/12 for months without paid data. Was buggy (only deal
@@ -50,7 +66,7 @@
 //     deal with this product auto-fills correctly via the existing
 //     onDealIsinChange / _onDealProduitChange paths.
 // (Previous: 2026-05-18 v41 — Phase L.4 1 deal = 1 produit + cascade diag.)
-const CACHE_NAME = 'dealflow-v47';
+const CACHE_NAME = 'dealflow-v49';
 const APP_SHELL = [
   './',
   './index.html',

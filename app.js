@@ -3012,10 +3012,25 @@ async function genPFRapprFacture(){
   var comment=document.getElementById('pfRmComment').value;
   await savePFRapprData(pfRapprCurrentFourn,{declared:declared,comment:comment,facture:true,factureDate:new Date().toISOString().split('T')[0]});
   var fDeals=filt().filter(function(d){return d.pf&&d.pf.mode!=='none'&&d.pf.amount>0&&d.fourn===pfRapprCurrentFourn&&(!d.fSt||d.fSt==='À émettre');});
+  var invDate=new Date().toISOString().split('T')[0];
   for(var i=0;i<fDeals.length;i++){
     var d=fDeals[i];
-    d.fSt='Facturé';d.invS=new Date().toISOString().split('T')[0];
+    d.fSt='Facturé';d.invS=invDate;
     d.hist.push({ts:nowS(),a:'Facture Perf fees générée',by:'Système'});
+    // v60.1 — per-period perf: snapshot the latest VL of each codif's product
+    // as the baseline for the NEXT PF period. codifProductPerfPct reads this
+    // as vl0 if present (else falls back to earliest VL = first invoice case).
+    if(Array.isArray(d.codifications)){
+      d.codifications.forEach(function(c){
+        if(!c.pf||c.pf.mode==='none'||c.pf.mode==='fixed')return;
+        var hit=codifFindProduct(c);
+        if(!hit||!Array.isArray(hit.product.vlHistory)||!hit.product.vlHistory.length)return;
+        var sorted=hit.product.vlHistory.slice().sort(function(a,b){return (a.date||'').localeCompare(b.date||'');});
+        var latest=sorted[sorted.length-1];
+        c.pf.lastInvoiceVL=latest.vl||0;
+        c.pf.lastInvoiceDate=invDate;
+      });
+    }
     if(d._id)await sbUpdate('deals',d._id,d);
   }
   genInvoicePDF(pfRapprCurrentFourn,'PF',null,declared,fDeals);
@@ -6304,15 +6319,21 @@ function codifProductTracked(codif){
   var h=hit.product.vlHistory;
   return Array.isArray(h)&&h.length>=2;
 }
-// Gross perf % of the codif's product over its full tracked vlHistory window
-// (earliestVL → latestVL). Returns null if not tracked.
+// Gross perf % of the codif's product, computed per-period since last PF invoice.
+// Returns null if not tracked (< 2 vlHistory datapoints).
+// Baseline (vl0) priority:
+//   1. codif.pf.lastInvoiceVL — if a PF invoice was previously generated for this
+//      codif, perf is measured from THAT VL onwards (period since last billing).
+//   2. earliest VL in vlHistory — fallback for first-ever PF invoice on this codif.
+// vl1 = latest VL in vlHistory.
 function codifProductPerfPct(codif){
   var hit=codifFindProduct(codif);
   if(!hit)return null;
   var h=hit.product.vlHistory;
   if(!Array.isArray(h)||h.length<2)return null;
   var sorted=h.slice().sort(function(a,b){return (a.date||'').localeCompare(b.date||'');});
-  var vl0=sorted[0].vl||0;
+  // Per-period: baseline = lastInvoiceVL on this codif if available, else earliest VL
+  var vl0=(codif.pf&&codif.pf.lastInvoiceVL)||sorted[0].vl||0;
   var vl1=sorted[sorted.length-1].vl||0;
   if(!vl0)return null;
   return ((vl1-vl0)/vl0)*100;
@@ -6325,7 +6346,9 @@ function codifProductPerfPct(codif){
 //
 // FORMULA (pct mode) :
 //     pfAmount = codif.nominal × max(0, perfPct - hurdle) × rate / 10000
-//   where perfPct = (latestVL - earliestVL) / earliestVL × 100
+//   where perfPct = (latestVL - baselineVL) / baselineVL × 100
+//   baselineVL = codif.pf.lastInvoiceVL (last billed perf) OR earliestVL (first ever).
+//   v60.1 — switched from cumulative-window to per-period perf for accurate periodic billing.
 //
 // This is what the billing tables SHOULD display. Stored codif.pf.amount remains
 // the snapshot from the last Suivi-Perf push (or fixed-mode manual entry).

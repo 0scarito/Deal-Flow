@@ -1114,10 +1114,12 @@
 
       <!-- 2026-05-20 (Oscar refonte) — left col: Info client + Profil & Adéquation, tout visible sans scroll.
            Right col: seule colonne scrollable (portefeuille + historique). Grid hauteur fixe pour border le scroll. -->
-      <div style="display:grid;grid-template-columns:380px 1fr;height:92vh;min-height:680px;">
+      <div style="display:grid;grid-template-columns:380px 1fr;min-height:540px;max-height:85vh;">
 
-        <!-- Colonne gauche : Info client + Profil & Adéquation (no internal scroll) -->
-        <div style="background:var(--surface2);border-right:1px solid var(--border);padding:12px;display:flex;flex-direction:column;gap:6px;overflow:hidden;">
+        <!-- Colonne gauche : Info client + Profil (slim) + Buttons. 2026-05-20 v4 —
+             Profile section réduite à Rapport + Profil de risque uniquement (per Oscar).
+             Avec contenu compact, flex flow normal suffit, buttons en bas via margin-top:auto. -->
+        <div style="background:var(--surface2);border-right:1px solid var(--border);padding:14px;display:flex;flex-direction:column;gap:10px;overflow:hidden;">
 
           <!-- Section 1 — Information client -->
           <div>
@@ -1143,47 +1145,35 @@
             <div class="fl" style="margin-top:8px;"><label>Notes</label><textarea id="cNotes" rows="2" style="width:100%;resize:none;"></textarea></div>
           </div>
 
-          <!-- Section 2 — Profil & Adéquation (visually separated by top border) -->
+          <!-- Section 2 — Profil & Adéquation (slim 2026-05-20 v4 : Rapport + Profil de risque only,
+               per Oscar refonte). Hidden inputs ci-dessous gardent le state des champs supprimés
+               de l'UI pour ne pas casser les loaders/savers JS qui les lisent encore. -->
           <div id="clientProfileBlock" style="border-top:1px solid var(--border);padding-top:12px;">
-            <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;font-weight:600;display:flex;align-items:center;gap:6px;border-bottom:1px solid var(--border);padding-bottom:6px;">
+            <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;font-weight:600;display:flex;align-items:center;gap:6px;border-bottom:1px solid var(--border);padding-bottom:6px;">
               Profil &amp; Adéquation
               <div style="flex:1;"></div>
               <button class="btn btn-sm" type="button" onclick="openAdequacyReport()" style="font-size:10px;padding:3px 8px;" id="cAdequacyBtn">Rapport</button>
             </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-              <div class="fl"><label>Profil de risque</label>
-                <select id="cProfileRisk">
-                  <option value="">— Non défini —</option>
-                  <option value="conservateur">Conservateur</option>
-                  <option value="modere">Modéré</option>
-                  <option value="dynamique">Dynamique</option>
-                  <option value="tres-dynamique">Très dynamique</option>
-                </select>
-              </div>
-              <div class="fl"><label>Horizon</label>
-                <select id="cProfileHorizon">
-                  <option value="">— Non défini —</option>
-                  <option value="court">Court (&lt; 3 ans)</option>
-                  <option value="moyen">Moyen (3-7 ans)</option>
-                  <option value="long">Long (&gt; 7 ans)</option>
-                </select>
-              </div>
+            <div class="fl"><label>Profil de risque</label>
+              <select id="cProfileRisk">
+                <option value="">— Non défini —</option>
+                <option value="conservateur">Conservateur</option>
+                <option value="modere">Modéré</option>
+                <option value="dynamique">Dynamique</option>
+                <option value="tres-dynamique">Très dynamique</option>
+              </select>
             </div>
-            <div style="margin-top:8px;">
-              <label style="font-size:11px;color:var(--text2);font-weight:500;">Allocation cible (%)</label>
-              <div style="display:grid;grid-template-columns:1fr 50px 1fr 50px;gap:3px 6px;margin-top:4px;align-items:center;">
-                <span style="font-size:11px;color:var(--text2);">Action</span><input type="number" id="cTargetAction" step="1" min="0" max="100" placeholder="0" oninput="_recomputeTargetSum()" style="font-size:11px;text-align:right;"/>
-                <span style="font-size:11px;color:var(--text2);">Obligation</span><input type="number" id="cTargetObligation" step="1" min="0" max="100" placeholder="0" oninput="_recomputeTargetSum()" style="font-size:11px;text-align:right;"/>
-                <span style="font-size:11px;color:var(--text2);">Structuré</span><input type="number" id="cTargetStructure" step="1" min="0" max="100" placeholder="0" oninput="_recomputeTargetSum()" style="font-size:11px;text-align:right;"/>
-                <span style="font-size:11px;color:var(--text2);">Alt / PE</span><input type="number" id="cTargetAlternatif" step="1" min="0" max="100" placeholder="0" oninput="_recomputeTargetSum()" style="font-size:11px;text-align:right;"/>
-                <span style="font-size:11px;color:var(--text2);">Autre</span><input type="number" id="cTargetAutre" step="1" min="0" max="100" placeholder="0" oninput="_recomputeTargetSum()" style="font-size:11px;text-align:right;"/>
-                <span style="font-size:11px;font-weight:600;color:var(--text2);">Total</span><span id="cTargetSum" style="font-size:11px;text-align:right;font-weight:600;color:var(--text);">0%</span>
-              </div>
-            </div>
-            <div class="fl" style="margin-top:8px;"><label>Contraintes / exclusions</label>
-              <textarea id="cProfileConstraints" rows="2" placeholder="ex: ESG, exclusion défense…" style="width:100%;resize:none;font-size:11px;"></textarea>
-            </div>
-            <div style="font-size:10px;color:var(--text3);margin-top:4px;" id="cProfileLastReview">Dernière revue : —</div>
+            <!-- Hidden state holders — UI dropped these but the load/save JS still reads them.
+                 Avoids editing every getElementById('cTarget*') / cProfileHorizon / cProfileConstraints call. -->
+            <select id="cProfileHorizon" style="display:none;"><option value=""></option><option value="court"></option><option value="moyen"></option><option value="long"></option></select>
+            <input type="hidden" id="cTargetAction" value=""/>
+            <input type="hidden" id="cTargetObligation" value=""/>
+            <input type="hidden" id="cTargetStructure" value=""/>
+            <input type="hidden" id="cTargetAlternatif" value=""/>
+            <input type="hidden" id="cTargetAutre" value=""/>
+            <span id="cTargetSum" style="display:none;">0%</span>
+            <input type="hidden" id="cProfileConstraints" value=""/>
+            <span id="cProfileLastReview" style="display:none;"></span>
           </div>
 
           <!-- KPIs client (hidden by default — shown only when editing existing) -->
@@ -1192,10 +1182,9 @@
             <div id="clientKpisContent"></div>
           </div>
 
-          <!-- 2026-05-20 (Oscar refonte v2) — Enregistrer full width (primary/black) en haut,
-               puis Supprimer (rouge, conditional) + Annuler (blanc) côte-à-côte en dessous.
-               margin-bottom:14px pour aérer du bord bas du modal. -->
-          <div style="margin-top:auto;margin-bottom:14px;display:flex;flex-direction:column;gap:8px;">
+          <!-- Buttons — flex flow normal, pinned au bas via margin-top:auto.
+               Avec la Profile section slim, ça rentre confortablement. -->
+          <div style="margin-top:auto;display:flex;flex-direction:column;gap:8px;">
             <button class="btn btn-primary" onclick="saveClient()" style="width:100%;">Enregistrer</button>
             <div style="display:flex;gap:8px;">
               <button class="btn" id="clientDeleteBtn" style="color:var(--red);border-color:var(--red-bg);background:var(--red-bg);display:none;flex:1;" onclick="deleteClientFromModal()">Supprimer le client</button>

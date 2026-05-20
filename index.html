@@ -93,6 +93,7 @@
     <div class="topbar">
       <div class="page-title" id="pageTitle">Synthèse</div>
       <div class="topbar-r">
+        <span id="fxIndicator" style="font-size:11px;color:var(--text2);font-weight:500;padding:3px 8px;background:var(--surface2);border-radius:var(--rs);font-family:'JetBrains Mono',monospace;" title="Taux USD→EUR — chargement…">💱 USD —</span>
         <span id="liveStatus" style="font-size:11px;color:var(--text3);font-weight:500;" title="État de la synchronisation temps réel">● Connexion…</span>
         <input type="text" id="gSearch" placeholder="Rechercher…" style="width:190px;padding:6px 10px;" oninput="onSearch()"/>
         <button class="btn btn-primary" onclick="openDealModal()">+ Nouveau deal</button>
@@ -1113,7 +1114,7 @@
 
       <!-- 2026-05-20 (Oscar refonte) — left col: Info client + Profil & Adéquation, tout visible sans scroll.
            Right col: seule colonne scrollable (portefeuille + historique). Grid hauteur fixe pour border le scroll. -->
-      <div style="display:grid;grid-template-columns:380px 1fr;height:88vh;min-height:600px;">
+      <div style="display:grid;grid-template-columns:380px 1fr;height:92vh;min-height:680px;">
 
         <!-- Colonne gauche : Info client + Profil & Adéquation (no internal scroll) -->
         <div style="background:var(--surface2);border-right:1px solid var(--border);padding:14px;display:flex;flex-direction:column;gap:10px;overflow:hidden;">

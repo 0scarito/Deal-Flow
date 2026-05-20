@@ -56,7 +56,7 @@ function rowToRef(r){var d=Object.assign({},r);d._id=d.id;delete d.id;delete d.c
 // ── Phase 3 — FX rates (Frankfurter / ECB) ─────────────────────────────────
 // In-memory cache + localStorage persistence. Keyed by "from-to-date".
 // Returns the multiplier rate so: amount_to = amount_from * rate.
-var _FX_CACHE_KEY='dealflow-fx-cache-v1';
+var _FX_CACHE_KEY='dealflow-fx-cache-v2'; // bumped 2026-05-20 — switched primary API back to Frankfurter (ECB), invalidate cached fawazahmed0 values
 var _fxCache={};
 function _fxLoadFromStorage(){
   try{var s=localStorage.getItem(_FX_CACHE_KEY);if(s)_fxCache=JSON.parse(s)||{};}catch(e){_fxCache={};}
@@ -65,69 +65,94 @@ function _fxSaveToStorage(){
   try{localStorage.setItem(_FX_CACHE_KEY,JSON.stringify(_fxCache));}catch(e){}
 }
 _fxLoadFromStorage();
-// Phase J.4 — FX API switched 2026-05-15 from Frankfurter (api.frankfurter.app)
-// to fawazahmed0/currency-api via jsdelivr CDN.
+// Phase J.5 — FX API switched 2026-05-20 BACK to Frankfurter (ECB official
+// reference rates) via the new api.frankfurter.dev domain. Oscar flagged that
+// fawazahmed0 was returning USD→EUR=0.859 while ECB published 0.86059 same day
+// — small absolute delta (~0.35%) but real money on big USD deals + ECB is the
+// authoritative source for French/EU accounting.
 //
-// Why : Frankfurter started returning 301 redirects which Chrome blocks via CORS
-// when the response doesn't carry the Access-Control-Allow-Origin header on the
-// redirect itself. The new API is on jsdelivr's CDN (Cloudflare-fronted) so CORS
-// is always present. Also free, no API key, no rate limit, daily-updated rates.
+// The 2026-05-15 J.4 switch away from Frankfurter was caused by 301 redirects
+// on the old api.frankfurter.app domain. The new .dev domain doesn't redirect
+// and ships proper CORS headers — verified 2026-05-20 via direct fetch.
 //
-// API shape :
-//   Latest : https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/{from}.json
-//     → {"date":"2025-...","{from}":{"eur":0.92,"gbp":0.78,...}}
-//   Historical : https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@{date}/v1/currencies/{from}.json
-//     → same shape, rates at that date
+// API shape (Frankfurter / ECB) :
+//   Latest    : https://api.frankfurter.dev/v1/latest?from=USD&to=EUR
+//               → {"amount":1.0,"base":"USD","date":"2026-05-19","rates":{"EUR":0.86059}}
+//   Historical: https://api.frankfurter.dev/v1/2026-05-15?from=USD&to=EUR
+//               → same shape, rates at that date
 //
-// Currency codes are LOWERCASE in this API (usd, eur — not USD, EUR). We
-// normalise inside the function so callers can keep passing uppercase.
+// Currency codes are UPPERCASE (USD/EUR/GBP). Same dKey cache convention as
+// before so all existing callers keep working.
 //
-// Fallback : if historical fails (future date / not yet tagged), try 'latest'.
+// Fallback chain : Frankfurter@date → Frankfurter@latest → fawazahmed0@date
+// → fawazahmed0@latest. Cache key bumped to v2 above to invalidate stale
+// fawazahmed0 values.
 async function getFxRate(from,to,date){
   if(!from||!to||from===to)return 1;
   var dKey=date||'latest';
   var key=from+'-'+to+'-'+dKey;
   if(_fxCache[key]!=null)return _fxCache[key];
-  var fromLo=from.toLowerCase(), toLo=to.toLowerCase();
-  // Primary attempt — at the requested date if specific, else 'latest'.
-  // The jsdelivr URL uses '@latest' for the rolling/latest tag, '@2025-12-31' etc for historical.
-  var dateTag = (dKey==='latest') ? '@latest' : '@'+dKey;
-  var url='https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api'+dateTag+'/v1/currencies/'+fromLo+'.json';
+  var FROM=from.toUpperCase(), TO=to.toUpperCase();
+  // ── Primary : Frankfurter at the requested date (or 'latest')
+  var pathTag = (dKey==='latest') ? 'latest' : dKey;
+  var url='https://api.frankfurter.dev/v1/'+pathTag+'?from='+FROM+'&to='+TO;
   try{
     var res=await fetch(url);
-    if(!res.ok)throw new Error('HTTP '+res.status);
-    var data=await res.json();
-    var rate=data && data[fromLo] && data[fromLo][toLo];
-    if(rate==null)throw new Error('No rate '+to+' in '+from+' response');
-    _fxCache[key]=rate;
-    if(data.date && data.date!==dKey) _fxCache[from+'-'+to+'-'+data.date]=rate;
-    _fxSaveToStorage();
-    return rate;
+    if(res.ok){
+      var data=await res.json();
+      var rate=data && data.rates && data.rates[TO];
+      if(rate!=null){
+        _fxCache[key]=rate;
+        if(data.date && data.date!==dKey) _fxCache[from+'-'+to+'-'+data.date]=rate;
+        _fxSaveToStorage();
+        return rate;
+      }
+    } else {
+      console.warn('[FX] Frankfurter @'+pathTag+' returned HTTP '+res.status);
+    }
   }catch(err){
-    console.warn('[FX] primary fetch failed for '+key+' ('+url+')',err);
-    // Fallback to 'latest' if specific date failed (= future date or no tag yet).
-    if(dKey !== 'latest'){
-      try{
-        var urlL='https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/'+fromLo+'.json';
-        var resL = await fetch(urlL);
-        if(resL.ok){
-          var dataL = await resL.json();
-          var rateL = dataL && dataL[fromLo] && dataL[fromLo][toLo];
-          if(rateL != null){
-            _fxCache[key] = rateL;
-            _fxCache[from+'-'+to+'-latest'] = rateL;
-            if(dataL.date) _fxCache[from+'-'+to+'-'+dataL.date] = rateL;
-            _fxSaveToStorage();
-            console.warn('[FX] '+from+'→'+to+' for '+dKey+' fell back to latest ('+(dataL.date||'?')+') = '+rateL);
-            return rateL;
-          }
+    console.warn('[FX] Frankfurter @'+pathTag+' fetch failed for '+key,err);
+  }
+  // ── Fallback A : Frankfurter latest (when historical didn't have the date yet)
+  if(dKey!=='latest'){
+    try{
+      var resL=await fetch('https://api.frankfurter.dev/v1/latest?from='+FROM+'&to='+TO);
+      if(resL.ok){
+        var dataL=await resL.json();
+        var rateL=dataL && dataL.rates && dataL.rates[TO];
+        if(rateL!=null){
+          _fxCache[key]=rateL;
+          _fxCache[from+'-'+to+'-latest']=rateL;
+          if(dataL.date) _fxCache[from+'-'+to+'-'+dataL.date]=rateL;
+          _fxSaveToStorage();
+          console.warn('[FX] '+from+'→'+to+' for '+dKey+' fell back to Frankfurter latest ('+(dataL.date||'?')+') = '+rateL);
+          return rateL;
         }
-      }catch(err2){
-        console.warn('[FX] latest fallback also failed for '+from+'-'+to, err2);
+      }
+    }catch(err2){
+      console.warn('[FX] Frankfurter latest fallback failed for '+from+'-'+to, err2);
+    }
+  }
+  // ── Fallback B : fawazahmed0/currency-api (last resort — CDN-cached, broader currency coverage)
+  var fromLo=FROM.toLowerCase(), toLo=TO.toLowerCase();
+  var dateTag=(dKey==='latest')?'@latest':'@'+dKey;
+  try{
+    var resJ=await fetch('https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api'+dateTag+'/v1/currencies/'+fromLo+'.json');
+    if(resJ.ok){
+      var dataJ=await resJ.json();
+      var rateJ=dataJ && dataJ[fromLo] && dataJ[fromLo][toLo];
+      if(rateJ!=null){
+        _fxCache[key]=rateJ;
+        if(dataJ.date && dataJ.date!==dKey) _fxCache[from+'-'+to+'-'+dataJ.date]=rateJ;
+        _fxSaveToStorage();
+        console.warn('[FX] '+from+'→'+to+' for '+dKey+' fell back to fawazahmed0 = '+rateJ);
+        return rateJ;
       }
     }
-    return null; // caller treats null = "could not resolve"
+  }catch(err3){
+    console.warn('[FX] fawazahmed0 last-resort fallback failed for '+from+'-'+to, err3);
   }
+  return null; // caller treats null = "could not resolve"
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -11747,3 +11772,46 @@ setInterval(function(){
     }
   } catch(e) { /* silent */ }
 }, 4000);
+
+// ── 2026-05-20 — Live FX indicator (USD→EUR) ────────────────────────────────
+// Oscar 2026-05-20 — wants the USD/EUR rate to always be up to date, automatic.
+// Approach : on app load + every 30min, fetch today's USD→EUR rate via the
+// existing getFxRate() (which already wraps fawazahmed0/currency-api with
+// localStorage cache). Cache key is "USD-EUR-{today}" so it auto-invalidates
+// daily. If the historical endpoint doesn't have today yet, getFxRate falls
+// back to 'latest' transparently.
+//
+// Note — this is the LIVE display rate. Deals still snapshot fx at their
+// trade date (immutable per Q1A) — that's deliberate accounting behaviour and
+// is unchanged by this indicator.
+async function refreshFxIndicator(){
+  var el = document.getElementById('fxIndicator');
+  if(!el) return;
+  try {
+    var today = new Date().toISOString().slice(0,10);
+    var rate = await getFxRate('USD', 'EUR', today);
+    if(rate && isFinite(rate) && rate > 0){
+      var now = new Date();
+      var hh = String(now.getHours()).padStart(2,'0');
+      var mm = String(now.getMinutes()).padStart(2,'0');
+      el.innerHTML = '💱 1 USD = '+rate.toFixed(4)+' €';
+      el.title = 'Taux USD→EUR (fawazahmed0/currency-api) · maj '+hh+':'+mm+' · auto-refresh /30min';
+      el.style.color = '';
+      el.style.background = 'var(--surface2)';
+    } else {
+      el.innerHTML = '💱 USD —';
+      el.title = 'Taux USD→EUR indisponible (API silencieuse). Retry auto dans 30min.';
+      el.style.color = 'var(--text3)';
+      el.style.background = 'var(--surface2)';
+    }
+  } catch(e){
+    el.innerHTML = '💱 USD ⚠';
+    el.title = 'Erreur taux USD→EUR : '+(e&&e.message?e.message:e)+'. Retry auto dans 30min.';
+    el.style.color = 'var(--amber-t)';
+    el.style.background = 'var(--amber-bg)';
+  }
+}
+// Initial fetch on app load (deferred so checkAuth/init can run first)
+setTimeout(refreshFxIndicator, 500);
+// Auto-refresh every 30 minutes while the app is open
+setInterval(refreshFxIndicator, 30*60*1000);

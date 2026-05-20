@@ -7352,7 +7352,14 @@ function openAddClientModal(name){
     var totalUF=cDeals.reduce(function(s,d){return s+(d.ufE||0);},0);
     var totalRun=cDeals.reduce(function(s,d){return s+(d.runE||0);},0);
     var nbDeals=cDeals.length;
-    kpisDiv.style.display='block';
+    // 2026-05-20 (v2) — hide entirely when client has nothing yet. The top
+    // "Encours (auto)" field already shows the same total, no point showing
+    // a "€0 0d €0/an" pill that just steals vertical space from the buttons.
+    if(nbDeals===0 && totalNom===0 && totalRun===0 && totalUF===0){
+      kpisDiv.style.display='none';
+    } else {
+      kpisDiv.style.display='block';
+    }
     // 2026-05-20 — compacted to single inline row (was 2 stacked cards ~90px).
     // Frees vertical space in the left col so the Save/Delete buttons stay visible
     // at the bottom of the modal without scroll.
@@ -8937,7 +8944,14 @@ function _loadClientProfileIntoModal(p){
   setV('cTargetAutre',ta.autre||'');
   setV('cProfileConstraints',p.constraints||'');
   var lr=document.getElementById('cProfileLastReview');
-  if(lr)lr.textContent='Dernière revue : '+(p.last_review||'—');
+  if(lr){
+    if(p.last_review){
+      lr.textContent='Dernière revue : '+p.last_review;
+      lr.style.display='';
+    } else {
+      lr.style.display='none'; // hide when no review — frees ~14px for the buttons
+    }
+  }
   _recomputeTargetSum();
 }
 function _readClientProfileFromModal(){

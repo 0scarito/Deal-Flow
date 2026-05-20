@@ -5318,6 +5318,47 @@ async function saveDeal(){
       msg+='\nSauvegarder quand même ?';
       if(!confirm(msg))return;
     }
+    // PP5 (2026-05-20) — Preventive guard against the "Ayal/Barings UF=0" class.
+    // Bug pattern : deal saved on a fourn whose catalogue is empty (0 products)
+    // AND no feeSnapshot was entered on the codif → row commits with
+    // fees=undefined, codifs=undefined → UF/Run forever stuck at 0. The
+    // save-to-catalogue modal (L.5) does NOT catch this because it only
+    // triggers when feeSnapshot is present. So we surface a hard confirm()
+    // before the catalogue loop runs.
+    var emptyCatalogProblems=[];
+    for(var pi=0;pi<tree.length;pi++){
+      var ppair=tree[pi];
+      var pc=ppair.contractData;
+      var pcodifs=(pc.codifications||[]);
+      for(var pcj=0;pcj<pcodifs.length;pcj++){
+        var pcodif=pcodifs[pcj];
+        var pfournName=(pcodif.fourn||'').trim();
+        if(!pfournName)continue;
+        var pfRec=fourn_db.find(function(x){return x.name===pfournName;});
+        var hasNoProducts=!pfRec||!pfRec.products||pfRec.products.length===0;
+        var hasNoFees=!pcodif.feeSnapshot||pcodif.feeSnapshot.length===0;
+        if(hasNoProducts&&hasNoFees){
+          emptyCatalogProblems.push({
+            client:ppair.client,
+            fourn:pfournName,
+            produit:pcodif.produit||pcodif.isin||'(produit non nommé)'
+          });
+        }
+      }
+    }
+    if(emptyCatalogProblems.length){
+      var probMsg='⚠ '+emptyCatalogProblems.length+' deal(s) avec catalogue fourn VIDE ET aucun frais saisi :\n\n';
+      emptyCatalogProblems.forEach(function(p){
+        probMsg+='  · '+p.client+' · '+p.fourn+' / '+p.produit+'\n';
+      });
+      probMsg+='\n→ Le deal sera enregistré sans codifications. UF/Run resteront à 0.\n';
+      probMsg+='Recommandé : Annuler, rouvrir le deal, saisir les frais de structure (taux UF / Run / nominal), puis Save.\n\n';
+      probMsg+='Sauvegarder quand même ?';
+      if(!confirm(probMsg)){
+        toast('Save annulé — saisis les frais pour les fourns vides.');
+        return;
+      }
+    }
     var catalogueCandidates=[];
     var autoSaved=[];
     for(var ci=0;ci<tree.length;ci++){

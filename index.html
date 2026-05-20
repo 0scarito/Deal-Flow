@@ -456,7 +456,7 @@
       <div class="page" id="p-graphiques">
 
         <!-- KPIs commissions (déplacés depuis Synthèse) -->
-        <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:14px;" id="pilKpis"></div>
+        <div style="display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;margin-bottom:14px;" id="pilKpis"></div>
 
         <!-- Encours globaux + Évolution CA -->
         <div style="display:grid;grid-template-columns:1fr 2fr;gap:12px;margin-bottom:14px;">
@@ -1107,87 +1107,97 @@
 <div class="ov" id="clientModal">
   <div class="modal" style="max-width:1320px;width:96vw;">
     <div class="modal-hd"><span class="modal-title" id="clientModalTitle">Fiche client</span><button class="close-btn" onclick="closeClientModal()">×</button></div>
-    <div class="modal-body" style="padding:0;">
+    <div class="modal-body" style="padding:0;overflow:hidden;">
 
-      <!-- Layout 2 colonnes — left side untouched per Oscar's note, right side gets the breathing room -->
-      <div style="display:grid;grid-template-columns:280px 1fr;min-height:600px;">
+      <!-- 2026-05-20 (Oscar refonte) — left col: Info client + Profil & Adéquation, tout visible sans scroll.
+           Right col: seule colonne scrollable (portefeuille + historique). Grid hauteur fixe pour border le scroll. -->
+      <div style="display:grid;grid-template-columns:380px 1fr;height:82vh;min-height:640px;">
 
-        <!-- Colonne gauche : infos client + édition -->
-        <div style="background:var(--surface2);border-right:1px solid var(--border);padding:20px;display:flex;flex-direction:column;gap:14px;">
+        <!-- Colonne gauche : Info client + Profil & Adéquation (no internal scroll) -->
+        <div style="background:var(--surface2);border-right:1px solid var(--border);padding:18px;display:flex;flex-direction:column;gap:14px;overflow:hidden;">
+
+          <!-- Section 1 — Information client -->
           <div>
-            <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;font-weight:600;">Informations client</div>
+            <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;font-weight:600;border-bottom:1px solid var(--border);padding-bottom:6px;">Information client</div>
             <div class="fl"><label>Nom</label><input type="text" id="cName" placeholder="ex: Jean Dupont"/></div>
-            <div class="fl" style="margin-top:8px;"><label>Type</label><select id="cType"><option value="PP">Personne physique</option><option value="PM">Personne morale</option></select></div>
-            <div class="fl" style="margin-top:8px;"><label>Classification <span style="color:var(--text3);font-weight:400;">(A / B / C / D)</span></label>
-              <select id="cClassif">
-                <option value="">— Non classé —</option>
-                <option value="A">A — premium / stratégique</option>
-                <option value="B">B — actif</option>
-                <option value="C">C — courant</option>
-                <option value="D">D — dormant</option>
-              </select>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;">
+              <div class="fl"><label>Type</label><select id="cType"><option value="PP">Personne physique</option><option value="PM">Personne morale</option></select></div>
+              <div class="fl"><label>Classification</label>
+                <select id="cClassif">
+                  <option value="">— Non classé —</option>
+                  <option value="A">A — premium</option>
+                  <option value="B">B — actif</option>
+                  <option value="C">C — courant</option>
+                  <option value="D">D — dormant</option>
+                </select>
+              </div>
             </div>
-            <div class="fl" style="margin-top:8px;"><label>Vendeur référent</label><select id="cVendeur"><option value="">— Aucun —</option></select></div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;">
+              <div class="fl"><label>Vendeur réf.</label><select id="cVendeur"><option value="">— Aucun —</option></select></div>
+              <div class="fl"><label>Encours <span style="color:var(--text3);font-weight:400;">(auto)</span></label><div id="cEncoursDisplay" class="mono" style="padding:6px 10px;background:var(--surface);border:1px solid var(--border);border-radius:var(--rs);font-size:12px;color:var(--blue);font-weight:600;">—</div></div>
+            </div>
             <div class="fl" style="margin-top:8px;"><label>Email</label><input type="text" id="cEmail" placeholder="jean.dupont@email.com"/></div>
-            <div class="fl" style="margin-top:8px;"><label>Encours <span style="color:var(--text3);font-weight:400;">(calculé automatiquement)</span></label><div id="cEncoursDisplay" class="mono" style="padding:7px 10px;background:var(--surface2);border-radius:var(--rs);font-size:13px;color:var(--blue);font-weight:600;">—</div></div>
-            <div class="fl" style="margin-top:8px;"><label>Notes</label><textarea id="cNotes" rows="3" style="width:100%;resize:vertical;"></textarea></div>
+            <div class="fl" style="margin-top:8px;"><label>Notes</label><textarea id="cNotes" rows="2" style="width:100%;resize:none;"></textarea></div>
           </div>
 
-          <!-- Profil client (Batch C.2) -->
-          <div id="clientProfileBlock">
-            <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;font-weight:600;display:flex;align-items:center;gap:6px;">
+          <!-- Section 2 — Profil & Adéquation (visually separated by top border) -->
+          <div id="clientProfileBlock" style="border-top:1px solid var(--border);padding-top:12px;">
+            <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;font-weight:600;display:flex;align-items:center;gap:6px;border-bottom:1px solid var(--border);padding-bottom:6px;">
               Profil &amp; Adéquation
               <div style="flex:1;"></div>
               <button class="btn btn-sm" type="button" onclick="openAdequacyReport()" style="font-size:10px;padding:3px 8px;" id="cAdequacyBtn">Rapport</button>
             </div>
-            <div class="fl"><label>Profil de risque</label>
-              <select id="cProfileRisk">
-                <option value="">— Non défini —</option>
-                <option value="conservateur">Conservateur</option>
-                <option value="modere">Modéré</option>
-                <option value="dynamique">Dynamique</option>
-                <option value="tres-dynamique">Très dynamique</option>
-              </select>
-            </div>
-            <div class="fl" style="margin-top:8px;"><label>Horizon d'investissement</label>
-              <select id="cProfileHorizon">
-                <option value="">— Non défini —</option>
-                <option value="court">Court (&lt; 3 ans)</option>
-                <option value="moyen">Moyen (3-7 ans)</option>
-                <option value="long">Long (&gt; 7 ans)</option>
-              </select>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+              <div class="fl"><label>Profil de risque</label>
+                <select id="cProfileRisk">
+                  <option value="">— Non défini —</option>
+                  <option value="conservateur">Conservateur</option>
+                  <option value="modere">Modéré</option>
+                  <option value="dynamique">Dynamique</option>
+                  <option value="tres-dynamique">Très dynamique</option>
+                </select>
+              </div>
+              <div class="fl"><label>Horizon</label>
+                <select id="cProfileHorizon">
+                  <option value="">— Non défini —</option>
+                  <option value="court">Court (&lt; 3 ans)</option>
+                  <option value="moyen">Moyen (3-7 ans)</option>
+                  <option value="long">Long (&gt; 7 ans)</option>
+                </select>
+              </div>
             </div>
             <div style="margin-top:8px;">
               <label style="font-size:11px;color:var(--text2);font-weight:500;">Allocation cible (%)</label>
-              <div style="display:grid;grid-template-columns:1fr 60px;gap:4px 8px;margin-top:4px;align-items:center;">
+              <div style="display:grid;grid-template-columns:1fr 50px 1fr 50px;gap:3px 6px;margin-top:4px;align-items:center;">
                 <span style="font-size:11px;color:var(--text2);">Action</span><input type="number" id="cTargetAction" step="1" min="0" max="100" placeholder="0" oninput="_recomputeTargetSum()" style="font-size:11px;text-align:right;"/>
                 <span style="font-size:11px;color:var(--text2);">Obligation</span><input type="number" id="cTargetObligation" step="1" min="0" max="100" placeholder="0" oninput="_recomputeTargetSum()" style="font-size:11px;text-align:right;"/>
                 <span style="font-size:11px;color:var(--text2);">Structuré</span><input type="number" id="cTargetStructure" step="1" min="0" max="100" placeholder="0" oninput="_recomputeTargetSum()" style="font-size:11px;text-align:right;"/>
-                <span style="font-size:11px;color:var(--text2);">Alternatif / PE</span><input type="number" id="cTargetAlternatif" step="1" min="0" max="100" placeholder="0" oninput="_recomputeTargetSum()" style="font-size:11px;text-align:right;"/>
+                <span style="font-size:11px;color:var(--text2);">Alt / PE</span><input type="number" id="cTargetAlternatif" step="1" min="0" max="100" placeholder="0" oninput="_recomputeTargetSum()" style="font-size:11px;text-align:right;"/>
                 <span style="font-size:11px;color:var(--text2);">Autre</span><input type="number" id="cTargetAutre" step="1" min="0" max="100" placeholder="0" oninput="_recomputeTargetSum()" style="font-size:11px;text-align:right;"/>
                 <span style="font-size:11px;font-weight:600;color:var(--text2);">Total</span><span id="cTargetSum" style="font-size:11px;text-align:right;font-weight:600;color:var(--text);">0%</span>
               </div>
             </div>
             <div class="fl" style="margin-top:8px;"><label>Contraintes / exclusions</label>
-              <textarea id="cProfileConstraints" rows="2" placeholder="ex: ESG, exclusion défense, liquidité requise…" style="width:100%;resize:vertical;font-size:11px;"></textarea>
+              <textarea id="cProfileConstraints" rows="2" placeholder="ex: ESG, exclusion défense…" style="width:100%;resize:none;font-size:11px;"></textarea>
             </div>
             <div style="font-size:10px;color:var(--text3);margin-top:4px;" id="cProfileLastReview">Dernière revue : —</div>
           </div>
 
-          <!-- KPIs client -->
+          <!-- KPIs client (hidden by default — shown only when editing existing) -->
           <div id="clientKpis" style="display:none;">
-            <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;font-weight:600;">Encours</div>
+            <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;font-weight:600;">Encours</div>
             <div id="clientKpisContent"></div>
           </div>
 
+          <!-- Buttons pinned at bottom -->
           <div style="margin-top:auto;display:flex;flex-direction:column;gap:6px;">
             <button class="btn btn-primary" onclick="saveClient()" style="width:100%;">Enregistrer</button>
             <button class="btn" id="clientDeleteBtn" style="color:var(--red);border-color:var(--red-bg);display:none;width:100%;" onclick="deleteClientFromModal()">Supprimer le client</button>
           </div>
         </div>
 
-        <!-- Colonne droite : investissements + historique -->
-        <div style="padding:20px;overflow-y:auto;max-height:80vh;">
+        <!-- Colonne droite : portefeuille + historique (SEULE colonne scrollable) -->
+        <div style="padding:20px;overflow-y:auto;">
 
           <!-- Lignes d'investissement -->
           <div id="clientInvestSection" style="display:none;margin-bottom:24px;">

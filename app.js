@@ -4559,6 +4559,16 @@ function renderPilotageKpis(){
       '<div style="font-size:11px;color:var(--text2);margin-top:4px;">'+sub+'</div>'+
     '</div>';
   }
+  // 2026-05-20 — CIF/COA deal-count cards (Oscar request : nbr de deals total CIF/COA dans Pilotage)
+  // Uses filt() so the vendor selector (Audrey/David/Tous) drives the counts the
+  // same way as the financial KPIs above. Activity defaults to 'CIF' (see rowToDeal L41).
+  var dCif=0,dCoa=0;
+  filt().forEach(function(d){
+    if(d.archived)return;
+    var act=(d.activity||'CIF').toUpperCase();
+    if(act==='COA')dCoa++; else dCif++;
+  });
+  var dTot=dCif+dCoa;
   el.innerHTML=
     card('UF payés '+year,fE(t.uf),t.ufNb+' facture'+(t.ufNb!==1?'s':'')+' codifiées','#1d5fd4')+
     card('Running payés '+year,fE(t.run),t.runNbFourn+' fournisseur'+(t.runNbFourn!==1?'s':''),'#1a8a4a')+
@@ -4567,7 +4577,9 @@ function renderPilotageKpis(){
       '<div style="font-size:11px;color:rgba(255,255,255,0.75);text-transform:uppercase;letter-spacing:.5px;">CA total '+year+'</div>'+
       '<div style="font-size:26px;font-weight:700;color:#fff;margin-top:6px;letter-spacing:-.5px;">'+fE(t.ca)+'</div>'+
       '<div style="font-size:11px;color:rgba(255,255,255,.75);margin-top:4px;">UF + Running + Perf fees</div>'+
-    '</div>';
+    '</div>'+
+    card('Deals CIF',String(dCif),(dTot?Math.round(100*dCif/dTot)+'% du total':'aucun deal'),'#0ea5e9')+
+    card('Deals COA',String(dCoa),(dTot?Math.round(100*dCoa/dTot)+'% du total':'aucun deal'),'#f59e0b');
 }
 
 function fournOptHtml(selected){

@@ -4444,7 +4444,10 @@ function renderCharts(){
   // For each month in the window, compute forward-looking run for deals active that month
   var months12=[];
   var nowD=new Date();
-  for(var i=-3;i<=8;i++){
+  // 2026-05-20 (Oscar) — past 12 months ending today. Was 3 back + 9 forward (v49)
+  // showing a forward-looking horizon; Oscar prefers retrospective only (the forward
+  // months were always low-confidence and visually distracting).
+  for(var i=-11;i<=0;i++){
     var d2=new Date(nowD.getFullYear(),nowD.getMonth()+i,1);
     months12.push(d2.getFullYear()+'-'+String(d2.getMonth()+1).padStart(2,'0'));
   }
@@ -4463,7 +4466,7 @@ function renderCharts(){
       byM[mKey].run+=Math.round((e.runE||0)/12);
     });
   });
-  // Forward window: 3 back + 9 forward — align series with months12 (covers recent deals + Run capacity horizon)
+  // Window: 11 back + 0 forward (past 12 months) — align series with months12
   var months=months12.slice();
   // Ensure every month has a bucket so series arrays match labels length
   months.forEach(function(mKey){if(!byM[mKey])byM[mKey]={uf:0,run:0};});

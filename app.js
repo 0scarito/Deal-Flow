@@ -4559,16 +4559,6 @@ function renderPilotageKpis(){
       '<div style="font-size:11px;color:var(--text2);margin-top:4px;">'+sub+'</div>'+
     '</div>';
   }
-  // 2026-05-20 — CIF/COA deal-count cards (Oscar request : nbr de deals total CIF/COA dans Pilotage)
-  // Uses filt() so the vendor selector (Audrey/David/Tous) drives the counts the
-  // same way as the financial KPIs above. Activity defaults to 'CIF' (see rowToDeal L41).
-  var dCif=0,dCoa=0;
-  filt().forEach(function(d){
-    if(d.archived)return;
-    var act=(d.activity||'CIF').toUpperCase();
-    if(act==='COA')dCoa++; else dCif++;
-  });
-  var dTot=dCif+dCoa;
   el.innerHTML=
     card('UF payés '+year,fE(t.uf),t.ufNb+' facture'+(t.ufNb!==1?'s':'')+' codifiées','#1d5fd4')+
     card('Running payés '+year,fE(t.run),t.runNbFourn+' fournisseur'+(t.runNbFourn!==1?'s':''),'#1a8a4a')+
@@ -4577,9 +4567,7 @@ function renderPilotageKpis(){
       '<div style="font-size:11px;color:rgba(255,255,255,0.75);text-transform:uppercase;letter-spacing:.5px;">CA total '+year+'</div>'+
       '<div style="font-size:26px;font-weight:700;color:#fff;margin-top:6px;letter-spacing:-.5px;">'+fE(t.ca)+'</div>'+
       '<div style="font-size:11px;color:rgba(255,255,255,.75);margin-top:4px;">UF + Running + Perf fees</div>'+
-    '</div>'+
-    card('Deals CIF',String(dCif),(dTot?Math.round(100*dCif/dTot)+'% du total':'aucun deal'),'#0ea5e9')+
-    card('Deals COA',String(dCoa),(dTot?Math.round(100*dCoa/dTot)+'% du total':'aucun deal'),'#f59e0b');
+    '</div>';
 }
 
 function fournOptHtml(selected){
@@ -7337,18 +7325,14 @@ function openAddClientModal(name){
     var totalRun=cDeals.reduce(function(s,d){return s+(d.runE||0);},0);
     var nbDeals=cDeals.length;
     kpisDiv.style.display='block';
+    // 2026-05-20 — compacted to single inline row (was 2 stacked cards ~90px).
+    // Frees vertical space in the left col so the Save/Delete buttons stay visible
+    // at the bottom of the modal without scroll.
     kpisContent.innerHTML=
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">'+
-      '<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--rs);padding:10px;">'+
-        '<div style="font-size:10px;color:var(--text3);">Nominaux</div>'+
-        '<div style="font-size:16px;font-weight:600;color:var(--blue);">'+fE(totalNom)+'</div>'+
-        '<div style="font-size:10px;color:var(--text3);">'+nbDeals+' deal'+(nbDeals>1?'s':'')+'</div>'+
-      '</div>'+
-      '<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--rs);padding:10px;">'+
-        '<div style="font-size:10px;color:var(--text3);">Running /an</div>'+
-        '<div style="font-size:16px;font-weight:600;color:var(--green);">'+fE(totalRun)+'</div>'+
-        (totalUF>0?'<div style="font-size:10px;color:var(--text3);">UF: '+fE(totalUF)+'</div>':'')+
-      '</div>'+
+      '<div style="display:flex;justify-content:space-between;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:var(--rs);padding:6px 10px;font-size:11px;">'+
+      '<span><span style="color:var(--text3);">Nominal</span> <b style="color:var(--blue);">'+fE(totalNom)+'</b> <span style="color:var(--text3);">('+nbDeals+'d)</span></span>'+
+      '<span><span style="color:var(--text3);">Run</span> <b style="color:var(--green);">'+fE(totalRun)+'</b>/an</span>'+
+      (totalUF>0?'<span><span style="color:var(--text3);">UF</span> <b>'+fE(totalUF)+'</b></span>':'')+
       '</div>';
   } else {
     kpisDiv.style.display='none';
@@ -11718,15 +11702,18 @@ function renderActivite(){
     return{
       nbClients:Object.keys(clientSet).length,
       nbFourns:Object.keys(fournSet).length,
+      nbDeals:rows.length,
       ca:tUF+tRun+tPF
     };
   }
   var cif=bucketAct('CIF'), coa=bucketAct('COA');
   document.getElementById('actCIFClients').textContent=cif.nbClients;
   document.getElementById('actCIFFourns').textContent=cif.nbFourns;
+  var cifDealsEl=document.getElementById('actCIFDeals'); if(cifDealsEl)cifDealsEl.textContent=cif.nbDeals;
   document.getElementById('actCIFCA').textContent=(typeof fE==='function')?fE(cif.ca):('€'+cif.ca);
   document.getElementById('actCOAClients').textContent=coa.nbClients;
   document.getElementById('actCOAFourns').textContent=coa.nbFourns;
+  var coaDealsEl=document.getElementById('actCOADeals'); if(coaDealsEl)coaDealsEl.textContent=coa.nbDeals;
   document.getElementById('actCOACA').textContent=(typeof fE==='function')?fE(coa.ca):('€'+coa.ca);
   // Year labels
   document.querySelectorAll('.actYearCIF, .actYearCOA').forEach(function(el){el.textContent=year;});
